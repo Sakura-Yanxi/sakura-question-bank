@@ -6,8 +6,12 @@
     <title>Sakura做题集 · Study OS</title>
     
     <script src="https://unpkg.com/lucide@latest"></script>
-    
-    <link rel="stylesheet" href="/static/styles.css?v=2026-ultimate-fix" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+
+    <link rel="stylesheet" href="/static/styles.css?v=2026-toolbar-row" />
     <script>
       window.MathJax = {
         tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"]] },
@@ -24,7 +28,7 @@
           <span class="brand-mark"><i data-lucide="sigma"></i></span>
           <div class="brand-text">
             <strong>Sakura做题集</strong>
-            <small>INTELLIGENT STUDY OS</small>
+            <small>做题 · 错题 · 复盘</small>
           </div>
         </div>
         <nav class="sidebar-nav" aria-label="主导航">
@@ -36,6 +40,7 @@
           <button class="nav-btn" data-view="mistakes"><i data-lucide="x-circle"></i><span>核心错题本</span></button>
           <button class="nav-btn" data-view="reflection"><i data-lucide="notebook-pen"></i><span>周期反思复盘</span></button>
           <button class="nav-btn" data-view="daily"><i data-lucide="calendar-check"></i><span>智能每日练习</span></button>
+          <button class="nav-btn" data-view="coach"><i data-lucide="compass"></i><span>AI 学习教练</span></button>
         </nav>
         <datalist id="subjectSuggestions"></datalist>
       </aside>
@@ -45,7 +50,7 @@
           
           <header class="topbar">
             <div class="topbar-copy">
-              <span class="eyebrow"><i data-lucide="sparkles"></i> AI-POWERED COPILOT</span>
+              <span class="eyebrow"><i data-lucide="sparkles"></i> SAKURA STUDY</span>
               <h1 id="viewTitle">学习总览</h1>
               <p id="viewSubtitle">把不同课程的做题本拆成题库，再围绕错题安排复习。</p>
               <div class="countdown-wrapper">
@@ -169,6 +174,11 @@
                 <select id="categoryFilter"><option value="">全部知识点</option></select>
                 <select id="chapterFilter"><option value="">全部章节</option></select>
                 <select id="statusFilter"><option value="">全部掌握状态</option><option>未做</option><option>做对</option><option>做错</option><option>半会</option><option>需复习</option></select>
+                <div class="locate-box">
+                  <i data-lucide="locate-fixed"></i>
+                  <input id="questionLocate" type="search" inputmode="numeric" placeholder="输入第几题定位，如 5" />
+                </div>
+                <span id="locateHint" class="locate-hint"></span>
               </div>
               <div id="questionGrid" class="question-grid"></div>
             </div>
@@ -197,6 +207,67 @@
             <div class="panel daily-main-panel">
               <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="calendar-range"></i></span><div><h2>今日艾宾浩斯动态练习队列</h2><p id="dailyMessage"></p></div></div><button id="refreshDaily"><i data-lucide="refresh-cw"></i>重新调度</button></div>
               <div id="dailyGrid" class="daily-vertical-stack"></div>
+            </div>
+          </section>
+
+          <section id="coach" class="view">
+            <div class="panel coach-settings-panel">
+              <div class="panel-head">
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="compass"></i></span><div><h2>备考设置</h2><p>设定时间预算，教练据此为你量身排计划。</p></div></div>
+                <span id="coachMemoryBadge" class="section-count">记忆 v0</span>
+              </div>
+              <div class="coach-settings-grid">
+                <label class="coach-field"><span>每日可投入（分钟）</span><input id="coachDailyMinutes" type="number" min="10" step="10" value="60" /></label>
+                <label class="coach-field"><span>考试日期</span><input id="coachExamDate" type="date" value="2026-12-20" /></label>
+                <label class="coach-field"><span>更新节奏</span><select id="coachCadence"><option value="immediate">立即（每次手动）</option><option value="weekly">每周提醒一次</option></select></label>
+                <label class="coach-field"><span>重点科目（可选）</span><input id="coachFocusSubject" type="text" list="subjectSuggestions" placeholder="全部科目" /></label>
+              </div>
+              <div class="coach-actions">
+                <button id="refreshProfileBtn"><i data-lucide="brain-circuit"></i>更新学习档案</button>
+                <button id="generatePlanBtn" class="ghost"><i data-lucide="route"></i>生成提分计划</button>
+                <button id="coachNarrativeBtn" class="ghost"><i data-lucide="graduation-cap"></i>让老师点评</button>
+                <span id="coachHint" class="coach-hint"></span>
+              </div>
+            </div>
+
+            <div id="coachEmpty" class="panel coach-empty hidden">
+              <p>还没有建立学习档案。先在题库里给几道错题点「生成错题分析」积累证据，再点上方「更新学习档案」，教练就会越来越懂你。</p>
+            </div>
+
+            <div id="coachBody" class="coach-body hidden">
+              <div class="coach-grid">
+                <div class="panel coach-profile-panel">
+                  <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="fingerprint"></i></span><h2>学习档案</h2></div></div>
+                  <p id="coachHeadline" class="coach-headline"></p>
+                  <div id="coachProfileStats" class="reflection-summary"></div>
+                  <div id="coachErrorModes" class="coach-errormodes"></div>
+                  <div id="coachMisconceptions" class="coach-misconceptions"></div>
+                </div>
+                <div class="panel coach-predict-panel">
+                  <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="trending-up"></i></span><h2>达标预测</h2></div></div>
+                  <div id="coachPredictions" class="coach-predictions"></div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="search-check"></i></span><div><h2>查缺补漏（按性价比排序）</h2><p>每条都标注支撑数据，可点「去练」直接进题库。</p></div></div></div>
+                <div id="coachGaps" class="coach-gaps"></div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="milestone"></i></span><h2>分阶段计划</h2></div></div>
+                <div id="coachPhases" class="coach-phases"></div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="list-checks"></i></span><div><h2>今日任务清单</h2><p>按你的时间预算分配，点任务直达对应题目。</p></div></div></div>
+                <div id="coachToday" class="coach-today"></div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="graduation-cap"></i></span><h2>班主任寄语</h2></div><span id="coachNarrativeSource" class="tag"></span></div>
+                <pre id="coachNarrative" class="reflection-output mathjax-container">点击上方「生成提分计划」或「让老师点评」。</pre>
+              </div>
             </div>
           </section>
 
@@ -233,13 +304,24 @@
         </header>
         <section class="modal-scroll-body"><div id="detailContent"></div></section>
         <footer class="modal-footer">
-          <span><i data-lucide="shield-check"></i> MathJax 3 & LaTeX Standard Component</span>
-          <span><i data-lucide="cpu"></i> Connected to DeepSeek API Engine</span>
+          <span><i data-lucide="shield-check"></i> MathJax · LaTeX 公式渲染</span>
+          <span><i data-lucide="cpu"></i> DeepSeek 智能解析</span>
         </footer>
       </div>
     </dialog>
-    
-    <script src="/static/app.js?v=20260516-separate-upload"></script>
+
+    <button id="backToTop" class="back-to-top hidden" title="回到顶部"><i data-lucide="chevron-up"></i></button>
+
+    <div id="imageLightbox" class="image-lightbox hidden">
+      <div class="lightbox-bar">
+        <span id="lightboxCaption"></span>
+        <button id="lightboxClose" class="ghost"><i data-lucide="x"></i>关闭</button>
+      </div>
+      <img id="lightboxImage" alt="题目放大" />
+      <p class="lightbox-tip">滚轮缩放 · 拖拽移动 · 双击复位 · Esc 关闭</p>
+    </div>
+
+    <script src="/static/app.js?v=20260603-seqno"></script>
     
     <script>
       lucide.createIcons();

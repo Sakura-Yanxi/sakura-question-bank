@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import os
 import re
@@ -14,6 +13,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+import urllib.request
 
 warnings.filterwarnings("ignore", message="'cgi' is deprecated.*", category=DeprecationWarning)
 import cgi
@@ -28,8 +28,21 @@ STATIC_DIR = ROOT / "static"
 DB_PATH = DATA_DIR / "gaoshu_demo.sqlite3"
 
 PORT = int(os.getenv("PORT", "8000"))
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+
+# === AI 接口（OpenAI 兼容）===
+# 默认接入小米 MiMo 开放平台（https://platform.xiaomimimo.com 申请 Key）。
+# 也可用环境变量切换到 DeepSeek 或任意 OpenAI 兼容端点，无需改代码。
+# 密钥优先级：LLM_API_KEY > MIMO_API_KEY > DEEPSEEK_API_KEY（向后兼容旧配置）。
+LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("MIMO_API_KEY") or os.getenv("DEEPSEEK_API_KEY", "")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL") or os.getenv("DEEPSEEK_BASE_URL") or "https://api.xiaomimimo.com/v1"
+LLM_MODEL = os.getenv("LLM_MODEL") or os.getenv("DEEPSEEK_MODEL") or "mimo-v2.5-pro"
+
+# === 微信推送（PushPlus）===
+# 在 https://www.pushplus.plus 用微信扫码登录，复制 token 后设环境变量 PUSHPLUS_TOKEN。
+PUSHPLUS_TOKEN = os.getenv("PUSHPLUS_TOKEN", "")
+PUSHPLUS_URL = "https://www.pushplus.plus/send"
+# 推送正文里的“打开做题集”链接（部署到公网后改成你的域名/IP）
+APP_PUBLIC_URL = os.getenv("APP_PUBLIC_URL", "http://127.0.0.1:8000")
 DEFAULT_SUBJECT = "未分类"
 DEFAULT_CATEGORY = "待归类"
 DEFAULT_CHAPTER = "未识别章节"
@@ -41,6 +54,28 @@ REVIEW_INTERVAL_DAYS = [1, 3, 7, 14, 30]
 META_TAGS = ["计算失误", "公式遗忘", "逻辑死角", "题意理解偏差"]
 WRONGISH_STATUSES = {"做错", "半会", "需复习"}
 EXAM_DATE = date(2026, 12, 20)
+
+# === AI 学习教练 / 学习者记忆模型 ===
+# L1 洞察的错因枚举（固定 taxonomy，构成严密结构的一部分）
+ROOT_CAUSES = ["概念缺失", "计算失误", "方法不会", "审题偏差"]
+# 元认知标签 -> 错因枚举的映射（本地 fallback 抽取洞察时用）
+META_TAG_TO_ROOT_CAUSE = {
+    "计算失误": "计算失误",
+    "公式遗忘": "概念缺失",
+    "逻辑死角": "方法不会",
+    "题意理解偏差": "审题偏差",
+}
+# 错因 -> 训练处方文案
+ROOT_CAUSE_PRESCRIPTIONS = {
+    "概念缺失": "回到该知识点的定义与适用条件，先建公式默写卡，默写后再做题。",
+    "计算失误": "限时分步演算，每一步写出中间结果，规范草稿，做完回查关键变形。",
+    "方法不会": "精读 2-3 道同类范题解析后闭卷重做，并把解题路线讲给自己听。",
+    "审题偏差": "审题时圈出关键词，把『已知/求解/隐含条件』分三行写清再动笔。",
+}
+STUDY_MINUTES_PER_QUESTION = 6
+DEFAULT_DAILY_MINUTES = 60
+PROFILE_STALE_DAYS = 7
+COACH_STATE_ID = "singleton"
 
 MOTIVATIONAL_QUOTES = [
     "You are more than what you have become.",
@@ -171,6 +206,53 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_reflections_created ON reflections(created_at);
             """
         )
+        conn.executescript(
+            """
+            -- L1 洞察层：每道错题分析时抽取的结构化证据
+            CREATE TABLE IF NOT EXISTS insights (
+                id TEXT PRIMARY KEY,
+                question_id TEXT NOT NULL UNIQUE,
+                document_id TEXT NOT NULL DEFAULT '',
+                subject TEXT NOT NULL DEFAULT '',
+                knowledge_points TEXT NOT NULL DEFAULT '[]',
+                root_cause TEXT NOT NULL DEFAULT '',
+                misconception TEXT NOT NULL DEFAULT '',
+                missing_prereq TEXT NOT NULL DEFAULT '[]',
+                user_difficulty INTEGER NOT NULL DEFAULT 3,
+                confidence REAL NOT NULL DEFAULT 0.5,
+                source TEXT NOT NULL DEFAULT 'local',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(question_id) REFERENCES questions(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_insights_subject ON insights(subject);
+            CREATE INDEX IF NOT EXISTS idx_insights_root_cause ON insights(root_cause);
+
+            -- L2 画像层：滚动合成的学习者档案（版本快照，留趋势）
+            CREATE TABLE IF NOT EXISTS learner_profile (
+                id TEXT PRIMARY KEY,
+                version INTEGER NOT NULL DEFAULT 1,
+                scope TEXT NOT NULL DEFAULT '__all__',
+                profile_json TEXT NOT NULL DEFAULT '{}',
+                evidence_count INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'local',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_profile_scope_version ON learner_profile(scope, version);
+
+            -- 教练状态：设置 + 缓存的最近计划（单行 id='singleton'）
+            CREATE TABLE IF NOT EXISTS coach_state (
+                id TEXT PRIMARY KEY,
+                daily_minutes INTEGER NOT NULL DEFAULT 60,
+                exam_date TEXT NOT NULL DEFAULT '',
+                cadence TEXT NOT NULL DEFAULT 'immediate',
+                focus_subject TEXT NOT NULL DEFAULT '',
+                last_profile_at TEXT,
+                last_plan_at TEXT,
+                plan_json TEXT NOT NULL DEFAULT '{}'
+            );
+            """
+        )
 
 
 def migrate_db(conn: sqlite3.Connection) -> None:
@@ -189,6 +271,20 @@ def migrate_db(conn: sqlite3.Connection) -> None:
     )
 
     question_columns = {row["name"] for row in conn.execute("PRAGMA table_info(questions)").fetchall()}
+    if "question_no" not in question_columns:
+        conn.execute("ALTER TABLE questions ADD COLUMN question_no TEXT NOT NULL DEFAULT ''")
+    if "seq_no" not in question_columns:
+        conn.execute("ALTER TABLE questions ADD COLUMN seq_no INTEGER NOT NULL DEFAULT 0")
+        # 回填：每本做题本内按页码排出 1-based 序号
+        conn.execute(
+            """
+            UPDATE questions SET seq_no = (
+                SELECT COUNT(*) FROM questions q2
+                WHERE q2.document_id = questions.document_id
+                  AND q2.page_number <= questions.page_number
+            )
+            """
+        )
     if "chapter" not in question_columns:
         conn.execute("ALTER TABLE questions ADD COLUMN chapter TEXT NOT NULL DEFAULT '未识别章节'")
     if "ai_variations" not in question_columns:
@@ -217,6 +313,22 @@ def to_public_path(path: str | Path) -> str:
     return "/" + absolute.relative_to(ROOT).as_posix()
 
 
+def extract_question_no(text: str) -> str:
+    """从题目文字里尽力识别印刷题号（如 03. / 345），用于快速定位。"""
+    if not text:
+        return ""
+    for line in text.splitlines()[:8]:
+        s = line.strip()
+        if not s or "公众号" in s or "微信" in s:
+            continue
+        if re.match(r"^\d+\.\d+", s):  # 跳过章节号，例如 1.1 / 2.3
+            continue
+        m = re.match(r"^(\d{1,3})\s*[.、．。)）:：]?\s*\S", s)
+        if m:
+            return str(int(m.group(1)))
+    return ""
+
+
 def row_to_dict(row: sqlite3.Row) -> dict:
     item = dict(row)
     item["image_url"] = to_public_path(item["image_path"])
@@ -226,6 +338,7 @@ def row_to_dict(row: sqlite3.Row) -> dict:
         item["meta_tags"] = []
     if "document_kind" in item:
         item["document_kind"] = normalize_document_kind(item.get("document_kind"))
+    item["question_no"] = (item.get("question_no") or "").strip() or extract_question_no(item.get("ocr_text", ""))
     return item
 
 
@@ -541,6 +654,24 @@ def parse_ai_json(raw: str) -> dict:
     return json.loads(match.group(0))
 
 
+def llm_enabled() -> bool:
+    """是否已配置 AI 接口密钥。"""
+    return bool(LLM_API_KEY)
+
+
+def call_llm(prompt: str, temperature: float = 0.3) -> str:
+    """统一的 OpenAI 兼容调用入口（默认小米 MiMo）。失败时抛异常，由调用方决定 fallback。"""
+    from openai import OpenAI
+
+    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+    result = client.chat.completions.create(
+        model=LLM_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+    )
+    return result.choices[0].message.content or ""
+
+
 def classify_question_locally(text: str, subject_hint: str = "", chapter_hint: str = "", document_kind: str = DEFAULT_DOCUMENT_KIND) -> dict:
     category, subcategory, difficulty = classify_by_rules(text)
     chapter = normalize_chapter(chapter_hint, DEFAULT_CHAPTER)
@@ -557,48 +688,178 @@ def classify_question_locally(text: str, subject_hint: str = "", chapter_hint: s
     }
 
 
-def analyze_with_ai(question: dict) -> str:
-    fallback = (
-        f"知识点：{question['category']}。\n"
-        f"建议先复盘这道题的核心定义、常见公式和第一步切入方法。"
-        "如果是计算错误，把关键变形逐行写出；如果是方法不会，先找同类基础题练 2-3 道。"
-    )
-    if not os.getenv("DEEPSEEK_API_KEY"):
-        return fallback + "\n\n当前未配置 DEEPSEEK_API_KEY，因此使用本地简版分析。"
+# ==========================================================================
+# L1 洞察层：分析错题时抽取结构化证据，沉淀进学习者记忆
+# ==========================================================================
+def guess_root_cause(question: dict) -> str:
+    for tag in normalize_meta_tags(question.get("meta_tags")):
+        mapped = META_TAG_TO_ROOT_CAUSE.get(tag)
+        if mapped:
+            return mapped
+    return "方法不会"
+
+
+def local_insight(question: dict) -> dict:
+    """无 DeepSeek 时，用 meta_tags + 本地分类规则拼出一条洞察。"""
+    category = question.get("category") or DEFAULT_CATEGORY
+    chapter = question.get("chapter") or ""
+    knowledge_points = [kp for kp in (category, chapter) if kp and kp != DEFAULT_CATEGORY and kp != DEFAULT_CHAPTER]
+    knowledge_points = knowledge_points or [category]
+    root_cause = guess_root_cause(question)
+    tags = normalize_meta_tags(question.get("meta_tags"))
+    misconception = (question.get("mistake_reason") or "、".join(tags) or "暂无具体误区记录").strip()[:200]
+    prereq = []
+    for key in (category, chapter):
+        prereq.extend(KNOWLEDGE_DEPENDENCIES.get(key, []))
+    seen: list[str] = []
+    for item in prereq:
+        if item not in seen:
+            seen.append(item)
+    return {
+        "knowledge_points": knowledge_points[:5],
+        "root_cause": root_cause,
+        "misconception": misconception,
+        "missing_prereq": seen[:5],
+        "user_difficulty": {"简单": 2, "中等": 3, "困难": 4}.get(question.get("difficulty", "中等"), 3),
+        "confidence": 0.4,
+        "source": "local",
+    }
+
+
+def normalize_insight(raw: dict, question: dict) -> dict:
+    """把 AI 返回的洞察 JSON 收敛到固定 schema、做夹断与枚举校验。"""
+    base = local_insight(question)
+    if not isinstance(raw, dict):
+        return base
+
+    kps = raw.get("knowledge_points")
+    if isinstance(kps, str):
+        kps = [kps]
+    kps = [str(k).strip() for k in (kps or []) if str(k).strip()][:5]
+
+    root_cause = str(raw.get("root_cause", "")).strip()
+    if root_cause not in ROOT_CAUSES:
+        root_cause = base["root_cause"]
+
+    prereq = raw.get("missing_prereq")
+    if isinstance(prereq, str):
+        prereq = [prereq]
+    prereq = [str(p).strip() for p in (prereq or []) if str(p).strip()][:5]
 
     try:
-        from openai import OpenAI
+        difficulty = int(raw.get("user_difficulty", base["user_difficulty"]))
+    except (TypeError, ValueError):
+        difficulty = base["user_difficulty"]
+    try:
+        confidence = float(raw.get("confidence", 0.7))
+    except (TypeError, ValueError):
+        confidence = 0.7
 
+    return {
+        "knowledge_points": kps or base["knowledge_points"],
+        "root_cause": root_cause,
+        "misconception": str(raw.get("misconception", "")).strip()[:200] or base["misconception"],
+        "missing_prereq": prereq or base["missing_prereq"],
+        "user_difficulty": max(1, min(5, difficulty)),
+        "confidence": max(0.0, min(1.0, confidence)),
+        "source": "ai",
+    }
+
+
+def extract_json_block(raw: str) -> dict:
+    """优先取 ```json ... ``` 代码块，退化到 parse_ai_json。"""
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.S)
+    if fence:
+        return json.loads(fence.group(1))
+    return parse_ai_json(raw)
+
+
+def analyze_and_extract_with_ai(question: dict) -> tuple[str, dict]:
+    """一次 DeepSeek 调用同时拿到：给人看的解析散文 + 给记忆用的结构化洞察。"""
+    local = local_insight(question)
+    fallback_prose = (
+        f"知识点：{question.get('category', DEFAULT_CATEGORY)}。\n"
+        "建议先复盘这道题的核心定义、常见公式和第一步切入方法。"
+        "如果是计算错误，把关键变形逐行写出；如果是方法不会，先找同类基础题练 2-3 道。"
+    )
+    if not llm_enabled():
+        return fallback_prose + "\n\n当前未配置 AI 接口密钥，使用本地简版分析与洞察。", local
+
+    try:
         prompt = f"""
-你是做题集错题教练。请用中文给出简洁、可执行的错题分析。
+你是严谨的错题教练。请完成两件事并严格按格式输出。
+
 科目：{question.get('subject', DEFAULT_SUBJECT)}
 章节：{question.get('chapter', DEFAULT_CHAPTER)}
-资料类型：{question.get('document_kind', DEFAULT_DOCUMENT_KIND)}
-题目分类：{question['category']} / {question['subcategory']}
-难度：{question['difficulty']}
-做题状态：{question['status']}
-错误原因：{question['mistake_reason'] or '未填写'}
-我的备注：{question['user_note'] or '无'}
+题目分类：{question.get('category', DEFAULT_CATEGORY)} / {question.get('subcategory', '')}
+难度：{question.get('difficulty', '中等')}
+做题状态：{question.get('status', '')}
+学生勾选的错因标签：{', '.join(normalize_meta_tags(question.get('meta_tags'))) or '无'}
+学生备注：{question.get('user_note') or '无'}
 题目文字：
-{question['ocr_text'][:3500]}
+{(question.get('ocr_text') or '')[:3500]}
 
-请输出：
-1. 本题考察点
-2. 可能错因
-3. 解题切入
-4. 下次练习建议
+第一部分：用中文给出简洁可执行的错题分析，分四点——1.本题考察点 2.可能错因 3.解题切入 4.下次练习建议。
+
+第二部分：另起一行，输出一个 ```json 代码块，字段固定如下（不要多余字段）：
+{{
+  "knowledge_points": ["真实考察的知识点，1-3个"],
+  "root_cause": "必须是其中之一：概念缺失 / 计算失误 / 方法不会 / 审题偏差",
+  "misconception": "一句话点明这名学生最可能的具体误区",
+  "missing_prereq": ["为掌握本题需要补的前置知识点，可为空数组"],
+  "user_difficulty": 1到5的整数（这道题对该学生的难度）,
+  "confidence": 0到1之间的小数（你对以上判断的置信度）
+}}
 """
-        client = OpenAI(api_key=os.getenv("DEEPSEEK_API_KEY"), base_url=DEEPSEEK_BASE_URL)
-        result = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.35,
-        )
-        return result.choices[0].message.content or fallback
+        content = call_llm(prompt, temperature=0.3)
+        try:
+            insight = normalize_insight(extract_json_block(content), question)
+        except (ValueError, json.JSONDecodeError):
+            insight = local
+        prose = re.sub(r"```(?:json)?\s*\{.*?\}\s*```", "", content, flags=re.S).strip() or fallback_prose
+        return prose, insight
     except Exception:
-        print("DeepSeek analysis failed; falling back", file=sys.stderr)
+        print("LLM analyze+extract failed; falling back", file=sys.stderr)
         traceback.print_exc()
-        return fallback
+        return fallback_prose, local
+
+
+def upsert_insight(conn: sqlite3.Connection, question: dict, insight: dict) -> None:
+    now = datetime.now().isoformat(timespec="seconds")
+    conn.execute(
+        """
+        INSERT INTO insights (
+            id, question_id, document_id, subject, knowledge_points, root_cause,
+            misconception, missing_prereq, user_difficulty, confidence, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(question_id) DO UPDATE SET
+            document_id = excluded.document_id,
+            subject = excluded.subject,
+            knowledge_points = excluded.knowledge_points,
+            root_cause = excluded.root_cause,
+            misconception = excluded.misconception,
+            missing_prereq = excluded.missing_prereq,
+            user_difficulty = excluded.user_difficulty,
+            confidence = excluded.confidence,
+            source = excluded.source,
+            updated_at = excluded.updated_at
+        """,
+        (
+            uuid.uuid4().hex,
+            question.get("id"),
+            question.get("document_id", ""),
+            question.get("subject") or DEFAULT_SUBJECT,
+            json.dumps(insight["knowledge_points"], ensure_ascii=False),
+            insight["root_cause"],
+            insight["misconception"],
+            json.dumps(insight["missing_prereq"], ensure_ascii=False),
+            insight["user_difficulty"],
+            insight["confidence"],
+            insight["source"],
+            now,
+            now,
+        ),
+    )
 
 
 def infer_concept_hint(question: dict) -> str:
@@ -647,13 +908,11 @@ def generate_hint_with_ai(question: dict, level: int) -> str:
         f"1. 先识别知识点：{question.get('category', DEFAULT_CATEGORY)}。\n"
         "2. 写出题目所需的核心公式。\n"
         "3. 按公式代入并逐步化简。\n\n"
-        "当前未配置 DEEPSEEK_API_KEY，因此返回本地简版解析。"
+        "当前未配置 AI 接口密钥，因此返回本地简版解析。"
     )
-    if not os.getenv("DEEPSEEK_API_KEY"):
+    if not llm_enabled():
         return fallback
     try:
-        from openai import OpenAI
-
         prompt = f"""
 你是严谨的数学助教。请为下面题目生成 Level 3 Full Solution。
 要求：
@@ -670,15 +929,9 @@ def generate_hint_with_ai(question: dict, level: int) -> str:
 题目文字：
 {question.get('ocr_text', '')[:4000]}
 """
-        client = OpenAI(api_key=os.getenv("DEEPSEEK_API_KEY"), base_url=DEEPSEEK_BASE_URL)
-        result = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.25,
-        )
-        return result.choices[0].message.content or fallback
+        return call_llm(prompt, temperature=0.25) or fallback
     except Exception:
-        print("DeepSeek hint failed; falling back", file=sys.stderr)
+        print("LLM hint failed; falling back", file=sys.stderr)
         traceback.print_exc()
         return fallback
 
@@ -690,11 +943,9 @@ def generate_variations_with_ai(question: dict) -> str:
         "Advanced：改变求解目标，例如由求导改为求原函数、由判定改为求参数范围。\n"
         "Pro：跨章节综合，把本题知识点与前置概念组合训练。"
     )
-    if not os.getenv("DEEPSEEK_API_KEY"):
-        return fallback + "\n\n当前未配置 DEEPSEEK_API_KEY，因此使用本地简版举一反三。"
+    if not llm_enabled():
+        return fallback + "\n\n当前未配置 AI 接口密钥，因此使用本地简版举一反三。"
     try:
-        from openai import OpenAI
-
         prompt = f"""
 你是学习训练教练。请根据错题生成“难度梯度变式”，使用 Markdown + LaTeX。
 科目：{question.get('subject', DEFAULT_SUBJECT)}
@@ -713,15 +964,9 @@ def generate_variations_with_ai(question: dict) -> str:
 4. Pro：跨章节综合，只给 1 道题
 5. 每道题的训练目标，不给完整答案
 """
-        client = OpenAI(api_key=os.getenv("DEEPSEEK_API_KEY"), base_url=DEEPSEEK_BASE_URL)
-        result = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.45,
-        )
-        return result.choices[0].message.content or fallback
+        return call_llm(prompt, temperature=0.45) or fallback
     except Exception:
-        print("DeepSeek variations failed; falling back", file=sys.stderr)
+        print("LLM variations failed; falling back", file=sys.stderr)
         traceback.print_exc()
         return fallback
 
@@ -819,7 +1064,7 @@ def save_reflection(period: str, summary: dict, reflection: str) -> str:
 
 
 def generate_reflection_with_ai(payload: dict) -> str:
-    if payload.get("force_local") or not os.getenv("DEEPSEEK_API_KEY"):
+    if payload.get("force_local") or not llm_enabled():
         weak = payload["chapters"][:5]
         subject_lines = "\n".join(
             f"- {item['subject']}：做题 {item['total']}，做对 {item['correct'] or 0}，做错 {item['wrong'] or 0}，需复习 {item['review'] or 0}"
@@ -839,8 +1084,6 @@ def generate_reflection_with_ai(payload: dict) -> str:
             "建议：优先复盘本周期错题集中的高频章节，再补 2-3 道同章节基础题和 1 道变式题。"
         )
     try:
-        from openai import OpenAI
-
         compact_wrong = [
             {
                 "subject": q.get("subject"),
@@ -872,15 +1115,9 @@ def generate_reflection_with_ai(payload: dict) -> str:
 4. 下个周期规划，包含优先级和练习建议
 5. 需要警惕的做题习惯问题
 """
-        client = OpenAI(api_key=os.getenv("DEEPSEEK_API_KEY"), base_url=DEEPSEEK_BASE_URL)
-        result = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.35,
-        )
-        return result.choices[0].message.content or ""
+        return call_llm(prompt, temperature=0.35) or generate_reflection_with_ai({**payload, "force_local": True})
     except Exception:
-        print("DeepSeek reflection failed; falling back", file=sys.stderr)
+        print("LLM reflection failed; falling back", file=sys.stderr)
         traceback.print_exc()
         return generate_reflection_with_ai({**payload, "force_local": True})
 
@@ -968,6 +1205,617 @@ def find_foundation_questions(conn: sqlite3.Connection, subject: str, dependency
         params + list(exclude_ids),
     ).fetchall()
     return [row_to_dict(row) | {"daily_kind": "foundation"} for row in rows]
+
+
+# ==========================================================================
+# L2 画像层：把 L0 统计 + L1 洞察滚动合成为「学习者档案」，存版本快照
+# ==========================================================================
+def gather_knowledge_stats(conn: sqlite3.Connection, scope: str = "__all__") -> list[dict]:
+    """按 subject+category 聚合做题情况（只统计已做的题）。"""
+    where = ""
+    params: list[str] = []
+    if scope and scope != "__all__":
+        where = "WHERE d.subject = ?"
+        params.append(scope)
+    rows = conn.execute(
+        f"""
+        SELECT d.subject, q.category,
+               COUNT(*) total,
+               SUM(CASE WHEN q.status <> '未做' THEN 1 ELSE 0 END) done,
+               SUM(CASE WHEN q.status = '做对' THEN 1 ELSE 0 END) correct,
+               SUM(CASE WHEN q.status = '做错' THEN 1 ELSE 0 END) wrong,
+               SUM(CASE WHEN q.status IN ('半会', '需复习') THEN 1 ELSE 0 END) review
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        {where}
+        GROUP BY d.subject, q.category
+        HAVING q.category <> ''
+        ORDER BY done DESC, total DESC
+        """,
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def load_insight_rows(conn: sqlite3.Connection, scope: str = "__all__") -> list[dict]:
+    where = ""
+    params: list[str] = []
+    if scope and scope != "__all__":
+        where = "WHERE i.subject = ?"
+        params.append(scope)
+    rows = conn.execute(
+        f"""
+        SELECT i.*, q.status, q.category
+        FROM insights i
+        JOIN questions q ON q.id = i.question_id
+        {where}
+        ORDER BY i.updated_at DESC
+        """,
+        params,
+    ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["knowledge_points"] = json.loads(item.get("knowledge_points") or "[]")
+        except (TypeError, json.JSONDecodeError):
+            item["knowledge_points"] = []
+        try:
+            item["missing_prereq"] = json.loads(item.get("missing_prereq") or "[]")
+        except (TypeError, json.JSONDecodeError):
+            item["missing_prereq"] = []
+        result.append(item)
+    return result
+
+
+def load_latest_profile(conn: sqlite3.Connection, scope: str = "__all__") -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM learner_profile WHERE scope = ? ORDER BY version DESC LIMIT 1",
+        (scope,),
+    ).fetchone()
+    if not row:
+        return None
+    item = dict(row)
+    try:
+        item["profile"] = json.loads(item.get("profile_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        item["profile"] = {}
+    return item
+
+
+def mastery_band(score: float, evidence: int) -> str:
+    if evidence == 0:
+        return "未触及"
+    if score >= 0.8:
+        return "已掌握"
+    if score >= 0.6:
+        return "巩固中"
+    if score >= 0.4:
+        return "不稳"
+    return "薄弱"
+
+
+def merge_profile_locally(stats: list[dict], insights: list[dict], prev_profile: dict | None) -> dict:
+    """确定性合成档案：掌握度用拉普拉斯平滑，趋势对比上一版。"""
+    prev_state = (prev_profile or {}).get("knowledge_state", {}) if prev_profile else {}
+    knowledge_state: dict[str, dict] = {}
+    for stat in stats:
+        category = stat["category"]
+        done = stat["done"] or 0
+        correct = stat["correct"] or 0
+        # 拉普拉斯平滑：做得少的知识点掌握度自动向中位收敛，避免小样本假象
+        mastery = round((correct + 1) / (done + 2), 3)
+        prev = prev_state.get(category, {})
+        prev_mastery = prev.get("mastery")
+        if prev_mastery is None or done == 0:
+            trend = "new" if done else "untouched"
+        elif mastery > prev_mastery + 0.03:
+            trend = "up"
+        elif mastery < prev_mastery - 0.03:
+            trend = "down"
+        else:
+            trend = "flat"
+        knowledge_state[category] = {
+            "subject": stat["subject"],
+            "mastery": mastery,
+            "band": mastery_band(mastery, done),
+            "evidence": done,
+            "correct": correct,
+            "wrong": stat["wrong"] or 0,
+            "review": stat["review"] or 0,
+            "total": stat["total"] or 0,
+            "trend": trend,
+        }
+
+    # 错因分布 + 反复误区（来自 L1 洞察）
+    error_mode: dict[str, int] = {cause: 0 for cause in ROOT_CAUSES}
+    misconception_counter: dict[str, dict] = {}
+    prereq_counter: dict[str, int] = {}
+    for ins in insights:
+        cause = ins.get("root_cause")
+        if cause in error_mode:
+            error_mode[cause] += 1
+        text = (ins.get("misconception") or "").strip()
+        if text and text not in {"暂无具体误区记录"}:
+            entry = misconception_counter.setdefault(text, {"text": text, "count": 0, "examples": []})
+            entry["count"] += 1
+            if len(entry["examples"]) < 3:
+                entry["examples"].append(ins.get("question_id"))
+        for prereq in ins.get("missing_prereq", []):
+            prereq_counter[prereq] = prereq_counter.get(prereq, 0) + 1
+
+    recurring = sorted(misconception_counter.values(), key=lambda x: x["count"], reverse=True)[:8]
+    prereq_gaps = [p for p, _ in sorted(prereq_counter.items(), key=lambda kv: kv[1], reverse=True)][:8]
+
+    # 学习速度：和上一版掌握度均值对比
+    masteries = [v["mastery"] for v in knowledge_state.values() if v["evidence"] > 0]
+    avg_mastery = round(sum(masteries) / len(masteries), 3) if masteries else 0.0
+    prev_avg = (prev_profile or {}).get("avg_mastery")
+    if prev_avg is None:
+        velocity = f"首次建档，平均掌握度 {int(avg_mastery * 100)}%"
+    else:
+        delta = int((avg_mastery - prev_avg) * 100)
+        arrow = "↑" if delta > 0 else ("↓" if delta < 0 else "→")
+        velocity = f"平均掌握度 {int(prev_avg * 100)}% {arrow} {int(avg_mastery * 100)}%"
+
+    return {
+        "knowledge_state": knowledge_state,
+        "error_mode_profile": error_mode,
+        "recurring_misconceptions": recurring,
+        "prereq_gaps": prereq_gaps,
+        "avg_mastery": avg_mastery,
+        "velocity": velocity,
+        "evidence_count": len(insights),
+        "knowledge_count": len(knowledge_state),
+        "source": "local",
+    }
+
+
+def polish_profile_with_ai(base_profile: dict, insights: list[dict]) -> dict:
+    """有 key 时，让大模型在确定性档案之上补充人话总结，不改数字。"""
+    if not llm_enabled():
+        return base_profile
+    try:
+        weak = sorted(
+            base_profile["knowledge_state"].items(),
+            key=lambda kv: kv[1]["mastery"],
+        )[:10]
+        compact = {
+            "weak_points": [
+                {"name": k, "mastery": v["mastery"], "band": v["band"], "evidence": v["evidence"], "trend": v["trend"]}
+                for k, v in weak
+            ],
+            "error_mode_profile": base_profile["error_mode_profile"],
+            "recurring_misconceptions": [m["text"] for m in base_profile["recurring_misconceptions"][:6]],
+            "prereq_gaps": base_profile["prereq_gaps"],
+            "velocity": base_profile["velocity"],
+        }
+        prompt = f"""
+你是一位资深班主任，正在更新一名学生的学情档案。下面是基于真实做题数据算出的客观统计（数字已准确，请勿改动数字）：
+{json.dumps(compact, ensure_ascii=False)}
+
+请只输出一个 JSON 代码块，字段固定：
+{{
+  "headline": "一句话概括这名学生当前的学情画像",
+  "knowledge_notes": {{"知识点名": "针对该薄弱点的一句具体诊断（结合掌握度与趋势）"}},
+  "pattern_summary": "结合错因分布与反复误区，指出这名学生最值得警惕的1-2个习惯问题"
+}}
+knowledge_notes 只需覆盖上面 weak_points 里的知识点。
+"""
+        extra = extract_json_block(call_llm(prompt, temperature=0.3))
+        base_profile = {**base_profile, "source": "ai"}
+        base_profile["headline"] = str(extra.get("headline", "")).strip()
+        base_profile["pattern_summary"] = str(extra.get("pattern_summary", "")).strip()
+        notes = extra.get("knowledge_notes") or {}
+        if isinstance(notes, dict):
+            for name, note in notes.items():
+                if name in base_profile["knowledge_state"]:
+                    base_profile["knowledge_state"][name]["note"] = str(note).strip()[:120]
+        return base_profile
+    except Exception:
+        print("LLM profile polish failed; keeping local profile", file=sys.stderr)
+        traceback.print_exc()
+        return base_profile
+
+
+def synthesize_profile(conn: sqlite3.Connection, want_ai: bool = True, scope: str = "__all__") -> dict:
+    """读上一版 + 新增洞察 + 统计 → 合成新版本快照（增量迭代记忆）。"""
+    prev = load_latest_profile(conn, scope)
+    prev_profile = prev["profile"] if prev else None
+    stats = gather_knowledge_stats(conn, scope)
+    insights = load_insight_rows(conn, scope)
+    profile = merge_profile_locally(stats, insights, prev_profile)
+    if want_ai:
+        profile = polish_profile_with_ai(profile, insights)
+
+    version = (prev["version"] + 1) if prev else 1
+    now = datetime.now().isoformat(timespec="seconds")
+    conn.execute(
+        """
+        INSERT INTO learner_profile (id, version, scope, profile_json, evidence_count, source, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (uuid.uuid4().hex, version, scope, json.dumps(profile, ensure_ascii=False), profile["evidence_count"], profile["source"], now),
+    )
+    return {"version": version, "scope": scope, "profile": profile, "created_at": now}
+
+
+# ==========================================================================
+# 教练状态（设置 + 缓存计划）
+# ==========================================================================
+def get_coach_state(conn: sqlite3.Connection) -> dict:
+    row = conn.execute("SELECT * FROM coach_state WHERE id = ?", (COACH_STATE_ID,)).fetchone()
+    if not row:
+        conn.execute(
+            "INSERT INTO coach_state (id, daily_minutes, exam_date, cadence, focus_subject, plan_json) VALUES (?, ?, ?, ?, ?, '{}')",
+            (COACH_STATE_ID, DEFAULT_DAILY_MINUTES, EXAM_DATE.isoformat(), "immediate", ""),
+        )
+        row = conn.execute("SELECT * FROM coach_state WHERE id = ?", (COACH_STATE_ID,)).fetchone()
+    item = dict(row)
+    if not item.get("exam_date"):
+        item["exam_date"] = EXAM_DATE.isoformat()
+    return item
+
+
+def save_coach_state(conn: sqlite3.Connection, **fields) -> dict:
+    state = get_coach_state(conn)
+    allowed = {"daily_minutes", "exam_date", "cadence", "focus_subject", "last_profile_at", "last_plan_at", "plan_json"}
+    updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    if updates:
+        assignments = ", ".join(f"{k} = ?" for k in updates)
+        conn.execute(f"UPDATE coach_state SET {assignments} WHERE id = ?", [*updates.values(), COACH_STATE_ID])
+    return get_coach_state(conn)
+
+
+def parse_exam_date(value: str | None) -> date:
+    try:
+        return date.fromisoformat((value or "").strip())
+    except (TypeError, ValueError):
+        return EXAM_DATE
+
+
+# ==========================================================================
+# L3 决策层：基于档案记忆产出诊断 / 查缺排序 / 分阶段计划 / 今日任务 / 预测
+# ==========================================================================
+def compute_review_backlog(conn: sqlite3.Connection, today: date) -> dict:
+    today_iso = today.isoformat()
+    week_iso = (today + timedelta(days=7)).isoformat()
+    overdue = conn.execute(
+        "SELECT COUNT(*) c FROM questions WHERE ever_wrong = 1 AND mastered_at IS NULL AND next_review_at IS NOT NULL AND date(next_review_at) < date(?)",
+        (today_iso,),
+    ).fetchone()["c"]
+    due_today = conn.execute(
+        "SELECT COUNT(*) c FROM questions WHERE ever_wrong = 1 AND mastered_at IS NULL AND next_review_at IS NOT NULL AND date(next_review_at) = date(?)",
+        (today_iso,),
+    ).fetchone()["c"]
+    due_week = conn.execute(
+        "SELECT COUNT(*) c FROM questions WHERE ever_wrong = 1 AND mastered_at IS NULL AND next_review_at IS NOT NULL AND date(next_review_at) <= date(?)",
+        (week_iso,),
+    ).fetchone()["c"]
+    active_wrong = conn.execute(
+        "SELECT COUNT(*) c FROM questions WHERE status IN ('做错', '半会', '需复习')",
+    ).fetchone()["c"]
+    return {"overdue": overdue, "due_today": due_today, "due_week": due_week, "active_wrong": active_wrong}
+
+
+def rank_gaps_from_profile(profile: dict, top_n: int = 6) -> list[dict]:
+    """从档案的 knowledge_state 排出查缺补漏优先级，每条附可核对的证据与处方。"""
+    import math
+
+    state = profile.get("knowledge_state", {})
+    prereq_gaps = set(profile.get("prereq_gaps", []))
+    error_mode = profile.get("error_mode_profile", {})
+    main_cause = max(error_mode, key=error_mode.get) if error_mode and max(error_mode.values(), default=0) > 0 else ""
+
+    ranked = []
+    for name, info in state.items():
+        evidence = info.get("evidence", 0)
+        if evidence == 0:
+            continue  # 未触及单独处理，这里只排已暴露薄弱的
+        mastery = info.get("mastery", 0.5)
+        weakness = 1 - mastery
+        volume = math.log(1 + info.get("total", 0))
+        prereq_boost = 1.35 if name in prereq_gaps else 1.0
+        urgency = 1 + (info.get("wrong", 0) + info.get("review", 0)) * 0.12
+        score = round(weakness * (0.5 + volume) * prereq_boost * urgency, 4)
+
+        reason = f"正确率 {int(mastery * 100)}%（做对 {info.get('correct', 0)}/{evidence}）"
+        if name in prereq_gaps:
+            reason += "，且是其它薄弱点的前置 → 先补地基"
+        if info.get("trend") == "down":
+            reason += "，近期还在退步"
+        elif info.get("trend") == "up":
+            reason += "，已在回升、值得乘胜追击"
+        prescription = ROOT_CAUSE_PRESCRIPTIONS.get(main_cause, "先精读同类范题，再闭卷重做巩固。")
+        ranked.append({
+            "name": name,
+            "subject": info.get("subject", ""),
+            "mastery": mastery,
+            "band": info.get("band", ""),
+            "evidence": evidence,
+            "trend": info.get("trend", "flat"),
+            "score": score,
+            "reason": reason,
+            "prescription": prescription,
+            "note": info.get("note", ""),
+        })
+    ranked.sort(key=lambda x: x["score"], reverse=True)
+    return ranked[:top_n]
+
+
+def build_study_phases(days_left: int, daily_minutes: int) -> list[dict]:
+    """按剩余天数切分阶段；<14 天压缩为纯冲刺。"""
+    per_day_questions = max(1, round(daily_minutes / STUDY_MINUTES_PER_QUESTION))
+    today = date.today()
+
+    def span(start_offset: int, length: int) -> str:
+        s = today + timedelta(days=start_offset)
+        e = today + timedelta(days=max(start_offset, start_offset + length - 1))
+        return f"{s.month}/{s.day} – {e.month}/{e.day}"
+
+    if days_left <= 0:
+        return [{
+            "name": "考试在即", "span": "今天", "days": 0,
+            "focus": "回顾错题集与公式卡，保持手感，别碰新题。",
+            "daily_questions": per_day_questions,
+        }]
+    if days_left < 14:
+        return [{
+            "name": "冲刺模考", "span": span(0, days_left), "days": days_left,
+            "focus": "整套模拟卷限时训练 + 错题三轮回炉，主攻最薄弱的 2-3 个知识点。",
+            "daily_questions": per_day_questions,
+        }]
+    base_days = round(days_left * 0.5)
+    boost_days = round(days_left * 0.3)
+    sprint_days = days_left - base_days - boost_days
+    return [
+        {"name": "基础攻坚", "span": span(0, base_days), "days": base_days,
+         "focus": "补前置缺口 + 主攻薄弱知识点，先把地基打牢。",
+         "daily_questions": per_day_questions},
+        {"name": "强化提升", "span": span(base_days, boost_days), "days": boost_days,
+         "focus": "不稳知识点做专项突破，错题回炉，提升综合题正确率。",
+         "daily_questions": per_day_questions},
+        {"name": "冲刺模考", "span": span(base_days + boost_days, sprint_days), "days": sprint_days,
+         "focus": "整套模拟卷限时模考，按错因复盘，稳住已掌握内容。",
+         "daily_questions": per_day_questions},
+    ]
+
+
+def build_today_actions(conn: sqlite3.Connection, gaps: list[dict], backlog: dict, daily_minutes: int, in_sprint: bool, focus_subject: str) -> list[dict]:
+    capacity = max(2, round(daily_minutes / STUDY_MINUTES_PER_QUESTION))
+    actions = []
+    used = 0
+
+    review_n = min(backlog["due_today"] + backlog["overdue"], max(1, capacity // 2))
+    if review_n > 0:
+        actions.append({
+            "kind": "review", "label": f"复习 {review_n} 道到期错题",
+            "detail": f"含 {backlog['overdue']} 道逾期 + {backlog['due_today']} 道今日到期，先还复习账。",
+            "count": review_n, "filter": {"status": "需复习"},
+        })
+        used += review_n
+
+    for gap in gaps[:2]:
+        if used >= capacity:
+            break
+        n = min(3, capacity - used)
+        actions.append({
+            "kind": "attack", "label": f"攻坚「{gap['name']}」{n} 道",
+            "detail": gap["reason"], "count": n,
+            "filter": {"category": gap["name"], "subject": gap.get("subject", "")},
+        })
+        used += n
+
+    # 前置基础题（复用现有 foundation 逻辑）
+    if used < capacity and gaps:
+        subject = focus_subject or gaps[0].get("subject", "")
+        dep_categories = []
+        for gap in gaps:
+            dep_categories.extend(KNOWLEDGE_DEPENDENCIES.get(gap["name"], []))
+        foundations = find_foundation_questions(conn, subject, list(dict.fromkeys(dep_categories)), set())
+        if foundations:
+            n = min(len(foundations), capacity - used)
+            actions.append({
+                "kind": "foundation", "label": f"补 {n} 道前置基础题",
+                "detail": "针对薄弱点的前置知识，先把地基补上再啃难题。",
+                "count": n, "filter": {"subject": subject},
+            })
+            used += n
+
+    if in_sprint:
+        actions.append({
+            "kind": "mock", "label": "限时做 1 套模拟卷",
+            "detail": "整卷计时，做完按错因归档，模拟真实考场节奏。",
+            "count": 1, "filter": {"kind": "模拟卷"},
+        })
+
+    return actions
+
+
+def compute_predictions(profile: dict, gaps: list[dict], days_left: int, daily_minutes: int) -> dict:
+    avg = profile.get("avg_mastery", 0.0)
+    capacity_total = max(1, round(days_left * daily_minutes / STUDY_MINUTES_PER_QUESTION))
+    weak_total = sum(g.get("total", g.get("evidence", 0)) for g in gaps) or 1
+    # 粗估：剩余练习容量能覆盖多少薄弱题量
+    coverage = min(1.0, capacity_total / (weak_total * 2.5))
+    # 掌握度外推：按容量给薄弱点一个可达增益（带上限，避免过度乐观）
+    projected = round(min(0.92, avg + coverage * (1 - avg) * 0.6), 3)
+    readiness = round(projected * (0.7 + 0.3 * coverage), 3)
+    if days_left <= 0:
+        outlook = "考试当天：以稳为主，回顾错题与公式卡即可。"
+    elif coverage >= 0.8:
+        outlook = "时间相对充裕，按计划推进可把薄弱点系统补齐。"
+    elif coverage >= 0.5:
+        outlook = "时间偏紧，建议聚焦最高优先级的 3-4 个薄弱点，别铺太开。"
+    else:
+        outlook = "时间紧张，只攻最高频考点与前置地基，放弃边角难题保性价比。"
+    return {
+        "days_left": days_left,
+        "current_avg_mastery": round(avg, 3),
+        "projected_avg_mastery": projected,
+        "exam_readiness": readiness,
+        "coverage": round(coverage, 3),
+        "capacity_total": capacity_total,
+        "outlook": outlook,
+        "note": "预测为基于当前练习容量与掌握度的粗估，仅供排优先级参考。",
+    }
+
+
+def coach_narrative_local(profile: dict, gaps: list[dict], backlog: dict, phases: list[dict], predictions: dict) -> str:
+    lines = ["【班主任寄语 · 本地版】", ""]
+    headline = profile.get("headline")
+    if headline:
+        lines.append(headline)
+    lines.append(profile.get("velocity", ""))
+    lines.append("")
+    if gaps:
+        lines.append("当前最该补的薄弱点（按性价比排序）：")
+        for i, g in enumerate(gaps[:4], 1):
+            lines.append(f"  {i}. {g['name']}：{g['reason']}")
+            lines.append(f"     → {g['prescription']}")
+    if backlog["overdue"] or backlog["due_today"]:
+        lines.append("")
+        lines.append(f"复习账：{backlog['overdue']} 道逾期 + {backlog['due_today']} 道今日到期，先还清再上新题。")
+    lines.append("")
+    lines.append(f"时间预算：距考试 {predictions['days_left']} 天，按 {phases[0]['daily_questions']} 题/天推进。")
+    lines.append(f"达标粗估：当前平均掌握度 {int(predictions['current_avg_mastery']*100)}% → 预计可达 {int(predictions['projected_avg_mastery']*100)}%。")
+    lines.append(predictions["outlook"])
+    return "\n".join(line for line in lines if line is not None)
+
+
+def coach_narrative_ai(profile: dict, gaps: list[dict], backlog: dict, phases: list[dict], predictions: dict) -> str:
+    local = coach_narrative_local(profile, gaps, backlog, phases, predictions)
+    if not llm_enabled():
+        return local
+    try:
+        compact = {
+            "headline": profile.get("headline", ""),
+            "velocity": profile.get("velocity", ""),
+            "pattern_summary": profile.get("pattern_summary", ""),
+            "top_gaps": [{"name": g["name"], "reason": g["reason"], "prescription": g["prescription"]} for g in gaps[:5]],
+            "backlog": backlog,
+            "phases": [{"name": p["name"], "span": p["span"], "focus": p["focus"]} for p in phases],
+            "predictions": predictions,
+        }
+        prompt = f"""
+你是一位带过多届毕业班、经验丰富又懂得鼓励学生的班主任。下面是一名学生的学情档案与备考数据（数字均来自真实做题记录，请勿改动数字）：
+{json.dumps(compact, ensure_ascii=False)}
+
+请用中文写一段 250-400 字的个性化备考寄语，要求：
+1. 先点明这名学生当前的核心问题（结合 pattern_summary 与 top_gaps）。
+2. 给出本阶段最该做的 2-3 件事，落到具体知识点和动作。
+3. 结合剩余天数给一句务实的节奏建议与鼓励。
+语气像一位真正关心学生的老师，可执行、不空泛、不堆砌套话。
+"""
+        return call_llm(prompt, temperature=0.5) or local
+    except Exception:
+        print("LLM coach narrative failed; falling back", file=sys.stderr)
+        traceback.print_exc()
+        return local
+
+
+def build_coach_plan(conn: sqlite3.Connection, settings: dict, want_ai: bool = False) -> dict:
+    """组装完整教练计划：诊断 + 查缺 + 阶段 + 今日 + 预测 + 寄语。"""
+    profile_row = load_latest_profile(conn)
+    profile = profile_row["profile"] if profile_row else {}
+    today = date.today()
+    exam = parse_exam_date(settings.get("exam_date"))
+    days_left = (exam - today).days
+    daily_minutes = int(settings.get("daily_minutes") or DEFAULT_DAILY_MINUTES)
+
+    gaps = rank_gaps_from_profile(profile, top_n=6)
+    backlog = compute_review_backlog(conn, today)
+    phases = build_study_phases(days_left, daily_minutes)
+    in_sprint = days_left < 14
+    today_actions = build_today_actions(conn, gaps, backlog, daily_minutes, in_sprint, settings.get("focus_subject", ""))
+    predictions = compute_predictions(profile, gaps, days_left, daily_minutes)
+    narrative = coach_narrative_ai(profile, gaps, backlog, phases, predictions) if want_ai else coach_narrative_local(profile, gaps, backlog, phases, predictions)
+
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "has_profile": bool(profile_row),
+        "profile_version": profile_row["version"] if profile_row else 0,
+        "evidence_count": profile.get("evidence_count", 0),
+        "exam_date": exam.isoformat(),
+        "days_left": days_left,
+        "daily_minutes": daily_minutes,
+        "diagnosis": {
+            "headline": profile.get("headline", ""),
+            "velocity": profile.get("velocity", ""),
+            "pattern_summary": profile.get("pattern_summary", ""),
+            "error_mode_profile": profile.get("error_mode_profile", {}),
+            "recurring_misconceptions": profile.get("recurring_misconceptions", []),
+            "knowledge_state": profile.get("knowledge_state", {}),
+        },
+        "gaps": gaps,
+        "backlog": backlog,
+        "phases": phases,
+        "today": today_actions,
+        "predictions": predictions,
+        "narrative": narrative,
+        "narrative_source": "ai" if (want_ai and llm_enabled()) else "local",
+    }
+
+
+# ==========================================================================
+# 微信每日提醒（PushPlus）
+# ==========================================================================
+def build_daily_reminder(conn: sqlite3.Connection) -> dict:
+    """汇总今日待复习错题，生成 PushPlus markdown 推送内容。"""
+    today = date.today()
+    backlog = compute_review_backlog(conn, today)
+    state = get_coach_state(conn)
+    exam = parse_exam_date(state.get("exam_date"))
+    days_left = (exam - today).days
+    due_total = backlog["overdue"] + backlog["due_today"]
+
+    rows = conn.execute(
+        """
+        SELECT d.subject, COALESCE(NULLIF(d.title, ''), d.filename) book, COUNT(*) n
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        WHERE q.status IN ('做错', '需复习', '半会')
+           OR (q.ever_wrong = 1 AND q.mastered_at IS NULL
+               AND q.next_review_at IS NOT NULL AND date(q.next_review_at) <= date(?))
+        GROUP BY d.subject, book
+        ORDER BY n DESC
+        LIMIT 8
+        """,
+        (today.isoformat(),),
+    ).fetchall()
+
+    title = f"📚 今日错题复习 · 待复习 {due_total} 道 · 距考试 {days_left} 天"
+    lines = [
+        f"### 📚 今日错题复习提醒",
+        f"- 🗓 今天：{today.month}月{today.day}日，距考试还有 **{days_left}** 天",
+        f"- 🔴 到期待复习：**{due_total}** 道（逾期 {backlog['overdue']} + 今日 {backlog['due_today']}）",
+        f"- 📒 在练错题总数：{backlog['active_wrong']} 道",
+        "",
+    ]
+    if rows:
+        lines.append("**按做题本分布：**")
+        for r in rows:
+            lines.append(f"- {r['subject'] or '未分类'} / {r['book']}：{r['n']} 道")
+    else:
+        lines.append("🎉 今天没有到期的错题，保持节奏，可以预习新内容！")
+    lines.append("")
+    lines.append(f"👉 [打开做题集开始复习]({APP_PUBLIC_URL})")
+    return {"title": title, "content": "\n".join(lines), "due_total": due_total, "days_left": days_left}
+
+
+def send_pushplus(title: str, content: str, template: str = "markdown") -> dict:
+    if not PUSHPLUS_TOKEN:
+        return {"ok": False, "error": "未配置 PUSHPLUS_TOKEN，无法推送到微信。"}
+    payload = json.dumps(
+        {"token": PUSHPLUS_TOKEN, "title": title, "content": content, "template": template}
+    ).encode("utf-8")
+    req = urllib.request.Request(PUSHPLUS_URL, data=payload, headers={"Content-Type": "application/json"})
+    try:
+        resp = json.loads(urllib.request.urlopen(req, timeout=15).read().decode("utf-8"))
+        return {"ok": resp.get("code") == 200, "resp": resp}
+    except Exception as exc:
+        traceback.print_exc()
+        return {"ok": False, "error": str(exc)}
 
 
 def render_page_image(page: fitz.Page, image_path: Path) -> None:
@@ -1058,14 +1906,15 @@ def import_pdf(
                 conn.execute(
                     """
                     INSERT INTO questions (
-                        id, document_id, page_number, image_path, ocr_text, category,
+                        id, document_id, page_number, seq_no, image_path, ocr_text, category,
                         subcategory, chapter, difficulty, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         q_id,
                         doc_id,
                         index,
+                        index - page_start + 1,
                         str(image_path),
                         text,
                         classification["category"],
@@ -1150,6 +1999,10 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return self.handle_countdown()
             if parsed.path == "/api/quote":
                 return self.handle_quote()
+            if parsed.path == "/api/coach":
+                return self.handle_coach_get()
+            if parsed.path == "/api/coach/settings":
+                return self.handle_coach_settings_get()
             if parsed.path == "/api/reflections":
                 return self.handle_reflection_history()
             if parsed.path.startswith("/api/reflections/") and parsed.path.endswith("/download"):
@@ -1187,6 +2040,14 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return self.handle_crop_question(q_id)
             if parsed.path == "/api/reflection":
                 return self.handle_reflection()
+            if parsed.path == "/api/profile/refresh":
+                return self.handle_profile_refresh()
+            if parsed.path == "/api/coach":
+                return self.handle_coach_post()
+            if parsed.path == "/api/coach/settings":
+                return self.handle_coach_settings_post()
+            if parsed.path == "/api/push/daily":
+                return self.handle_push_daily()
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
         except Exception as exc:
             traceback.print_exc()
@@ -1447,7 +2308,7 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_update_question(self, q_id: str) -> None:
         payload = self.read_json()
-        allowed = {"status", "mistake_reason", "meta_tags", "user_note", "category", "subcategory", "chapter", "difficulty"}
+        allowed = {"status", "mistake_reason", "meta_tags", "user_note", "category", "subcategory", "chapter", "difficulty", "question_no"}
         updates = {k: v for k, v in payload.items() if k in allowed}
         if not updates:
             return json_response(self, {"error": "没有可更新字段。"}, 400)
@@ -1499,9 +2360,11 @@ class DemoHandler(BaseHTTPRequestHandler):
             ).fetchone()
             if not row:
                 return json_response(self, {"error": "题目不存在。"}, 404)
-            analysis = analyze_with_ai(question_payload(row))
+            question = question_payload(row)
+            analysis, insight = analyze_and_extract_with_ai(question)
             conn.execute("UPDATE questions SET ai_analysis = ? WHERE id = ?", (analysis, q_id))
-        return json_response(self, {"ai_analysis": analysis})
+            upsert_insight(conn, question, insight)
+        return json_response(self, {"ai_analysis": analysis, "insight": insight})
 
     def handle_hint(self, q_id: str) -> None:
         payload = self.read_json()
@@ -1644,6 +2507,128 @@ class DemoHandler(BaseHTTPRequestHandler):
         today = date.today()
         quote = MOTIVATIONAL_QUOTES[today.toordinal() % len(MOTIVATIONAL_QUOTES)]
         return json_response(self, {"quote": quote, "date": today.isoformat(), "count": len(MOTIVATIONAL_QUOTES)})
+
+    # === AI 学习教练 ===
+    def _coach_settings_view(self, state: dict) -> dict:
+        return {
+            "daily_minutes": state.get("daily_minutes", DEFAULT_DAILY_MINUTES),
+            "exam_date": state.get("exam_date") or EXAM_DATE.isoformat(),
+            "cadence": state.get("cadence", "immediate"),
+            "focus_subject": state.get("focus_subject", ""),
+            "last_profile_at": state.get("last_profile_at"),
+            "last_plan_at": state.get("last_plan_at"),
+        }
+
+    def _profile_needs_refresh(self, conn: sqlite3.Connection, state: dict) -> bool:
+        latest = load_latest_profile(conn)
+        if not latest:
+            return True
+        # 有新洞察尚未并入档案
+        pending = conn.execute(
+            "SELECT COUNT(*) c FROM insights WHERE updated_at > COALESCE(?, '')",
+            (state.get("last_profile_at"),),
+        ).fetchone()["c"]
+        if pending > 0:
+            return True
+        if state.get("cadence") == "weekly" and state.get("last_profile_at"):
+            try:
+                last = datetime.fromisoformat(state["last_profile_at"]).date()
+                if (date.today() - last).days >= PROFILE_STALE_DAYS:
+                    return True
+            except ValueError:
+                return True
+        return False
+
+    def handle_coach_settings_get(self) -> None:
+        with connect() as conn:
+            state = get_coach_state(conn)
+        return json_response(self, self._coach_settings_view(state))
+
+    def handle_coach_settings_post(self) -> None:
+        payload = self.read_json()
+        fields = {}
+        if "daily_minutes" in payload:
+            fields["daily_minutes"] = parse_positive_int(str(payload.get("daily_minutes")), DEFAULT_DAILY_MINUTES) or DEFAULT_DAILY_MINUTES
+        if "exam_date" in payload:
+            fields["exam_date"] = parse_exam_date(payload.get("exam_date")).isoformat()
+        if "cadence" in payload:
+            fields["cadence"] = "weekly" if str(payload.get("cadence")) == "weekly" else "immediate"
+        if "focus_subject" in payload:
+            fields["focus_subject"] = str(payload.get("focus_subject", "")).strip()[:60]
+        with connect() as conn:
+            state = save_coach_state(conn, **fields)
+        return json_response(self, self._coach_settings_view(state))
+
+    def handle_coach_get(self) -> None:
+        """纯读记忆：返回设置 + 最新档案摘要 + 缓存计划 + 是否需要刷新。零 token。"""
+        with connect() as conn:
+            state = get_coach_state(conn)
+            latest = load_latest_profile(conn)
+            needs_refresh = self._profile_needs_refresh(conn, state)
+            try:
+                cached_plan = json.loads(state.get("plan_json") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                cached_plan = {}
+            insight_count = conn.execute("SELECT COUNT(*) c FROM insights").fetchone()["c"]
+        profile_summary = None
+        if latest:
+            p = latest["profile"]
+            profile_summary = {
+                "version": latest["version"],
+                "evidence_count": p.get("evidence_count", 0),
+                "knowledge_count": p.get("knowledge_count", 0),
+                "avg_mastery": p.get("avg_mastery", 0),
+                "velocity": p.get("velocity", ""),
+                "headline": p.get("headline", ""),
+                "created_at": latest["created_at"],
+            }
+        return json_response(self, {
+            "settings": self._coach_settings_view(state),
+            "profile_summary": profile_summary,
+            "insight_count": insight_count,
+            "needs_refresh": needs_refresh,
+            "cached_plan": cached_plan or None,
+            "has_key": llm_enabled(),
+        })
+
+    def handle_profile_refresh(self) -> None:
+        payload = self.read_json()
+        want_ai = bool(payload.get("want_ai", True))
+        with connect() as conn:
+            result = synthesize_profile(conn, want_ai=want_ai)
+            save_coach_state(conn, last_profile_at=datetime.now().isoformat(timespec="seconds"))
+        return json_response(self, {
+            "version": result["version"],
+            "profile": result["profile"],
+            "created_at": result["created_at"],
+        })
+
+    def handle_coach_post(self) -> None:
+        payload = self.read_json()
+        want_ai = bool(payload.get("want_ai", False))
+        with connect() as conn:
+            state = get_coach_state(conn)
+            # 计划生成前，若有未并入的新洞察则先迭代一次档案
+            if self._profile_needs_refresh(conn, state):
+                synthesize_profile(conn, want_ai=want_ai)
+                state = save_coach_state(conn, last_profile_at=datetime.now().isoformat(timespec="seconds"))
+            plan = build_coach_plan(conn, state, want_ai=want_ai)
+            save_coach_state(conn, plan_json=json.dumps(plan, ensure_ascii=False), last_plan_at=plan["generated_at"])
+        return json_response(self, plan)
+
+    def handle_push_daily(self) -> None:
+        with connect() as conn:
+            reminder = build_daily_reminder(conn)
+        result = send_pushplus(reminder["title"], reminder["content"])
+        status = 200 if result["ok"] else 400
+        return json_response(self, {
+            "ok": result["ok"],
+            "title": reminder["title"],
+            "due_total": reminder["due_total"],
+            "days_left": reminder["days_left"],
+            "detail": result.get("resp") or result.get("error"),
+            "configured": bool(PUSHPLUS_TOKEN),
+        }, status)
 
     def handle_reflection_history(self) -> None:
         with connect() as conn:
