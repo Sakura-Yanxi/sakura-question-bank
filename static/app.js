@@ -975,6 +975,23 @@ async function refreshCoachBadge() {
   } catch (_) {}
 }
 
+async function clearProfile() {
+  if (!confirm("确定清除学习档案吗？这会重置档案版本、结构化错题证据和缓存计划，但不会删除题目、做题状态或做题本。")) return;
+  const hint = $("#coachHint");
+  hint.textContent = "正在清除学习档案...";
+  try {
+    const result = await api("/api/profile", { method: "DELETE" });
+    $("#coachBody").classList.add("hidden");
+    $("#coachEmpty").classList.remove("hidden");
+    $("#coachMemoryBadge").textContent = "档案 v0 · 0 条证据";
+    $("#coachNarrative").textContent = "点击上方「生成复习计划」；配置 API 后可点「AI 解读档案」。";
+    hint.textContent = `已清除 ${result.deleted_profiles || 0} 个档案版本和 ${result.deleted_insights || 0} 条结构化证据。`;
+    await loadCoach();
+  } catch (error) {
+    hint.textContent = error.message;
+  }
+}
+
 function renderCoachPlan(plan) {
   if (!plan || !plan.has_profile) {
     $("#coachBody").classList.add("hidden");
@@ -1012,7 +1029,10 @@ function renderCoachPlan(plan) {
   const pred = plan.predictions || {};
   $("#coachPredictions").innerHTML = `
     <div class="predict-ring" style="--p:${Math.round((pred.coverage || 0) * 100)}">
-      <strong>${Math.round((pred.coverage || 0) * 100)}%</strong><small>薄弱点覆盖</small>
+      <div class="predict-ring-inner">
+        <strong>${Math.round((pred.coverage || 0) * 100)}%</strong>
+        <small>薄弱点覆盖</small>
+      </div>
     </div>
     <div class="predict-lines">
       <p><span>当前平均掌握度</span><b>${Math.round((pred.current_avg_mastery || 0) * 100)}%</b></p>
@@ -1255,6 +1275,7 @@ $("#focusWrong").addEventListener("click", async () => {
 $("#refreshProfileBtn").addEventListener("click", refreshProfile);
 $("#generatePlanBtn").addEventListener("click", () => generatePlan(false));
 $("#coachNarrativeBtn").addEventListener("click", () => generatePlan(true));
+$("#clearProfileBtn").addEventListener("click", clearProfile);
 ["#coachDailyMinutes", "#coachExamDate", "#coachCadence", "#coachFocusSubject"].forEach((sel) => {
   $(sel).addEventListener("change", saveCoachSettings);
 });

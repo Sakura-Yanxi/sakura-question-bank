@@ -223,9 +223,12 @@
                 <label class="coach-field"><span>重点科目（可选）</span><input id="coachFocusSubject" type="text" list="subjectSuggestions" placeholder="全部科目" /></label>
               </div>
               <div class="coach-actions">
-                <button id="refreshProfileBtn"><i data-lucide="brain-circuit"></i>更新学习档案</button>
-                <button id="generatePlanBtn" class="ghost"><i data-lucide="route"></i>生成复习计划</button>
-                <button id="coachNarrativeBtn" class="ghost"><i data-lucide="graduation-cap"></i>AI 解读档案</button>
+                <div class="coach-action-buttons">
+                  <button id="refreshProfileBtn"><i data-lucide="brain-circuit"></i>更新学习档案</button>
+                  <button id="generatePlanBtn" class="ghost"><i data-lucide="route"></i>生成复习计划</button>
+                  <button id="coachNarrativeBtn" class="ghost"><i data-lucide="graduation-cap"></i>AI 解读档案</button>
+                  <button id="clearProfileBtn" class="ghost danger-soft-btn"><i data-lucide="trash-2"></i>清除档案</button>
+                </div>
                 <span id="coachHint" class="coach-hint"></span>
               </div>
             </div>
