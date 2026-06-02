@@ -976,16 +976,15 @@ async function refreshCoachBadge() {
 }
 
 async function clearProfile() {
-  if (!confirm("确定清除学习档案吗？这会重置档案版本、结构化错题证据和缓存计划，但不会删除题目、做题状态或做题本。")) return;
+  if (!confirm("确定清除当前建议吗？只会清空学习档案页当前生成的复习计划和摘要，不会删除做题记录、错题证据或档案版本。")) return;
   const hint = $("#coachHint");
-  hint.textContent = "正在清除学习档案...";
+  hint.textContent = "正在清除当前建议...";
   try {
-    const result = await api("/api/profile", { method: "DELETE" });
+    await api("/api/coach/plan", { method: "DELETE" });
     $("#coachBody").classList.add("hidden");
     $("#coachEmpty").classList.remove("hidden");
-    $("#coachMemoryBadge").textContent = "档案 v0 · 0 条证据";
     $("#coachNarrative").textContent = "点击上方「生成复习计划」；配置 API 后可点「AI 解读档案」。";
-    hint.textContent = `已清除 ${result.deleted_profiles || 0} 个档案版本和 ${result.deleted_insights || 0} 条结构化证据。`;
+    hint.textContent = "已清除当前建议，做题记录和学习档案都已保留。";
     await loadCoach();
   } catch (error) {
     hint.textContent = error.message;

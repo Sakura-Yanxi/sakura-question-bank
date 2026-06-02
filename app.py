@@ -2057,8 +2057,8 @@ class DemoHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         try:
             parsed = urlparse(self.path)
-            if parsed.path == "/api/profile":
-                return self.handle_clear_profile()
+            if parsed.path == "/api/coach/plan":
+                return self.handle_clear_coach_plan()
             if parsed.path.startswith("/api/documents/"):
                 doc_id = parsed.path.split("/")[-1]
                 return self.handle_delete_document(doc_id)
@@ -2274,19 +2274,14 @@ class DemoHandler(BaseHTTPRequestHandler):
             conn.execute("DELETE FROM reflections WHERE id = ?", (ref_id,))
         return json_response(self, {"ok": True, "id": ref_id})
 
-    def handle_clear_profile(self) -> None:
-        """清除学习档案层，不删除题库、做题状态、做题本或题目图片。"""
+    def handle_clear_coach_plan(self) -> None:
+        """只清除学习档案页当前建议，不删除档案版本、错题证据或做题记录。"""
         with connect() as conn:
-            deleted_profiles = conn.execute("SELECT COUNT(*) c FROM learner_profile").fetchone()["c"]
-            deleted_insights = conn.execute("SELECT COUNT(*) c FROM insights").fetchone()["c"]
-            conn.execute("DELETE FROM learner_profile")
-            conn.execute("DELETE FROM insights")
             get_coach_state(conn)
             conn.execute(
                 """
                 UPDATE coach_state
-                SET last_profile_at = NULL,
-                    last_plan_at = NULL,
+                SET last_plan_at = NULL,
                     plan_json = '{}'
                 WHERE id = ?
                 """,
@@ -2294,8 +2289,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             )
         return json_response(self, {
             "ok": True,
-            "deleted_profiles": deleted_profiles,
-            "deleted_insights": deleted_insights,
+            "cleared": "coach_plan",
         })
 
     def handle_rescan_chapters(self, doc_id: str) -> None:
