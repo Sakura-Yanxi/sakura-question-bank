@@ -55,7 +55,7 @@ META_TAGS = ["计算失误", "公式遗忘", "逻辑死角", "题意理解偏差
 WRONGISH_STATUSES = {"做错", "半会", "需复习"}
 EXAM_DATE = date(2026, 12, 20)
 
-# === AI 学习教练 / 学习者记忆模型 ===
+# === 学习档案 / 复习规划模型 ===
 # L1 洞察的错因枚举（固定 taxonomy，构成严密结构的一部分）
 ROOT_CAUSES = ["概念缺失", "计算失误", "方法不会", "审题偏差"]
 # 元认知标签 -> 错因枚举的映射（本地 fallback 抽取洞察时用）
@@ -240,7 +240,7 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_profile_scope_version ON learner_profile(scope, version);
 
-            -- 教练状态：设置 + 缓存的最近计划（单行 id='singleton'）
+            -- 学习档案状态：设置 + 缓存的最近计划（单行 id='singleton'）
             CREATE TABLE IF NOT EXISTS coach_state (
                 id TEXT PRIMARY KEY,
                 daily_minutes INTEGER NOT NULL DEFAULT 60,
@@ -1391,7 +1391,7 @@ def polish_profile_with_ai(base_profile: dict, insights: list[dict]) -> dict:
             "velocity": base_profile["velocity"],
         }
         prompt = f"""
-你是一位资深班主任，正在更新一名学生的学情档案。下面是基于真实做题数据算出的客观统计（数字已准确，请勿改动数字）：
+你是一位学习数据分析助手，正在更新一名学生的学情档案。下面是基于真实做题数据算出的客观统计（数字已准确，请勿改动数字）：
 {json.dumps(compact, ensure_ascii=False)}
 
 请只输出一个 JSON 代码块，字段固定：
@@ -1441,7 +1441,7 @@ def synthesize_profile(conn: sqlite3.Connection, want_ai: bool = True, scope: st
 
 
 # ==========================================================================
-# 教练状态（设置 + 缓存计划）
+# 学习档案状态（设置 + 缓存计划）
 # ==========================================================================
 def get_coach_state(conn: sqlite3.Connection) -> dict:
     row = conn.execute("SELECT * FROM coach_state WHERE id = ?", (COACH_STATE_ID,)).fetchone()
@@ -1475,7 +1475,7 @@ def parse_exam_date(value: str | None) -> date:
 
 
 # ==========================================================================
-# L3 决策层：基于档案记忆产出诊断 / 查缺排序 / 分阶段计划 / 今日任务 / 预测
+# L3 决策层：基于学习档案产出诊断 / 查缺排序 / 复习节奏 / 今日任务 / 容量估算
 # ==========================================================================
 def compute_review_backlog(conn: sqlite3.Connection, today: date) -> dict:
     today_iso = today.isoformat()
@@ -1657,12 +1657,12 @@ def compute_predictions(profile: dict, gaps: list[dict], days_left: int, daily_m
         "coverage": round(coverage, 3),
         "capacity_total": capacity_total,
         "outlook": outlook,
-        "note": "预测为基于当前练习容量与掌握度的粗估，仅供排优先级参考。",
+        "note": "这是基于剩余时间和薄弱点题量的容量估算，不代表成绩预测。",
     }
 
 
 def coach_narrative_local(profile: dict, gaps: list[dict], backlog: dict, phases: list[dict], predictions: dict) -> str:
-    lines = ["【班主任寄语 · 本地版】", ""]
+    lines = ["【本地复习计划摘要】", ""]
     headline = profile.get("headline")
     if headline:
         lines.append(headline)
@@ -1678,7 +1678,8 @@ def coach_narrative_local(profile: dict, gaps: list[dict], backlog: dict, phases
         lines.append(f"复习账：{backlog['overdue']} 道逾期 + {backlog['due_today']} 道今日到期，先还清再上新题。")
     lines.append("")
     lines.append(f"时间预算：距考试 {predictions['days_left']} 天，按 {phases[0]['daily_questions']} 题/天推进。")
-    lines.append(f"达标粗估：当前平均掌握度 {int(predictions['current_avg_mastery']*100)}% → 预计可达 {int(predictions['projected_avg_mastery']*100)}%。")
+    lines.append(f"容量估算：当前平均掌握度 {int(predictions['current_avg_mastery']*100)}%，剩余时间约可安排 {predictions['capacity_total']} 道练习。")
+    lines.append(f"薄弱点覆盖率估算：{int(predictions['coverage']*100)}%。")
     lines.append(predictions["outlook"])
     return "\n".join(line for line in lines if line is not None)
 
@@ -1698,14 +1699,14 @@ def coach_narrative_ai(profile: dict, gaps: list[dict], backlog: dict, phases: l
             "predictions": predictions,
         }
         prompt = f"""
-你是一位带过多届毕业班、经验丰富又懂得鼓励学生的班主任。下面是一名学生的学情档案与备考数据（数字均来自真实做题记录，请勿改动数字）：
+你是一位学习规划助手。下面是一名学生的学情档案与备考数据（数字均来自真实做题记录，请勿改动数字）：
 {json.dumps(compact, ensure_ascii=False)}
 
-请用中文写一段 250-400 字的个性化备考寄语，要求：
+请用中文写一段 250-400 字的个性化学习档案解读，要求：
 1. 先点明这名学生当前的核心问题（结合 pattern_summary 与 top_gaps）。
 2. 给出本阶段最该做的 2-3 件事，落到具体知识点和动作。
 3. 结合剩余天数给一句务实的节奏建议与鼓励。
-语气像一位真正关心学生的老师，可执行、不空泛、不堆砌套话。
+语气务实、可执行、不空泛、不堆砌套话；不要承诺提分或预测成绩。
 """
         return call_llm(prompt, temperature=0.5) or local
     except Exception:
@@ -1715,7 +1716,7 @@ def coach_narrative_ai(profile: dict, gaps: list[dict], backlog: dict, phases: l
 
 
 def build_coach_plan(conn: sqlite3.Connection, settings: dict, want_ai: bool = False) -> dict:
-    """组装完整教练计划：诊断 + 查缺 + 阶段 + 今日 + 预测 + 寄语。"""
+    """组装完整学习档案计划：诊断 + 查缺 + 阶段 + 今日 + 容量估算 + 摘要。"""
     profile_row = load_latest_profile(conn)
     profile = profile_row["profile"] if profile_row else {}
     today = date.today()
@@ -2508,7 +2509,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         quote = MOTIVATIONAL_QUOTES[today.toordinal() % len(MOTIVATIONAL_QUOTES)]
         return json_response(self, {"quote": quote, "date": today.isoformat(), "count": len(MOTIVATIONAL_QUOTES)})
 
-    # === AI 学习教练 ===
+    # === 学习档案 ===
     def _coach_settings_view(self, state: dict) -> dict:
         return {
             "daily_minutes": state.get("daily_minutes", DEFAULT_DAILY_MINUTES),

@@ -40,7 +40,7 @@
           <button class="nav-btn" data-view="mistakes"><i data-lucide="x-circle"></i><span>核心错题本</span></button>
           <button class="nav-btn" data-view="reflection"><i data-lucide="notebook-pen"></i><span>周期反思复盘</span></button>
           <button class="nav-btn" data-view="daily"><i data-lucide="calendar-check"></i><span>智能每日练习</span></button>
-          <button class="nav-btn" data-view="coach"><i data-lucide="compass"></i><span>AI 学习教练</span></button>
+          <button class="nav-btn" data-view="coach"><i data-lucide="compass"></i><span>学习档案</span></button>
         </nav>
         <datalist id="subjectSuggestions"></datalist>
       </aside>
@@ -213,8 +213,8 @@
           <section id="coach" class="view">
             <div class="panel coach-settings-panel">
               <div class="panel-head">
-                <div class="panel-title"><span class="panel-icon"><i data-lucide="compass"></i></span><div><h2>备考设置</h2><p>设定时间预算，教练据此为你量身排计划。</p></div></div>
-                <span id="coachMemoryBadge" class="section-count">记忆 v0</span>
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="compass"></i></span><div><h2>学习档案设置</h2><p>设定时间预算；本地统计负责排计划，AI 只做可选解读。</p></div></div>
+                <span id="coachMemoryBadge" class="section-count">档案 v0</span>
               </div>
               <div class="coach-settings-grid">
                 <label class="coach-field"><span>每日可投入（分钟）</span><input id="coachDailyMinutes" type="number" min="10" step="10" value="60" /></label>
@@ -224,14 +224,14 @@
               </div>
               <div class="coach-actions">
                 <button id="refreshProfileBtn"><i data-lucide="brain-circuit"></i>更新学习档案</button>
-                <button id="generatePlanBtn" class="ghost"><i data-lucide="route"></i>生成提分计划</button>
-                <button id="coachNarrativeBtn" class="ghost"><i data-lucide="graduation-cap"></i>让老师点评</button>
+                <button id="generatePlanBtn" class="ghost"><i data-lucide="route"></i>生成复习计划</button>
+                <button id="coachNarrativeBtn" class="ghost"><i data-lucide="graduation-cap"></i>AI 解读档案</button>
                 <span id="coachHint" class="coach-hint"></span>
               </div>
             </div>
 
             <div id="coachEmpty" class="panel coach-empty hidden">
-              <p>还没有建立学习档案。先在题库里给几道错题点「生成错题分析」积累证据，再点上方「更新学习档案」，教练就会越来越懂你。</p>
+              <p>还没有建立学习档案。先在题库里标记一些题目，最好给错题点「生成错题分析」积累证据，再点上方「更新学习档案」。</p>
             </div>
 
             <div id="coachBody" class="coach-body hidden">
@@ -244,18 +244,18 @@
                   <div id="coachMisconceptions" class="coach-misconceptions"></div>
                 </div>
                 <div class="panel coach-predict-panel">
-                  <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="trending-up"></i></span><h2>达标预测</h2></div></div>
+                  <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="trending-up"></i></span><h2>练习容量估算</h2></div></div>
                   <div id="coachPredictions" class="coach-predictions"></div>
                 </div>
               </div>
 
               <div class="panel">
-                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="search-check"></i></span><div><h2>查缺补漏（按性价比排序）</h2><p>每条都标注支撑数据，可点「去练」直接进题库。</p></div></div></div>
+                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="search-check"></i></span><div><h2>薄弱点证据（按优先级排序）</h2><p>每条都标注支撑数据，可点「去练」直接进题库。</p></div></div></div>
                 <div id="coachGaps" class="coach-gaps"></div>
               </div>
 
               <div class="panel">
-                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="milestone"></i></span><h2>分阶段计划</h2></div></div>
+                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="milestone"></i></span><h2>复习节奏</h2></div></div>
                 <div id="coachPhases" class="coach-phases"></div>
               </div>
 
@@ -265,8 +265,8 @@
               </div>
 
               <div class="panel">
-                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="graduation-cap"></i></span><h2>班主任寄语</h2></div><span id="coachNarrativeSource" class="tag"></span></div>
-                <pre id="coachNarrative" class="reflection-output mathjax-container">点击上方「生成提分计划」或「让老师点评」。</pre>
+                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="graduation-cap"></i></span><h2>计划摘要 / AI 解读</h2></div><span id="coachNarrativeSource" class="tag"></span></div>
+                <pre id="coachNarrative" class="reflection-output mathjax-container">点击上方「生成复习计划」；配置 API 后可点「AI 解读档案」。</pre>
               </div>
             </div>
           </section>

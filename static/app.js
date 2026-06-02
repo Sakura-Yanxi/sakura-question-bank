@@ -881,7 +881,7 @@ async function loadDaily() {
 }
 
 // ==========================================================================
-// AI 学习教练
+// 学习档案
 // ==========================================================================
 const ROOT_CAUSE_LABELS = ["概念缺失", "计算失误", "方法不会", "审题偏差"];
 const BAND_CLASS = { "已掌握": "mastered", "巩固中": "good", "不稳": "review", "薄弱": "wrong", "未触及": "" };
@@ -911,8 +911,8 @@ async function loadCoach() {
     state.coach = data;
     applyCoachSettings(data.settings);
     const v = data.profile_summary?.version || 0;
-    $("#coachMemoryBadge").textContent = `记忆 v${v} · ${data.insight_count} 条证据`;
-    if (!data.has_key) hint.textContent = "未配置 AI 接口密钥（LLM_API_KEY/MIMO_API_KEY），将使用本地诊断（离线可用）。";
+    $("#coachMemoryBadge").textContent = `档案 v${v} · ${data.insight_count} 条证据`;
+    if (!data.has_key) hint.textContent = "未配置 AI 接口密钥，将只使用本地统计与规则计划。";
     else if (data.needs_refresh) hint.textContent = "有新的错题证据尚未并入档案，建议先「更新学习档案」。";
     else hint.textContent = "";
 
@@ -921,7 +921,7 @@ async function loadCoach() {
     } else if (data.profile_summary) {
       $("#coachEmpty").classList.add("hidden");
       $("#coachBody").classList.remove("hidden");
-      $("#coachNarrative").textContent = "档案已就绪，点「生成提分计划」开始。";
+      $("#coachNarrative").textContent = "档案已就绪，点「生成复习计划」开始。";
     } else {
       $("#coachBody").classList.add("hidden");
       $("#coachEmpty").classList.remove("hidden");
@@ -954,7 +954,7 @@ async function refreshProfile() {
 
 async function generatePlan(wantAi = false) {
   const hint = $("#coachHint");
-  hint.textContent = wantAi ? "正在请老师点评（调用 AI）..." : "正在生成提分计划...";
+  hint.textContent = wantAi ? "正在调用 AI 解读学习档案..." : "正在生成本地复习计划...";
   try {
     await saveCoachSettings();
     const plan = await api("/api/coach", { method: "POST", body: JSON.stringify({ want_ai: wantAi }) });
@@ -971,7 +971,7 @@ async function refreshCoachBadge() {
     const data = await api("/api/coach");
     state.coach = data;
     const v = data.profile_summary?.version || 0;
-    $("#coachMemoryBadge").textContent = `记忆 v${v} · ${data.insight_count} 条证据`;
+    $("#coachMemoryBadge").textContent = `档案 v${v} · ${data.insight_count} 条证据`;
   } catch (_) {}
 }
 
@@ -989,7 +989,7 @@ function renderCoachPlan(plan) {
 
   $("#coachProfileStats").innerHTML = `
     <div class="summary-pill"><span>档案版本</span><strong>v${plan.profile_version}</strong></div>
-    <div class="summary-pill"><span>证据数</span><strong>${plan.evidence_count}</strong></div>
+    <div class="summary-pill"><span>已分析错题</span><strong>${plan.evidence_count}</strong></div>
     <div class="summary-pill"><span>距考试</span><strong>${plan.days_left} 天</strong></div>
     <div class="summary-pill"><span>每日预算</span><strong>${plan.daily_minutes} 分</strong></div>`;
 
@@ -1011,13 +1011,13 @@ function renderCoachPlan(plan) {
 
   const pred = plan.predictions || {};
   $("#coachPredictions").innerHTML = `
-    <div class="predict-ring" style="--p:${Math.round((pred.exam_readiness || 0) * 100)}">
-      <strong>${Math.round((pred.exam_readiness || 0) * 100)}%</strong><small>达标粗估</small>
+    <div class="predict-ring" style="--p:${Math.round((pred.coverage || 0) * 100)}">
+      <strong>${Math.round((pred.coverage || 0) * 100)}%</strong><small>薄弱点覆盖</small>
     </div>
     <div class="predict-lines">
       <p><span>当前平均掌握度</span><b>${Math.round((pred.current_avg_mastery || 0) * 100)}%</b></p>
-      <p><span>预计可达</span><b>${Math.round((pred.projected_avg_mastery || 0) * 100)}%</b></p>
-      <p><span>覆盖率</span><b>${Math.round((pred.coverage || 0) * 100)}%</b></p>
+      <p><span>剩余练习容量</span><b>${pred.capacity_total || 0} 题</b></p>
+      <p><span>薄弱点覆盖率</span><b>${Math.round((pred.coverage || 0) * 100)}%</b></p>
       <p class="predict-outlook">${escapeHtml(pred.outlook || "")}</p>
       <small>${escapeHtml(pred.note || "")}</small>
     </div>`;
@@ -1054,7 +1054,7 @@ function renderCoachPlan(plan) {
     </div>`).join("") || `<p class="empty-note">今天没有安排任务，先去更新档案或导入新题。</p>`;
 
   const src = $("#coachNarrativeSource");
-  src.textContent = plan.narrative_source === "ai" ? "AI 生成" : "本地版";
+  src.textContent = plan.narrative_source === "ai" ? "AI 解读" : "本地摘要";
   src.className = `tag ${plan.narrative_source === "ai" ? "kind mock" : ""}`;
   $("#coachNarrative").textContent = plan.narrative || "";
   typesetMath($("#coachNarrative"));
@@ -1096,7 +1096,7 @@ function setView(view) {
     mistakes: ["错题本", "集中处理做错、半会和需要复习的题目。"],
     reflection: ["总结反思", "按周或月复盘重难点、错题和后续规划。"],
     daily: ["每日练习", "优先从薄弱项和最近错题里安排练习。"],
-    coach: ["AI 学习教练", "诊断薄弱项，按剩余时间排出可落地的提分计划。"],
+    coach: ["学习档案", "基于真实做题记录生成统计、薄弱点证据和复习计划。"],
   };
   $("#viewTitle").textContent = titles[view][0];
   $("#viewSubtitle").textContent = titles[view][1];
@@ -1251,7 +1251,7 @@ $("#focusWrong").addEventListener("click", async () => {
   await loadQuestions();
 });
 
-// AI 学习教练按钮接线
+// 学习档案按钮接线
 $("#refreshProfileBtn").addEventListener("click", refreshProfile);
 $("#generatePlanBtn").addEventListener("click", () => generatePlan(false));
 $("#coachNarrativeBtn").addEventListener("click", () => generatePlan(true));
