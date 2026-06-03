@@ -657,11 +657,13 @@ function openLightbox(src, caption = "") {
   $("#lightboxCaption").textContent = caption;
   Object.assign(lightboxState, { scale: 1, tx: 0, ty: 0, dragging: false });
   applyLightboxTransform();
-  box.classList.remove("hidden");
+  // 用 <dialog> 的 showModal 进入浏览器顶层，叠在已打开的详情弹窗之上
+  if (!box.open) box.showModal();
 }
 
 function closeLightbox() {
-  $("#imageLightbox").classList.add("hidden");
+  const box = $("#imageLightbox");
+  if (box.open) box.close();
 }
 
 function setupLightbox() {
@@ -670,13 +672,13 @@ function setupLightbox() {
   const img = $("#lightboxImage");
 
   $("#lightboxClose").onclick = closeLightbox;
+  // 点击图片以外的空白处关闭
   box.addEventListener("click", (e) => { if (e.target === box) closeLightbox(); });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !box.classList.contains("hidden")) closeLightbox();
-  });
+  // <dialog> 的 Esc 会触发 cancel，统一走 close
+  box.addEventListener("cancel", (e) => { e.preventDefault(); closeLightbox(); });
 
   box.addEventListener("wheel", (e) => {
-    if (box.classList.contains("hidden")) return;
+    if (!box.open) return;
     e.preventDefault();
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
     lightboxState.scale = Math.max(0.5, Math.min(8, lightboxState.scale * factor));
@@ -701,6 +703,108 @@ function setupLightbox() {
     applyLightboxTransform();
   });
   img.addEventListener("pointerup", () => { lightboxState.dragging = false; });
+}
+
+// ==========================================================================
+// 提醒打卡
+// ==========================================================================
+const REMIND_DEFAULTS = { morningOn: "1", morningTime: "10:00", nightOn: "1", nightTime: "20:00", checkinMode: "button" };
+
+function loadRemindSettings() {
+  try { return { ...REMIND_DEFAULTS, ...JSON.parse(localStorage.getItem("remindSettings") || "{}") }; }
+  catch (_) { return { ...REMIND_DEFAULTS }; }
+}
+function saveRemindSettings() {
+  const s = {
+    morningOn: $("#remindMorningOn").value, morningTime: $("#remindMorningTime").value,
+    nightOn: $("#remindNightOn").value, nightTime: $("#remindNightTime").value,
+    checkinMode: $("#checkinMode").value,
+  };
+  localStorage.setItem("remindSettings", JSON.stringify(s));
+  renderRemindGuide(s);
+}
+
+async function loadRemind() {
+  const s = loadRemindSettings();
+  $("#remindMorningOn").value = s.morningOn;
+  $("#remindMorningTime").value = s.morningTime;
+  $("#remindNightOn").value = s.nightOn;
+  $("#remindNightTime").value = s.nightTime;
+  $("#checkinMode").value = s.checkinMode;
+  renderRemindGuide(s);
+  // 今日打卡状态
+  try {
+    const st = await api("/api/today/status");
+    setCheckinUI(st.checked_in);
+  } catch (_) {}
+  $("#pushConfigBadge").textContent = "点测试按钮检测";
+  $("#pushConfigBadge").className = "tag";
+}
+
+function setCheckinUI(done) {
+  const badge = $("#checkinBadge");
+  const btn = $("#checkinBtn");
+  if (done) {
+    badge.textContent = "今日已打卡 ✅";
+    badge.className = "section-count checkin-done";
+    btn.disabled = true;
+    $("#checkinHint").textContent = "今天已完成，晚上不会被念了 😌";
+  } else {
+    badge.textContent = "未打卡";
+    badge.className = "section-count";
+    btn.disabled = false;
+  }
+}
+
+function renderRemindGuide(s) {
+  const morning = s.morningTime.split(":");
+  const night = s.nightTime.split(":");
+  const guide = `
+    <p class="remind-note"><b>重要：</b>定时推送需要这台电脑<b>开机</b>（Windows 计划任务 / 青龙都跑在本机）。关机就不会推送，想关机也能推得把服务放到一直开机的云服务器。</p>
+    <p>① 打开 PushPlus 拿 token：<a href="https://www.pushplus.plus" target="_blank">pushplus.plus</a> 微信扫码登录 → 复制 token。</p>
+    <p>② 启动服务时带上 token（PowerShell）：</p>
+    <pre class="remind-code">$env:PUSHPLUS_TOKEN="你的token"
+python app.py</pre>
+    <p>③ <b>Windows 计划任务</b>（任务计划程序 → 创建基本任务 → 每天）建两个：</p>
+    <pre class="remind-code"># 早安 ${s.morningTime}：程序填 python，参数填
+notify_daily.py --morning
+# 晚间 ${s.nightTime}：程序填 python，参数填
+notify_daily.py --night</pre>
+    <p>“起始位置”填项目文件夹路径。${s.morningOn === "0" ? "（早安提醒当前关闭，可不建早安任务）" : ""}${s.nightOn === "0" ? "（晚间检查当前关闭，可不建晚间任务）" : ""}</p>
+    <p>④ <b>青龙面板</b>：环境变量加 <code>PUSHPLUS_TOKEN</code>，定时任务命令 <code>task notify_daily.py --morning</code>（cron <code>0 ${morning[1]||0} ${morning[0]||10} * * *</code>）与 <code>task notify_daily.py --night</code>（cron <code>0 ${night[1]||0} ${night[0]||20} * * *</code>）。</p>
+    <p class="remind-note">打卡方式：当前选「${s.checkinMode === "link" ? "微信里点链接" : "App 里点按钮"}」。${s.checkinMode === "link" ? "手机点链接需 app 能被手机访问（同 WiFi 用电脑局域网 IP，或公网地址）。" : "在本页点上方按钮即可打卡，不需要公网。"}</p>
+  `;
+  $("#remindGuide").innerHTML = guide;
+}
+
+async function doCheckin() {
+  try {
+    await fetch("/api/today/done");
+    setCheckinUI(true);
+  } catch (e) {
+    $("#checkinHint").textContent = "打卡失败：" + e.message;
+  }
+}
+
+async function testPush(kind) {
+  const hint = $("#pushTestHint");
+  hint.textContent = "正在发送测试推送…";
+  try {
+    const r = await api(`/api/push/${kind}`, { method: "POST", body: "{}" });
+    if (r.configured === false) {
+      hint.textContent = "未配置 PUSHPLUS_TOKEN：先按下方教程设好 token 再重启服务。";
+      $("#pushConfigBadge").textContent = "未配置 token";
+      $("#pushConfigBadge").className = "tag status wrong";
+    } else if (r.ok) {
+      hint.textContent = "已发送，去微信「pushplus推送加」公众号看看 ✅";
+      $("#pushConfigBadge").textContent = "已配置 ✅";
+      $("#pushConfigBadge").className = "tag status";
+    } else {
+      hint.textContent = "发送失败：" + JSON.stringify(r.detail || "");
+    }
+  } catch (e) {
+    hint.textContent = "请求失败：" + e.message;
+  }
 }
 
 async function loadChapterStats(documentId) {
@@ -1116,6 +1220,7 @@ function setView(view) {
     reflection: ["总结反思", "按周或月复盘重难点、错题和后续规划。"],
     daily: ["每日练习", "优先从薄弱项和最近错题里安排练习。"],
     coach: ["学习档案", "基于真实做题记录生成统计、薄弱点证据和复习计划。"],
+    remind: ["提醒打卡", "今日打卡、微信提醒设置与定时教程。"],
   };
   $("#viewTitle").textContent = titles[view][0];
   $("#viewSubtitle").textContent = titles[view][1];
@@ -1123,6 +1228,7 @@ function setView(view) {
   if (view === "chapterStats") loadChapterStats();
   if (view === "reflection") { loadReflectionPreview(); loadReflectionHistory(); }
   if (view === "coach") loadCoach();
+  if (view === "remind") loadRemind();
 }
 
 function bindUploadForm(selector, documentKindValue) {
@@ -1292,11 +1398,61 @@ $("#coachToday").addEventListener("click", (event) => {
   gotoLibraryFilter(filter);
 });
 
+// 提醒打卡
+$("#checkinBtn").addEventListener("click", doCheckin);
+$("#testMorningBtn").addEventListener("click", () => testPush("morning"));
+$("#testNightBtn").addEventListener("click", () => testPush("night"));
+["#remindMorningOn", "#remindMorningTime", "#remindNightOn", "#remindNightTime", "#checkinMode"].forEach((sel) => {
+  $(sel).addEventListener("change", saveRemindSettings);
+});
+
 $("#focusReview").addEventListener("click", async () => {
   state.status = "需复习";
   setView("library");
   await loadQuestions();
 });
+
+async function exportMistakesPDF({ useFilters = false } = {}) {
+  if (useFilters) {
+    const total = (state.questions || []).filter((q) => questionKind(q) !== "模拟卷").length;
+    const hasFilter = Boolean(state.documentId || state.subject || state.category || state.chapter || state.status || state.search);
+    if (!hasFilter && total > 120 && !confirm(`当前没有筛选条件，将导出 ${total} 道题，PDF 可能较大。确定继续吗？`)) return;
+  }
+  const params = new URLSearchParams();
+  params.set("mistakes_only", "1");
+  if (useFilters) {
+    params.set("mistakes_only", "0");
+    if (state.documentId) params.set("document_id", state.documentId);
+    if (state.subject) params.set("subject", state.subject);
+    if (state.category) params.set("category", state.category);
+    if (state.chapter) params.set("chapter", state.chapter);
+    if (state.status) params.set("status", state.status);
+    if (state.search) params.set("search", state.search);
+  }
+  try {
+    const res = await fetch(`/api/export/mistakes?${params.toString()}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || "导出失败，请稍后再试。");
+      return;
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const name = (cd.match(/filename="(.+?)"/) || [])[1] || "mistakes.pdf";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+  } catch (e) {
+    alert("导出失败：" + e.message);
+  }
+}
+
+$("#exportMistakes").addEventListener("click", () => exportMistakesPDF({ useFilters: false }));
+$("#exportLibrary").addEventListener("click", () => exportMistakesPDF({ useFilters: true }));
 
 $("#showAllQuestions").addEventListener("click", async () => {
   state.documentId = "";

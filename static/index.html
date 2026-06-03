@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 
-    <link rel="stylesheet" href="/static/styles.css?v=2026-toolbar-row" />
+    <link rel="stylesheet" href="/static/styles.css?v=2026-remind" />
     <script>
       window.MathJax = {
         tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"]] },
@@ -41,6 +41,7 @@
           <button class="nav-btn" data-view="reflection"><i data-lucide="notebook-pen"></i><span>周期反思复盘</span></button>
           <button class="nav-btn" data-view="daily"><i data-lucide="calendar-check"></i><span>智能每日练习</span></button>
           <button class="nav-btn" data-view="coach"><i data-lucide="compass"></i><span>学习档案</span></button>
+          <button class="nav-btn" data-view="remind"><i data-lucide="bell-ring"></i><span>提醒打卡</span></button>
         </nav>
         <datalist id="subjectSuggestions"></datalist>
       </aside>
@@ -179,6 +180,7 @@
                   <input id="questionLocate" type="search" inputmode="numeric" placeholder="输入第几题定位，如 5" />
                 </div>
                 <span id="locateHint" class="locate-hint"></span>
+                <button id="exportLibrary" class="ghost"><i data-lucide="file-down"></i>导出当前筛选 PDF</button>
               </div>
               <div id="questionGrid" class="question-grid"></div>
             </div>
@@ -199,6 +201,7 @@
             <div class="toolbar filter-actions-bar">
               <button class="ghost" id="focusWrong"><i data-lucide="skull"></i>只看做错</button>
               <button class="ghost" id="focusReview"><i data-lucide="refresh-cw"></i>需多轮复习</button>
+              <button id="exportMistakes"><i data-lucide="file-down"></i>导出错题 PDF</button>
             </div>
             <div id="mistakeGrid" class="question-grid"></div>
           </section>
@@ -292,6 +295,43 @@
               </div>
             </div>
           </section>
+
+          <section id="remind" class="view">
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="check-circle-2"></i></span><div><h2>今日打卡</h2><p>做完今天的复习，点一下打卡；晚上 8 点没打卡会被念。</p></div></div>
+                <span id="checkinBadge" class="section-count">未打卡</span>
+              </div>
+              <div class="checkin-row">
+                <button id="checkinBtn"><i data-lucide="check"></i>我已完成今日复习</button>
+                <span id="checkinHint" class="coach-hint"></span>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="bell-ring"></i></span><div><h2>微信提醒设置</h2><p>配置 PushPlus 后，可把励志语 + 错题提醒推到微信。设置仅保存在本机浏览器。</p></div></div>
+                <span id="pushConfigBadge" class="tag">检测中…</span>
+              </div>
+              <div class="remind-grid">
+                <label class="coach-field"><span>早安提醒</span><select id="remindMorningOn"><option value="1">开启</option><option value="0">关闭</option></select></label>
+                <label class="coach-field"><span>早安时间</span><input id="remindMorningTime" type="time" value="10:00" /></label>
+                <label class="coach-field"><span>晚间检查</span><select id="remindNightOn"><option value="1">开启</option><option value="0">关闭</option></select></label>
+                <label class="coach-field"><span>晚间时间</span><input id="remindNightTime" type="time" value="20:00" /></label>
+                <label class="coach-field"><span>打卡方式</span><select id="checkinMode"><option value="button">App 里点按钮（无需公网）</option><option value="link">微信里点链接（需 app 可访问）</option></select></label>
+              </div>
+              <div class="remind-actions">
+                <button id="testMorningBtn" class="ghost"><i data-lucide="send"></i>测试早安推送</button>
+                <button id="testNightBtn" class="ghost"><i data-lucide="send"></i>测试晚间推送</button>
+                <span id="pushTestHint" class="coach-hint"></span>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="calendar-clock"></i></span><h2>怎么让它每天自动跑</h2></div></div>
+              <div id="remindGuide" class="remind-guide"></div>
+            </div>
+          </section>
         </main>
       </div>
     </div>
@@ -315,16 +355,16 @@
 
     <button id="backToTop" class="back-to-top hidden" title="回到顶部"><i data-lucide="chevron-up"></i></button>
 
-    <div id="imageLightbox" class="image-lightbox hidden">
+    <dialog id="imageLightbox" class="image-lightbox">
       <div class="lightbox-bar">
         <span id="lightboxCaption"></span>
         <button id="lightboxClose" class="ghost"><i data-lucide="x"></i>关闭</button>
       </div>
       <img id="lightboxImage" alt="题目放大" />
       <p class="lightbox-tip">滚轮缩放 · 拖拽移动 · 双击复位 · Esc 关闭</p>
-    </div>
+    </dialog>
 
-    <script src="/static/app.js?v=20260603-seqno"></script>
+    <script src="/static/app.js?v=20260603-remind"></script>
     
     <script>
       lucide.createIcons();

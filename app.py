@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import urllib.request
+from io import BytesIO
 
 warnings.filterwarnings("ignore", message="'cgi' is deprecated.*", category=DeprecationWarning)
 import cgi
@@ -76,6 +77,17 @@ STUDY_MINUTES_PER_QUESTION = 6
 DEFAULT_DAILY_MINUTES = 60
 PROFILE_STALE_DAYS = 7
 COACH_STATE_ID = "singleton"
+
+# 晚间未打卡时的"狠老师型"激励（严厉但不人身攻击；可自行增改）
+NAG_MESSAGES = [
+    "今天又打算放弃？考场上可没有重来。现在去做几道。",
+    "倒计时还在走，你却停下了。明天的你，会恨今天偷懒的你。",
+    "你报名的时候不是这个态度。错题本在等你，别让今天白过。",
+    "一道没碰？这就是你想要的结果吗？现在还不晚，去做。",
+    "借口谁都会找，分数不会陪你演戏。打开做题集，至少做 3 道。",
+    "今天的懒，都会变成考场上的慌。别等到那天才后悔。",
+    "你不是没时间，是没把它当回事。现在就去补上今天的份。",
+]
 
 MOTIVATIONAL_QUOTES = [
     "You are more than what you have become.",
@@ -250,6 +262,12 @@ def init_db() -> None:
                 last_profile_at TEXT,
                 last_plan_at TEXT,
                 plan_json TEXT NOT NULL DEFAULT '{}'
+            );
+
+            -- 每日打卡：记录哪天点了「已完成」
+            CREATE TABLE IF NOT EXISTS checkins (
+                day TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL
             );
             """
         )
@@ -1819,6 +1837,209 @@ def send_pushplus(title: str, content: str, template: str = "markdown") -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def today_quote() -> str:
+    return MOTIVATIONAL_QUOTES[date.today().toordinal() % len(MOTIVATIONAL_QUOTES)]
+
+
+def is_checked_in(conn: sqlite3.Connection, day: date | None = None) -> bool:
+    day = day or date.today()
+    row = conn.execute("SELECT 1 FROM checkins WHERE day = ?", (day.isoformat(),)).fetchone()
+    return row is not None
+
+
+def mark_checkin(conn: sqlite3.Connection, day: date | None = None) -> None:
+    day = day or date.today()
+    conn.execute(
+        "INSERT OR IGNORE INTO checkins (day, created_at) VALUES (?, ?)",
+        (day.isoformat(), datetime.now().isoformat(timespec="seconds")),
+    )
+
+
+def build_morning_reminder(conn: sqlite3.Connection) -> dict:
+    """早安推送：励志金句 + 今日待复习 + 打卡链接。"""
+    base = build_daily_reminder(conn)
+    checkin_url = f"{APP_PUBLIC_URL.rstrip('/')}/api/today/done"
+    content = (
+        f"> 「{today_quote()}」\n\n"
+        f"{base['content']}\n\n"
+        f"---\n"
+        f"做完今天的复习了吗？点这里打卡：\n"
+        f"✅ [我已完成]({checkin_url})\n\n"
+        f"（晚上 8 点会检查；没打卡的话，某人会来念你 👀）"
+    )
+    return {"title": f"🌅 早安 · {base['title']}", "content": content, "due_total": base["due_total"]}
+
+
+def build_night_check(conn: sqlite3.Connection) -> dict:
+    """晚间检测：已打卡则鼓励，未打卡则狠话。返回 dict，skip=True 表示无需发送。"""
+    if is_checked_in(conn):
+        return {
+            "skip": False,
+            "title": "🌙 今日已完成 · 干得漂亮",
+            "content": f"> 「{today_quote()}」\n\n今天的复习已打卡完成 ✅ 早点休息，明天继续保持节奏。",
+        }
+    nag = NAG_MESSAGES[date.today().toordinal() % len(NAG_MESSAGES)]
+    backlog = compute_review_backlog(conn, date.today())
+    due_total = backlog["overdue"] + backlog["due_today"]
+    content = (
+        f"### ⏰ 今日未打卡\n\n"
+        f"{nag}\n\n"
+        f"- 还有 **{due_total}** 道到期错题等着你\n"
+        f"👉 [现在去做]({APP_PUBLIC_URL.rstrip('/')}) · 做完点 [✅ 我已完成]({APP_PUBLIC_URL.rstrip('/')}/api/today/done)"
+    )
+    return {"skip": False, "title": "⏰ 今天还没打卡，别装看不见", "content": content}
+
+
+def image_to_print_jpeg(image_path: Path, max_width: int = 1500, max_height: int = 2100) -> bytes:
+    """把题图压到适合 A4 打印的 JPEG，避免导出 PDF 动辄上百 MB。"""
+    from PIL import Image, ImageOps
+
+    with Image.open(image_path) as image:
+        image = ImageOps.exif_transpose(image)
+        if image.mode not in {"RGB", "L"}:
+            image = image.convert("RGB")
+        elif image.mode == "L":
+            image = image.convert("RGB")
+        image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+        out = BytesIO()
+        image.save(out, format="JPEG", quality=86, optimize=True, progressive=True)
+        return out.getvalue()
+
+
+def preferred_cjk_font() -> str | None:
+    for path in (
+        r"C:\Windows\Fonts\msyh.ttc",
+        r"C:\Windows\Fonts\NotoSansSC-VF.ttf",
+        r"C:\Windows\Fonts\simhei.ttf",
+        r"C:\Windows\Fonts\simsun.ttc",
+    ):
+        if Path(path).exists():
+            return path
+    return None
+
+
+def text_panel_png(lines: list[tuple[str, int, tuple[int, int, int]]], width: int, height: int, align: str = "left") -> bytes:
+    """用 Pillow 渲染中文小标题，避免 PyMuPDF 内置 CJK 字体字距异常。"""
+    from PIL import Image, ImageDraw, ImageFont
+
+    font_path = preferred_cjk_font()
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    y = max(10, (height - sum(size + 12 for _, size, _ in lines)) // 2)
+    for text, size, color in lines:
+        font = ImageFont.truetype(font_path, size=size) if font_path else ImageFont.load_default()
+        if len(text) > 120:
+            text = text[:117] + "..."
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        x = 0 if align == "left" else max(0, (width - text_w) // 2)
+        draw.text((x, y), text, fill=color, font=font)
+        y += size + 12
+    out = BytesIO()
+    image.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+def build_mistakes_pdf(conn: sqlite3.Connection, query: dict, mistakes_only: bool = True) -> tuple[bytes, int]:
+    """把筛选后的题目导出为 PDF。优先复制原始 PDF 对应页，原文件缺失时再退回题图。"""
+    where, params = build_question_filters(
+        query, ("category", "status", "document_id", "chapter", "subject", "search")
+    )
+    if mistakes_only:
+        cond = "(q.status IN ('做错', '半会', '需复习') OR (q.ever_wrong = 1 AND q.mastered_at IS NULL))"
+        where = f"{where} AND {cond}" if where else f"WHERE {cond}"
+    rows = conn.execute(
+        f"""
+        SELECT q.*, COALESCE(NULLIF(d.title, ''), d.filename) document_title, d.subject, d.stored_path
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        {where}
+        ORDER BY d.subject ASC, document_title ASC, q.seq_no ASC, q.page_number ASC
+        """,
+        params,
+    ).fetchall()
+
+    doc = fitz.open()
+    W, H, M = 595.0, 842.0, 36.0  # A4 纵向，点为单位
+
+    # 封面
+    today = date.today()
+    cover = doc.new_page(width=W, height=H)
+    cover.insert_image(
+        fitz.Rect(M, 220, W - M, 380),
+        stream=text_panel_png(
+            [
+                ("错题本导出", 88, (32, 36, 46)),
+                (f"共 {len(rows)} 道 · 生成于 {today.isoformat()}", 44, (107, 114, 128)),
+            ],
+            width=1600,
+            height=420,
+            align="center",
+        ),
+        keep_proportion=True,
+    )
+
+    source_cache: dict[str, fitz.Document] = {}
+    try:
+        for row in rows:
+            item = dict(row)
+            source_path = Path(item.get("stored_path") or "")
+            page_index = int(item.get("page_number") or 0) - 1
+            if source_path.exists() and source_path.is_file():
+                try:
+                    key = str(source_path.resolve())
+                    source_doc = source_cache.get(key)
+                    if source_doc is None:
+                        source_doc = fitz.open(source_path)
+                        source_cache[key] = source_doc
+                    if 0 <= page_index < source_doc.page_count:
+                        doc.insert_pdf(source_doc, from_page=page_index, to_page=page_index)
+                        continue
+                except Exception:
+                    pass
+
+            page = doc.new_page(width=W, height=H)
+            meta = normalize_meta_tags(item.get("meta_tags"))
+            head = (
+                f"第{item.get('seq_no') or item.get('page_number')}题　"
+                f"{item.get('document_title') or ''}　"
+                f"{item.get('chapter') or ''}　[{item.get('status') or ''}]"
+            )
+            sub = f"错因：{'、'.join(meta) or '—'}"
+            note = (item.get("user_note") or "").strip()
+            if note:
+                sub += f"　备注：{note[:40]}"
+            page.insert_image(
+                fitz.Rect(M, 22, W - M, 76),
+                stream=text_panel_png(
+                    [
+                        (head, 34, (32, 36, 46)),
+                        (sub, 24, (107, 114, 128)),
+                    ],
+                    width=1600,
+                    height=170,
+                ),
+                keep_proportion=True,
+            )
+
+            img_path = Path(item.get("image_path", ""))
+            img_rect = fitz.Rect(M, 84, W - M, H - M)
+            if img_path.exists():
+                try:
+                    page.insert_image(img_rect, stream=image_to_print_jpeg(img_path), keep_proportion=True)
+                except Exception:
+                    page.insert_textbox(img_rect, "（题图加载失败）", fontsize=11, fontname="china-s", align=1)
+            else:
+                page.insert_textbox(img_rect, "（题图文件已丢失）", fontsize=11, fontname="china-s", align=1)
+
+        pdf_bytes = doc.tobytes(garbage=4, deflate=True)
+    finally:
+        for source_doc in source_cache.values():
+            source_doc.close()
+        doc.close()
+    return pdf_bytes, len(rows)
+
+
 def render_page_image(page: fitz.Page, image_path: Path) -> None:
     page_rect = page.rect
     target_width = 1800
@@ -2004,6 +2225,12 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return self.handle_coach_get()
             if parsed.path == "/api/coach/settings":
                 return self.handle_coach_settings_get()
+            if parsed.path == "/api/today/done":
+                return self.handle_today_done()
+            if parsed.path == "/api/today/status":
+                return self.handle_today_status()
+            if parsed.path == "/api/export/mistakes":
+                return self.handle_export_mistakes(parse_qs(parsed.query))
             if parsed.path == "/api/reflections":
                 return self.handle_reflection_history()
             if parsed.path.startswith("/api/reflections/") and parsed.path.endswith("/download"):
@@ -2049,6 +2276,10 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return self.handle_coach_settings_post()
             if parsed.path == "/api/push/daily":
                 return self.handle_push_daily()
+            if parsed.path == "/api/push/morning":
+                return self.handle_push_morning()
+            if parsed.path == "/api/push/night":
+                return self.handle_push_night()
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
         except Exception as exc:
             traceback.print_exc()
@@ -2650,6 +2881,68 @@ class DemoHandler(BaseHTTPRequestHandler):
             "detail": result.get("resp") or result.get("error"),
             "configured": bool(PUSHPLUS_TOKEN),
         }, status)
+
+    def handle_push_morning(self) -> None:
+        with connect() as conn:
+            reminder = build_morning_reminder(conn)
+        result = send_pushplus(reminder["title"], reminder["content"])
+        status = 200 if result["ok"] else 400
+        return json_response(self, {
+            "ok": result["ok"], "kind": "morning", "title": reminder["title"],
+            "detail": result.get("resp") or result.get("error"), "configured": bool(PUSHPLUS_TOKEN),
+        }, status)
+
+    def handle_push_night(self) -> None:
+        with connect() as conn:
+            checked = is_checked_in(conn)
+            payload = build_night_check(conn)
+        result = send_pushplus(payload["title"], payload["content"])
+        status = 200 if result["ok"] else 400
+        return json_response(self, {
+            "ok": result["ok"], "kind": "night", "checked_in": checked, "title": payload["title"],
+            "detail": result.get("resp") or result.get("error"), "configured": bool(PUSHPLUS_TOKEN),
+        }, status)
+
+    def handle_today_done(self) -> None:
+        with connect() as conn:
+            mark_checkin(conn)
+        html = (
+            "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>打卡成功</title>"
+            "<style>body{margin:0;height:100vh;display:grid;place-items:center;"
+            "font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;"
+            "background:linear-gradient(135deg,#FBF1F6,#FCE7F1);color:#20242E}"
+            ".card{background:#fff;padding:40px 44px;border-radius:20px;text-align:center;"
+            "box-shadow:0 12px 40px -16px rgba(236,72,153,.4)}"
+            ".big{font-size:46px}.t{font-size:20px;font-weight:800;margin:14px 0 6px}"
+            ".s{color:#6B7280;font-size:14px}a{color:#DB2777;text-decoration:none;font-weight:700}</style>"
+            "</head><body><div class='card'><div class='big'>✅</div>"
+            "<div class='t'>今日打卡成功</div>"
+            "<div class='s'>晚上不会有人来念你了 😌<br>继续保持节奏，加油！</div>"
+            f"<p><a href='{APP_PUBLIC_URL.rstrip('/')}'>← 回到做题集</a></p>"
+            "</div></body></html>"
+        )
+        return text_response(self, html, content_type="text/html")
+
+    def handle_today_status(self) -> None:
+        with connect() as conn:
+            checked = is_checked_in(conn)
+        return json_response(self, {"date": date.today().isoformat(), "checked_in": checked})
+
+    def handle_export_mistakes(self, query: dict) -> None:
+        mistakes_only = query.get("mistakes_only", ["1"])[0] != "0"
+        with connect() as conn:
+            pdf_bytes, count = build_mistakes_pdf(conn, query, mistakes_only=mistakes_only)
+        if count == 0:
+            return json_response(self, {"error": "当前范围没有可导出的错题。"}, 404)
+        filename = f"mistakes_{date.today().isoformat()}_{count}q.pdf"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(pdf_bytes)))
+        self.end_headers()
+        self.wfile.write(pdf_bytes)
 
     def handle_reflection_history(self) -> None:
         with connect() as conn:

@@ -26,35 +26,49 @@ import urllib.request
 APP_PUBLIC_URL = os.getenv("APP_PUBLIC_URL", "http://127.0.0.1:8000")
 
 
-def via_server() -> dict:
+ENDPOINTS = {"daily": "/api/push/daily", "morning": "/api/push/morning", "night": "/api/push/night"}
+
+
+def via_server(mode: str) -> dict:
     """让正在运行的服务自己汇总并推送。"""
-    req = urllib.request.Request(f"{APP_PUBLIC_URL.rstrip('/')}/api/push/daily", data=b"{}",
+    req = urllib.request.Request(f"{APP_PUBLIC_URL.rstrip('/')}{ENDPOINTS[mode]}", data=b"{}",
                                  method="POST", headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def via_local() -> dict:
+def via_local(mode: str) -> dict:
     """服务没在跑时，直接 import app 读库并推送。"""
     import app
     app.init_db()
     with app.connect() as conn:
-        reminder = app.build_daily_reminder(conn)
-    result = app.send_pushplus(reminder["title"], reminder["content"])
-    return {"ok": result["ok"], "title": reminder["title"], "detail": result.get("resp") or result.get("error")}
+        if mode == "morning":
+            payload = app.build_morning_reminder(conn)
+        elif mode == "night":
+            payload = app.build_night_check(conn)
+        else:
+            payload = app.build_daily_reminder(conn)
+    result = app.send_pushplus(payload["title"], payload["content"])
+    return {"ok": result["ok"], "title": payload["title"], "detail": result.get("resp") or result.get("error")}
 
 
 def main() -> None:
-    use_local = "--local" in sys.argv
+    args = sys.argv[1:]
+    use_local = "--local" in args
+    mode = "daily"
+    if "--morning" in args:
+        mode = "morning"
+    elif "--night" in args:
+        mode = "night"
     try:
-        result = via_local() if use_local else via_server()
+        result = via_local(mode) if use_local else via_server(mode)
     except Exception as exc:
-        print(f"[notify_daily] 推送失败：{exc}")
+        print(f"[notify_daily] 推送失败（{mode}）：{exc}")
         sys.exit(1)
     if result.get("ok"):
-        print(f"[notify_daily] 已推送：{result.get('title')}")
+        print(f"[notify_daily] 已推送（{mode}）：{result.get('title')}")
     else:
-        print(f"[notify_daily] 未推送：{result.get('detail') or result}")
+        print(f"[notify_daily] 未推送（{mode}）：{result.get('detail') or result}")
         sys.exit(1)
 
 
