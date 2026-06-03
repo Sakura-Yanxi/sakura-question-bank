@@ -1945,6 +1945,19 @@ def build_mistakes_pdf(conn: sqlite3.Connection, query: dict, mistakes_only: boo
     where, params = build_question_filters(
         query, ("category", "status", "document_id", "chapter", "subject", "search")
     )
+    raw_ids = query.get("ids", [""])[0].strip()
+    if raw_ids:
+        selected_ids = [item for item in raw_ids.split(",") if re.fullmatch(r"[0-9a-fA-F]{32}", item)]
+        if selected_ids:
+            placeholders = ",".join("?" for _ in selected_ids)
+            where = f"{where} AND q.id IN ({placeholders})" if where else f"WHERE q.id IN ({placeholders})"
+            params.extend(selected_ids)
+        else:
+            where = f"{where} AND 1 = 0" if where else "WHERE 1 = 0"
+    status_group = query.get("status_group", [""])[0]
+    if status_group == "review" and not raw_ids:
+        cond = "(q.status IN ('半会', '需复习') OR (q.ever_wrong = 1 AND q.mastered_at IS NULL AND q.status <> '做错'))"
+        where = f"{where} AND {cond}" if where else f"WHERE {cond}"
     if mistakes_only:
         cond = "(q.status IN ('做错', '半会', '需复习') OR (q.ever_wrong = 1 AND q.mastered_at IS NULL))"
         where = f"{where} AND {cond}" if where else f"WHERE {cond}"

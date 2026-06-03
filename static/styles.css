@@ -114,6 +114,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow
   box-shadow: var(--shadow-xs);
 }
 .ghost:hover { background: var(--sakura-tint); color: var(--sakura-deep); border-color: var(--sakura-soft); box-shadow: var(--shadow-xs); }
+.ghost.filter-active { background: var(--sakura-tint); color: var(--sakura-deep); border-color: var(--sakura-main); }
 
 .danger { background: var(--danger); box-shadow: 0 8px 18px -8px rgba(239, 68, 68, 0.45); }
 .danger:hover { background: #DC2626; box-shadow: 0 10px 22px -10px rgba(220, 38, 38, 0.5); }
@@ -327,6 +328,35 @@ h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.6px; color: var(--ink
   transition: var(--transition); display: flex; flex-direction: column;
 }
 .question-card:hover, .document-card:hover, .chapter-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: var(--border-strong); }
+.selectable-question { position: relative; padding-top: 40px; }
+.question-select {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 3;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+}
+.question-select input { position: absolute; opacity: 0; pointer-events: none; }
+.question-select span {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 2px solid var(--faint);
+  background: #fff;
+}
+.question-select input:checked + span {
+  border-color: var(--sakura-main);
+  background: var(--sakura-main);
+  box-shadow: inset 0 0 0 2px #fff;
+}
 
 .thumb { height: 148px; background: var(--surface-2); overflow: hidden; cursor: pointer; border-bottom: 1px solid var(--border); }
 .thumb img { width: 100%; height: 100%; object-fit: contain; transition: var(--transition); }
@@ -408,6 +438,10 @@ h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.6px; color: var(--ink
 .toolbar > select, .toolbar > .locate-box { flex: 1 1 0; min-width: 0; }
 .toolbar select { width: 100%; }
 .filter-actions-bar { margin-bottom: 4px; flex-wrap: wrap; }
+.mistake-workbench { display: flex; flex-direction: column; gap: 14px; }
+.mistake-workbench .panel-head { margin-bottom: 0; }
+.mistake-filter-toolbar { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; }
+.mistake-selection-bar { gap: 10px; align-items: center; }
 .modern-select { min-width: 200px; }
 
 /* ==========================================================================
@@ -651,10 +685,12 @@ h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.6px; color: var(--ink
   .coach-grid { grid-template-columns: 1fr; }
   .toolbar { flex-wrap: wrap; }
   .toolbar > select, .toolbar > .locate-box { flex: 1 1 140px; }
+  .mistake-filter-toolbar { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 560px) {
   .metrics-grid { grid-template-columns: 1fr; }
+  .mistake-filter-toolbar { grid-template-columns: 1fr; }
   .coach-settings-grid { grid-template-columns: 1fr; }
   .coach-action-buttons > button { flex: 1 1 100%; }
   .coach-predictions { grid-template-columns: 1fr; justify-items: center; }

@@ -19,6 +19,16 @@ const state = {
   dashboardDocumentId: "",
   search: "",
   coach: null,
+  mistakeQuestions: [],
+  mistakeCategories: [],
+  mistakeChapters: [],
+  mistakeSubjects: [],
+  mistakeDocumentId: "",
+  mistakeSubject: "",
+  mistakeCategory: "",
+  mistakeChapter: "",
+  mistakeStatus: "",
+  selectedMistakes: new Set(),
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -44,6 +54,10 @@ function reviewTag(q) {
   if (q.mastered_at) return `<span class="tag memory mastered">已掌握</span>`;
   if (q.next_review_at) return `<span class="tag memory">${q.retention_stage || q.review_stage || 0}天 · ${q.next_review_at}</span>`;
   return `<span class="tag memory">曾错题</span>`;
+}
+
+function isActiveMistake(q) {
+  return ["做错", "需复习", "半会"].includes(q.status) || (q.ever_wrong && !q.mastered_at);
 }
 
 function selectedMetaTags() {
@@ -115,10 +129,32 @@ async function loadQuestions() {
   renderAll();
 }
 
+async function loadMistakes() {
+  const params = new URLSearchParams();
+  if (state.mistakeCategory) params.set("category", state.mistakeCategory);
+  if (state.mistakeDocumentId) params.set("document_id", state.mistakeDocumentId);
+  if (state.mistakeSubject) params.set("subject", state.mistakeSubject);
+  if (state.mistakeChapter) params.set("chapter", state.mistakeChapter);
+  const data = await api(`/api/questions?${params}`);
+  state.mistakeQuestions = data.questions.filter(isActiveMistake).filter((q) => {
+    if (state.mistakeStatus === "做错") return q.status === "做错";
+    if (state.mistakeStatus === "review") return ["需复习", "半会"].includes(q.status) || (q.ever_wrong && !q.mastered_at);
+    return true;
+  });
+  state.mistakeCategories = data.categories;
+  state.mistakeChapters = data.chapters;
+  state.mistakeSubjects = data.subjects;
+  const visibleIds = new Set(state.mistakeQuestions.map((q) => q.id));
+  state.selectedMistakes = new Set([...state.selectedMistakes].filter((id) => visibleIds.has(id)));
+  renderMistakeFilters();
+  renderMistakeGrid();
+}
+
 async function refresh() {
   await loadDocuments();
   await loadDashboardData();
   await loadQuestions();
+  if (state.view === "mistakes") await loadMistakes();
 }
 
 async function loadDashboardData() {
@@ -146,7 +182,7 @@ function renderAll() {
   $("#mockCountBadge").textContent = `${mockQuestions.length} 题`;
   renderQuestionGrid("#questionGrid", regularQuestions, "还没有题目。先从左侧上传 PDF，或清空筛选条件。");
   renderQuestionGrid("#mockQuestionGrid", mockQuestions, "还没有模拟卷题目。先上传整卷 PDF。");
-  renderQuestionGrid("#mistakeGrid", state.questions.filter((q) => ["做错", "需复习", "半会"].includes(q.status)), "还没有错题。");
+  if (state.view === "mistakes") renderMistakeGrid();
 }
 
 function renderDocumentFilters() {
@@ -197,6 +233,36 @@ function renderQuestionFilters() {
     .map((chapter) => `<option ${chapter === state.chapter ? "selected" : ""}>${chapter}</option>`)
     .join("")}`;
   $("#statusFilter").value = state.status;
+}
+
+function renderMistakeFilters() {
+  const docs = state.documents.filter((doc) => !state.mistakeSubject || doc.subject === state.mistakeSubject);
+  $("#mistakeDocumentFilter").innerHTML = `<option value="">全部资料</option>${docs
+    .map((doc) => `<option value="${doc.id}" ${doc.id === state.mistakeDocumentId ? "selected" : ""}>${documentLabel(doc)}</option>`)
+    .join("")}`;
+  $("#mistakeSubjectFilter").innerHTML = `<option value="">全部科目</option>${state.mistakeSubjects
+    .map((subject) => `<option ${subject === state.mistakeSubject ? "selected" : ""}>${subject}</option>`)
+    .join("")}`;
+  $("#mistakeCategoryFilter").innerHTML = `<option value="">全部知识点</option>${state.mistakeCategories
+    .map((category) => `<option ${category === state.mistakeCategory ? "selected" : ""}>${category}</option>`)
+    .join("")}`;
+  $("#mistakeChapterFilter").innerHTML = `<option value="">全部章节</option>${state.mistakeChapters
+    .map((chapter) => `<option ${chapter === state.mistakeChapter ? "selected" : ""}>${chapter}</option>`)
+    .join("")}`;
+}
+
+function renderMistakeGrid() {
+  $("#mistakeCountBadge").textContent = `${state.mistakeQuestions.length} 题`;
+  renderQuestionGrid("#mistakeGrid", state.mistakeQuestions, "当前筛选范围没有错题。", { selectable: true });
+  renderMistakeSelectionHint();
+}
+
+function renderMistakeSelectionHint() {
+  const selected = state.selectedMistakes.size;
+  const total = state.mistakeQuestions.length;
+  $("#focusWrong").classList.toggle("filter-active", state.mistakeStatus === "做错");
+  $("#focusReview").classList.toggle("filter-active", state.mistakeStatus === "review");
+  $("#mistakeSelectHint").textContent = selected ? `已选择 ${selected}/${total} 题` : `未勾选时导出当前 ${total} 道错题`;
 }
 
 function renderDashboard() {
@@ -337,13 +403,18 @@ async function editDocument(id) {
   };
 }
 
-function renderQuestionGrid(target, questions, emptyText = "还没有题目。先从左侧上传 PDF，或清空筛选条件。") {
+function renderQuestionGrid(target, questions, emptyText = "还没有题目。先从左侧上传 PDF，或清空筛选条件。", options = {}) {
   $(target).innerHTML =
     questions.length
       ? questions
           .map(
             (q) => `
-        <article class="question-card" id="qcard-${q.id}">
+        <article class="question-card ${options.selectable ? "selectable-question" : ""}" id="qcard-${q.id}">
+          ${options.selectable ? `
+          <label class="question-select">
+            <input type="checkbox" data-select-mistake="${q.id}" ${state.selectedMistakes.has(q.id) ? "checked" : ""} />
+            <span></span>
+          </label>` : ""}
           <div class="thumb" data-open="${q.id}">
             <img src="${q.image_url}" alt="第 ${q.page_number} 页题目" loading="lazy" />
           </div>
@@ -1229,6 +1300,7 @@ function setView(view) {
   if (view === "reflection") { loadReflectionPreview(); loadReflectionHistory(); }
   if (view === "coach") loadCoach();
   if (view === "remind") loadRemind();
+  if (view === "mistakes") loadMistakes();
 }
 
 function bindUploadForm(selector, documentKindValue) {
@@ -1307,6 +1379,37 @@ $("#chapterFilter").addEventListener("change", async (event) => {
   await loadQuestions();
 });
 
+$("#mistakeDocumentFilter").addEventListener("change", async (event) => {
+  state.mistakeDocumentId = event.target.value;
+  const doc = state.documents.find((item) => item.id === state.mistakeDocumentId);
+  if (doc) state.mistakeSubject = doc.subject || state.mistakeSubject;
+  state.mistakeCategory = "";
+  state.mistakeChapter = "";
+  await loadMistakes();
+});
+
+$("#mistakeSubjectFilter").addEventListener("change", async (event) => {
+  state.mistakeSubject = event.target.value;
+  const docs = state.documents.filter((doc) => !state.mistakeSubject || doc.subject === state.mistakeSubject);
+  if (state.mistakeDocumentId && !docs.some((doc) => doc.id === state.mistakeDocumentId)) {
+    state.mistakeDocumentId = "";
+  }
+  state.mistakeCategory = "";
+  state.mistakeChapter = "";
+  await loadMistakes();
+});
+
+$("#mistakeCategoryFilter").addEventListener("change", async (event) => {
+  state.mistakeCategory = event.target.value;
+  state.mistakeChapter = "";
+  await loadMistakes();
+});
+
+$("#mistakeChapterFilter").addEventListener("change", async (event) => {
+  state.mistakeChapter = event.target.value;
+  await loadMistakes();
+});
+
 $("#statsDocumentSelect").addEventListener("change", async (event) => {
   await loadChapterStats(event.target.value);
 });
@@ -1371,9 +1474,8 @@ $("#questionLocate").addEventListener("input", (event) => {
 })();
 
 $("#focusWrong").addEventListener("click", async () => {
-  state.status = "做错";
-  setView("library");
-  await loadQuestions();
+  state.mistakeStatus = state.mistakeStatus === "做错" ? "" : "做错";
+  await loadMistakes();
 });
 
 // 学习档案按钮接线
@@ -1407,20 +1509,31 @@ $("#testNightBtn").addEventListener("click", () => testPush("night"));
 });
 
 $("#focusReview").addEventListener("click", async () => {
-  state.status = "需复习";
-  setView("library");
-  await loadQuestions();
+  state.mistakeStatus = state.mistakeStatus === "review" ? "" : "review";
+  await loadMistakes();
 });
 
 async function exportMistakesPDF({ useFilters = false } = {}) {
-  if (useFilters) {
+  const selectedIds = state.view === "mistakes" ? [...state.selectedMistakes] : [];
+  if (state.view === "mistakes") {
+    if (!selectedIds.length && state.mistakeQuestions.length > 120 && !confirm(`将导出当前筛选下 ${state.mistakeQuestions.length} 道错题，PDF 可能较大。确定继续吗？`)) return;
+  } else if (useFilters) {
     const total = (state.questions || []).filter((q) => questionKind(q) !== "模拟卷").length;
     const hasFilter = Boolean(state.documentId || state.subject || state.category || state.chapter || state.status || state.search);
     if (!hasFilter && total > 120 && !confirm(`当前没有筛选条件，将导出 ${total} 道题，PDF 可能较大。确定继续吗？`)) return;
   }
   const params = new URLSearchParams();
   params.set("mistakes_only", "1");
-  if (useFilters) {
+  if (selectedIds.length) {
+    params.set("ids", selectedIds.join(","));
+  } else if (state.view === "mistakes") {
+    if (state.mistakeDocumentId) params.set("document_id", state.mistakeDocumentId);
+    if (state.mistakeSubject) params.set("subject", state.mistakeSubject);
+    if (state.mistakeCategory) params.set("category", state.mistakeCategory);
+    if (state.mistakeChapter) params.set("chapter", state.mistakeChapter);
+    if (state.mistakeStatus === "做错") params.set("status", "做错");
+    if (state.mistakeStatus === "review") params.set("status_group", "review");
+  } else if (useFilters) {
     params.set("mistakes_only", "0");
     if (state.documentId) params.set("document_id", state.documentId);
     if (state.subject) params.set("subject", state.subject);
@@ -1453,6 +1566,24 @@ async function exportMistakesPDF({ useFilters = false } = {}) {
 
 $("#exportMistakes").addEventListener("click", () => exportMistakesPDF({ useFilters: false }));
 $("#exportLibrary").addEventListener("click", () => exportMistakesPDF({ useFilters: true }));
+
+$("#selectAllMistakes").addEventListener("click", () => {
+  state.mistakeQuestions.forEach((q) => state.selectedMistakes.add(q.id));
+  renderMistakeGrid();
+});
+
+$("#clearMistakeSelection").addEventListener("click", () => {
+  state.selectedMistakes.clear();
+  renderMistakeGrid();
+});
+
+$("#mistakeGrid").addEventListener("change", (event) => {
+  const input = event.target.closest("[data-select-mistake]");
+  if (!input) return;
+  if (input.checked) state.selectedMistakes.add(input.dataset.selectMistake);
+  else state.selectedMistakes.delete(input.dataset.selectMistake);
+  renderMistakeSelectionHint();
+});
 
 $("#showAllQuestions").addEventListener("click", async () => {
   state.documentId = "";

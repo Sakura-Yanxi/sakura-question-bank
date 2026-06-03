@@ -198,10 +198,25 @@
           </section>
 
           <section id="mistakes" class="view">
-            <div class="toolbar filter-actions-bar">
-              <button class="ghost" id="focusWrong"><i data-lucide="skull"></i>只看做错</button>
-              <button class="ghost" id="focusReview"><i data-lucide="refresh-cw"></i>需多轮复习</button>
-              <button id="exportMistakes"><i data-lucide="file-down"></i>导出错题 PDF</button>
+            <div class="panel mistake-workbench">
+              <div class="panel-head">
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="database"></i></span><div><h2>核心错题导出</h2><p>按做题本、科目、知识点和章节筛选，也可以勾选指定错题打印。</p></div></div>
+                <span id="mistakeCountBadge" class="section-count">0 题</span>
+              </div>
+              <div class="toolbar mistake-filter-toolbar">
+                <select id="mistakeDocumentFilter"><option value="">全部资料</option></select>
+                <select id="mistakeSubjectFilter"><option value="">全部科目</option></select>
+                <select id="mistakeCategoryFilter"><option value="">全部知识点</option></select>
+                <select id="mistakeChapterFilter"><option value="">全部章节</option></select>
+              </div>
+              <div class="toolbar filter-actions-bar mistake-selection-bar">
+                <button class="ghost" id="selectAllMistakes"><i data-lucide="check-square"></i>全选当前</button>
+                <button class="ghost" id="clearMistakeSelection"><i data-lucide="square"></i>清空选择</button>
+                <button class="ghost" id="focusWrong"><i data-lucide="skull"></i>只看做错</button>
+                <button class="ghost" id="focusReview"><i data-lucide="refresh-cw"></i>需多轮复习</button>
+                <button id="exportMistakes"><i data-lucide="file-down"></i>导出选中/当前 PDF</button>
+                <span id="mistakeSelectHint" class="locate-hint"></span>
+              </div>
             </div>
             <div id="mistakeGrid" class="question-grid"></div>
           </section>
