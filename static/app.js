@@ -861,7 +861,12 @@ async function testPush(kind) {
   const hint = $("#pushTestHint");
   hint.textContent = "正在发送测试推送…";
   try {
-    const r = await api(`/api/push/${kind}`, { method: "POST", body: "{}" });
+    const res = await fetch(`/api/push/${kind}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const r = await res.json();
     if (r.configured === false) {
       hint.textContent = "未配置 PUSHPLUS_TOKEN：先按下方教程设好 token 再重启服务。";
       $("#pushConfigBadge").textContent = "未配置 token";
@@ -871,7 +876,10 @@ async function testPush(kind) {
       $("#pushConfigBadge").textContent = "已配置 ✅";
       $("#pushConfigBadge").className = "tag status";
     } else {
-      hint.textContent = "发送失败：" + JSON.stringify(r.detail || "");
+      const detail = r.detail || {};
+      hint.textContent = detail.code === 905
+        ? "PushPlus 已读到 token，但账号未实名认证，需先完成实名认证。"
+        : "发送失败：" + (detail.msg || JSON.stringify(detail || ""));
     }
   } catch (e) {
     hint.textContent = "请求失败：" + e.message;
