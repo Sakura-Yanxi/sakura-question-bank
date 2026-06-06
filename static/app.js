@@ -1923,10 +1923,54 @@ async function deleteDailyRule(id) {
   await loadDaily();
 }
 
+function updateBackupMode() {
+  const mode = $("#backupMode")?.value || "full";
+  const start = $("#backupStartDate");
+  const end = $("#backupEndDate");
+  const includeAssets = $("#backupIncludeAssets");
+  const rangeMode = mode === "range";
+  if (start) start.disabled = !rangeMode;
+  if (end) end.disabled = !rangeMode;
+  if (includeAssets) {
+    includeAssets.disabled = mode === "light";
+    includeAssets.checked = mode === "full" ? true : mode === "light" ? false : includeAssets.checked;
+  }
+  const hint = $("#migrationHint");
+  if (!hint) return;
+  if (mode === "full") {
+    hint.textContent = "完整迁移会包含原 PDF 和题图，文件可能超过 1GB。";
+  } else if (mode === "light") {
+    hint.textContent = "轻量迁移只包含数据库、标注、错题状态、AI 记忆和规则，不包含原 PDF/题图。";
+  } else {
+    hint.textContent = "范围迁移会按日期裁剪数据库；可选择是否带上关联 PDF 和题图。";
+  }
+}
+
 function exportBackup() {
   const hint = $("#migrationHint");
-  if (hint) hint.textContent = "正在准备完整迁移包，数据较大时需要等一会。";
-  window.location.href = "/api/backup/export";
+  const mode = $("#backupMode")?.value || "full";
+  const startDate = $("#backupStartDate")?.value || "";
+  const endDate = $("#backupEndDate")?.value || "";
+  const includeAssets = $("#backupIncludeAssets")?.checked ? "1" : "0";
+  if (mode === "range" && (!startDate || !endDate)) {
+    if (hint) hint.textContent = "范围迁移需要同时选择开始日期和结束日期。";
+    return;
+  }
+  const params = new URLSearchParams();
+  params.set("mode", mode);
+  params.set("include_assets", includeAssets);
+  if (mode === "range") {
+    params.set("start_date", startDate);
+    params.set("end_date", endDate);
+  }
+  if (hint) {
+    hint.textContent = mode === "full"
+      ? "正在准备完整迁移包，数据较大时需要等一会。"
+      : mode === "light"
+        ? "正在准备轻量迁移包，通常会快很多。"
+        : "正在准备范围迁移包，请稍等。";
+  }
+  window.location.href = `/api/backup/export?${params.toString()}`;
 }
 
 async function waitBackupImport(jobId) {
@@ -2700,7 +2744,10 @@ if ($("#dailyRuleList")) {
     await deleteDailyRule(btn.dataset.deleteDailyRule);
   });
 }
+if ($("#backupMode")) $("#backupMode").addEventListener("change", updateBackupMode);
+if ($("#backupIncludeAssets")) $("#backupIncludeAssets").addEventListener("change", updateBackupMode);
 if ($("#exportBackup")) $("#exportBackup").addEventListener("click", exportBackup);
+updateBackupMode();
 if ($("#importBackupFile")) {
   $("#importBackupFile").addEventListener("change", async (event) => {
     await importBackup(event.target.files?.[0]);

@@ -3290,7 +3290,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/daily/rule-options":
                 return self.handle_daily_rule_options(parse_qs(parsed.query))
             if parsed.path == "/api/backup/export":
-                return self.handle_backup_export()
+                return self.handle_backup_export(parse_qs(parsed.query))
             if parsed.path == "/api/backup/import-status":
                 return self.handle_backup_import_status(parse_qs(parsed.query))
             if parsed.path == "/api/reflection":
@@ -4589,16 +4589,36 @@ class DemoHandler(BaseHTTPRequestHandler):
             conn.execute("DELETE FROM daily_rules WHERE id = ?", (rule_id,))
         return json_response(self, {"ok": True})
 
-    def handle_backup_export(self) -> None:
-        filename = f"sakura_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    def handle_backup_export(self, query: dict) -> None:
+        mode = (query.get("mode") or ["full"])[0]
+        if mode not in {"full", "light", "range"}:
+            return json_response(self, {"error": "导出模式必须是 full、light 或 range"}, 400)
+        start_date = (query.get("start_date") or [""])[0].strip()
+        end_date = (query.get("end_date") or [""])[0].strip()
+        include_assets = (query.get("include_assets") or ["1" if mode == "full" else "0"])[0] == "1"
+        if mode == "light":
+            include_assets = False
+            start_date = ""
+            end_date = ""
+        if mode == "range" and (not start_date or not end_date):
+            return json_response(self, {"error": "范围导出必须填写开始日期和结束日期"}, 400)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix = mode if mode != "range" else f"range_{start_date}_to_{end_date}"
+        filename = f"sakura_backup_{suffix}_{stamp}.zip"
         with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
             tmp_path = Path(tmp.name)
         try:
-            sakura_backup.build_backup_zip_file(
-                tmp_path,
-                DB_PATH,
-                {"uploads": UPLOAD_DIR, "pages": PAGE_DIR},
-            )
+            try:
+                sakura_backup.build_backup_zip_file(
+                    tmp_path,
+                    DB_PATH,
+                    {"uploads": UPLOAD_DIR, "pages": PAGE_DIR},
+                    include_assets=include_assets,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            except ValueError as exc:
+                return json_response(self, {"error": str(exc)}, 400)
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')

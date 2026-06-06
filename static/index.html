@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260606-pdf-module-cleanup" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260606-backup-modes" />
     <script>
       window.MathJax = {
         tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] },
@@ -319,13 +319,35 @@
                   <span class="panel-icon"><i data-lucide="package-open"></i></span>
                   <div>
                     <h2>数据迁移</h2>
-                    <p>全量导出本地数据：上传 PDF、题图、题目、标注、错题状态、复盘记录、AI 记忆和每日规则都会包含；导入时会先备份当前数据。</p>
+                    <p>支持完整迁移、轻量迁移和按日期范围导出；导入时会先备份当前数据。</p>
                   </div>
                 </div>
               </div>
+              <div class="migration-options">
+                <label class="coach-field">
+                  <span>导出模式</span>
+                  <select id="backupMode">
+                    <option value="full">完整迁移：数据库 + PDF + 题图</option>
+                    <option value="light">轻量迁移：只导数据库和标注</option>
+                    <option value="range">范围迁移：按日期筛选数据</option>
+                  </select>
+                </label>
+                <label class="coach-field">
+                  <span>开始日期</span>
+                  <input id="backupStartDate" type="date" disabled />
+                </label>
+                <label class="coach-field">
+                  <span>结束日期</span>
+                  <input id="backupEndDate" type="date" disabled />
+                </label>
+                <label class="toggle-line migration-asset-toggle">
+                  <input id="backupIncludeAssets" type="checkbox" checked />
+                  <span>包含关联 PDF 与题图</span>
+                </label>
+              </div>
               <div class="migration-actions">
-                <button id="exportBackup"><i data-lucide="download"></i>导出全量 ZIP</button>
-                <label class="ghost file-action"><i data-lucide="upload"></i>导入全量 ZIP<input id="importBackupFile" type="file" accept=".zip,application/zip" /></label>
+                <button id="exportBackup"><i data-lucide="download"></i>导出迁移 ZIP</button>
+                <label class="ghost file-action"><i data-lucide="upload"></i>导入迁移 ZIP<input id="importBackupFile" type="file" accept=".zip,application/zip" /></label>
                 <span id="migrationHint" class="coach-hint"></span>
               </div>
             </div>
@@ -621,7 +643,7 @@
       <p class="lightbox-tip">滚轮缩放 · 拖拽移动 · 双击复位 · Esc 关闭</p>
     </dialog>
 
-    <script src="/static/app.js?v=20260606-pdf-module-cleanup"></script>
+    <script src="/static/app.js?v=20260606-backup-modes"></script>
     
     <script>
       lucide.createIcons();
