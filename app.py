@@ -30,6 +30,7 @@ warnings.filterwarnings("ignore", message="'cgi' is deprecated.*", category=Depr
 import cgi
 
 import fitz
+import sakura_reminders
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -101,6 +102,13 @@ WEWORK_BOT_WEBHOOK = os.getenv("WEWORK_BOT_WEBHOOK", "")
 # 推送正文里的“打开做题集”链接（部署到公网后改成你的域名/IP）
 APP_PUBLIC_URL = os.getenv("APP_PUBLIC_URL", "http://127.0.0.1:8000")
 WEATHER_CITY = os.getenv("WEATHER_CITY", "北京")
+REMIND_MORNING_ON = os.getenv("REMIND_MORNING_ON", "1")
+REMIND_MORNING_TIME = os.getenv("REMIND_MORNING_TIME", "10:00")
+REMIND_NIGHT_ON = os.getenv("REMIND_NIGHT_ON", "1")
+REMIND_NIGHT_TIME = os.getenv("REMIND_NIGHT_TIME", "20:00")
+REMIND_WEATHER_ON = os.getenv("REMIND_WEATHER_ON", "1")
+REMIND_WEATHER_TIME = os.getenv("REMIND_WEATHER_TIME", "22:30")
+REMIND_CHECKIN_MODE = os.getenv("REMIND_CHECKIN_MODE", "cloud")
 DEFAULT_SUBJECT = "未分类"
 DEFAULT_CATEGORY = "待归类"
 DEFAULT_CHAPTER = "未识别章节"
@@ -925,9 +933,23 @@ def mask_secret(value: str) -> str:
     value = value or ""
     if not value:
         return ""
-    if len(value) <= 10:
-        return value[:2] + "****"
-    return value[:6] + "..." + value[-4:]
+    keep = 4 if len(value) <= 12 else 8
+    return value[:keep] + "xxxx"
+
+
+def mask_public_url(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    if parsed.scheme and parsed.netloc:
+        host = parsed.netloc
+        if re.match(r"^\d+\.\d+\.", host):
+            parts = host.split(".")
+            return f"{parsed.scheme}://{parts[0]}.{parts[1]}.xxxx"
+        keep = min(len(host), 6 if re.match(r"^\d+\.\d+", host) else 10)
+        return f"{parsed.scheme}://{host[:keep]}xxxx"
+    return mask_secret(value)
 
 
 def llm_settings_view() -> dict:
@@ -946,7 +968,8 @@ def notification_settings_view() -> dict:
         "masked_wework": mask_secret(WEWORK_BOT_WEBHOOK),
         "has_pushplus": bool(PUSHPLUS_TOKEN),
         "masked_pushplus": mask_secret(PUSHPLUS_TOKEN),
-        "app_public_url": APP_PUBLIC_URL,
+        "app_public_url": "",
+        "masked_app_public_url": mask_public_url(APP_PUBLIC_URL),
     }
 
 
@@ -992,6 +1015,54 @@ def update_notification_runtime_settings(
     if updates:
         write_local_env(updates)
     return notification_settings_view()
+
+
+def normalize_public_url(value: str) -> str:
+    clean = value.strip().rstrip("/")
+    parsed = urlparse(clean)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("公网地址必须是完整 URL，例如：https://your-domain.example")
+    return clean
+
+
+def reminder_settings_view(cron_status: dict | None = None) -> dict:
+    return sakura_reminders.ReminderSettings(
+        morning_on=REMIND_MORNING_ON,
+        morning_time=REMIND_MORNING_TIME,
+        night_on=REMIND_NIGHT_ON,
+        night_time=REMIND_NIGHT_TIME,
+        weather_on=REMIND_WEATHER_ON,
+        weather_time=REMIND_WEATHER_TIME,
+        checkin_mode=REMIND_CHECKIN_MODE,
+    ).as_payload(cron_status)
+
+
+def update_reminder_runtime_settings(payload: dict) -> dict:
+    global REMIND_MORNING_ON, REMIND_MORNING_TIME, REMIND_NIGHT_ON, REMIND_NIGHT_TIME
+    global REMIND_WEATHER_ON, REMIND_WEATHER_TIME, REMIND_CHECKIN_MODE
+    current = sakura_reminders.ReminderSettings(
+        morning_on=REMIND_MORNING_ON,
+        morning_time=REMIND_MORNING_TIME,
+        night_on=REMIND_NIGHT_ON,
+        night_time=REMIND_NIGHT_TIME,
+        weather_on=REMIND_WEATHER_ON,
+        weather_time=REMIND_WEATHER_TIME,
+        checkin_mode=REMIND_CHECKIN_MODE,
+    )
+    settings = sakura_reminders.merge_settings(current, payload)
+    REMIND_MORNING_ON = settings.morning_on
+    REMIND_MORNING_TIME = settings.morning_time
+    REMIND_NIGHT_ON = settings.night_on
+    REMIND_NIGHT_TIME = settings.night_time
+    REMIND_WEATHER_ON = settings.weather_on
+    REMIND_WEATHER_TIME = settings.weather_time
+    REMIND_CHECKIN_MODE = settings.checkin_mode
+    updates = settings.as_env()
+    for key, value in updates.items():
+        os.environ[key] = value
+    write_local_env(updates)
+    cron_status = sakura_reminders.install_crontab(settings, ROOT, DATA_DIR)
+    return settings.as_payload(cron_status)
 
 
 def call_llm(prompt: str, temperature: float = 0.3) -> str:
@@ -3448,12 +3519,15 @@ def render_page_clip_image(page: fitz.Page, clip: fitz.Rect, image_path: Path) -
     pix.save(image_path)
 
 
-def detect_question_slices(page: fitz.Page) -> list[dict]:
-    """Split a multi-question exam page by visible question numbers such as 1、2. 3．"""
+def detect_question_starts(page: fitz.Page) -> list[dict]:
+    """Find reliable question-number starts on one exam page."""
     page_rect = page.rect
     data = page.get_text("dict", sort=True)
     starts = []
-    question_no_pattern = re.compile(r"^\s*(\d{1,3})(?:\s*[、.．)]|[^\d])")
+    # Require explicit question-number punctuation. The previous broad fallback
+    # treated standalone numbers inside formulas (for example a limit equal to
+    # 1) as a new question boundary and could crop away most of the question.
+    question_no_pattern = re.compile(r"^\s*(?:第\s*)?(\d{1,3})\s*(?:[、.．)]|题)")
     for block in data.get("blocks", []):
         if block.get("type") != 0:
             continue
@@ -3464,16 +3538,29 @@ def detect_question_slices(page: fitz.Page) -> list[dict]:
                 continue
             bbox = fitz.Rect(line.get("bbox", block.get("bbox", page_rect)))
             # 题号一般在正文左侧，排除页眉、页脚、目录编号等干扰。
-            if bbox.y0 < page_rect.height * 0.08 or bbox.x0 > page_rect.width * 0.35:
+            # Questions often continue very close to the top edge on later
+            # pages. Keep a small header guard instead of discarding the top 8%.
+            if bbox.y0 < page_rect.height * 0.015 or bbox.x0 > page_rect.width * 0.28:
                 continue
-            starts.append({"number": match.group(1), "y": max(page_rect.y0, bbox.y0 - 8)})
+            starts.append({"number": match.group(1), "value": int(match.group(1)), "y": max(page_rect.y0, bbox.y0 - 8)})
 
     deduped = []
     for item in sorted(starts, key=lambda item: item["y"]):
         if deduped and abs(item["y"] - deduped[-1]["y"]) < 12:
             continue
+        # Real exam question numbers increase down the page. Ignore repeated or
+        # decreasing numbers extracted from formulas, option values or watermarks.
+        if deduped and item["value"] <= deduped[-1]["value"]:
+            continue
         deduped.append(item)
-    if len(deduped) < 2:
+    return deduped
+
+
+def detect_question_slices(page: fitz.Page, starts: list[dict] | None = None) -> list[dict]:
+    """Split a multi-question exam page by visible question numbers such as 1、2. 3．"""
+    page_rect = page.rect
+    deduped = starts if starts is not None else detect_question_starts(page)
+    if not deduped:
         return []
 
     slices = []
@@ -3484,8 +3571,44 @@ def detect_question_slices(page: fitz.Page) -> list[dict]:
         if bottom - top < 36:
             continue
         clip = fitz.Rect(page_rect.x0 + 18, top, page_rect.x1 - 18, bottom)
-        slices.append({"question_no": start["number"], "clip": clip})
+        slices.append({"question_no": start["number"], "question_value": start["value"], "clip": clip})
     return slices
+
+
+def append_page_clip_to_question_image(page: fitz.Page, clip: fitz.Rect, image_path: Path) -> None:
+    """Append a continuation from the next PDF page below an existing question image."""
+    from PIL import Image
+
+    def trim_vertical_whitespace(image: Image.Image, trim_top: bool, trim_bottom: bool) -> Image.Image:
+        rgb = image.convert("RGB")
+        sample_width = min(360, rgb.width)
+        gray = rgb.convert("L").resize((sample_width, rgb.height))
+        pixels = gray.load()
+        content_rows = []
+        for y in range(gray.height):
+            dark_pixels = sum(1 for x in range(sample_width) if pixels[x, y] < 210)
+            if dark_pixels >= max(2, int(sample_width * 0.002)):
+                content_rows.append(y)
+        if not content_rows:
+            return rgb
+        padding = 24
+        top = max(0, content_rows[0] - padding) if trim_top else 0
+        bottom = min(rgb.height, content_rows[-1] + padding + 1) if trim_bottom else rgb.height
+        return rgb.crop((0, top, rgb.width, bottom))
+
+    temp_path = PAGE_DIR / f".continuation_{uuid.uuid4().hex}.png"
+    render_page_clip_image(page, clip, temp_path)
+    try:
+        with Image.open(image_path) as first_source, Image.open(temp_path) as continuation_source:
+            first = trim_vertical_whitespace(first_source, trim_top=False, trim_bottom=True)
+            continuation = trim_vertical_whitespace(continuation_source, trim_top=True, trim_bottom=False)
+            width = max(first.width, continuation.width)
+            combined = Image.new("RGB", (width, first.height + continuation.height), "white")
+            combined.paste(first, (0, 0))
+            combined.paste(continuation, (0, first.height))
+            combined.save(image_path, format="PNG", optimize=True)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def split_textbook_paragraphs(text: str) -> list[str]:
@@ -3682,6 +3805,9 @@ def import_pdf(
             if page_start > page_end:
                 raise ValueError("页码范围无效，请检查起止页。")
             seq_no = 0
+            previous_question_id = ""
+            previous_question_image: Path | None = None
+            previous_question_value: int | None = None
             for index in range(page_start, page_end + 1):
                 page = pdf[index - 1]
                 text = page.get_text("text", sort=True).strip()
@@ -3692,7 +3818,30 @@ def import_pdf(
                     if extracted_chapter != DEFAULT_CHAPTER:
                         last_chapter = extracted_chapter
                     chapter_hint = last_chapter if last_chapter != DEFAULT_CHAPTER else extracted_chapter
-                slices = detect_question_slices(page) if document_kind == MOCK_PAPER_KIND and split_questions else []
+                starts = detect_question_starts(page) if document_kind == MOCK_PAPER_KIND and split_questions else []
+                if (
+                    starts
+                    and previous_question_id
+                    and previous_question_image
+                    and previous_question_value is not None
+                    and starts[0]["value"] == previous_question_value + 1
+                    and starts[0]["y"] > page.rect.height * 0.12
+                ):
+                    continuation_clip = fitz.Rect(
+                        page.rect.x0 + 18,
+                        page.rect.y0 + 16,
+                        page.rect.x1 - 18,
+                        starts[0]["y"] - 4,
+                    )
+                    if continuation_clip.height > 36:
+                        append_page_clip_to_question_image(page, continuation_clip, previous_question_image)
+                        continuation_text = page.get_text("text", sort=True, clip=continuation_clip).strip()
+                        if continuation_text:
+                            conn.execute(
+                                "UPDATE questions SET ocr_text = trim(coalesce(ocr_text, '') || char(10) || ?) WHERE id = ?",
+                                (continuation_text, previous_question_id),
+                            )
+                slices = detect_question_slices(page, starts) if document_kind == MOCK_PAPER_KIND and split_questions else []
                 if not slices:
                     slices = [{"question_no": "", "clip": None}]
                 for slice_index, item in enumerate(slices, start=1):
@@ -3741,6 +3890,10 @@ def import_pdf(
                             "chapter": classification["chapter"],
                         }
                     )
+                    previous_question_id = q_id
+                    previous_question_image = image_path
+                    value = item.get("question_value")
+                    previous_question_value = int(value) if value is not None else None
     finally:
         pdf.close()
 
@@ -3995,6 +4148,8 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return self.handle_llm_settings_get()
             if parsed.path in ("/api/notification/settings", "/api/notify/settings"):
                 return self.handle_notification_settings_get()
+            if parsed.path == "/api/reminder/settings":
+                return self.handle_reminder_settings_get()
             if parsed.path == "/api/today/done":
                 return self.handle_today_done()
             if parsed.path == "/api/today/status":
@@ -4100,6 +4255,8 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return self.handle_llm_settings_post()
             if parsed.path in ("/api/notification/settings", "/api/notify/settings"):
                 return self.handle_notification_settings_post()
+            if parsed.path == "/api/reminder/settings":
+                return self.handle_reminder_settings_post()
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
         except Exception as exc:
             traceback.print_exc()
@@ -4817,6 +4974,16 @@ class DemoHandler(BaseHTTPRequestHandler):
     def handle_notification_settings_get(self) -> None:
         return json_response(self, notification_settings_view())
 
+    def handle_reminder_settings_get(self) -> None:
+        return json_response(self, reminder_settings_view())
+
+    def handle_reminder_settings_post(self) -> None:
+        settings = update_reminder_runtime_settings(self.read_json())
+        return json_response(self, {
+            **settings,
+            "message": settings.get("cron", {}).get("message") or "提醒时间已保存。",
+        })
+
     def handle_notification_settings_post(self) -> None:
         payload = self.read_json()
         wework_webhook = str(payload.get("wework_webhook", "")).strip()
@@ -4824,10 +4991,14 @@ class DemoHandler(BaseHTTPRequestHandler):
         app_public_url = str(payload.get("app_public_url", "")).strip()
         if not any([wework_webhook, pushplus_token, app_public_url]):
             return json_response(self, {"error": "至少填写企业微信 Webhook、PushPlus Token 或公网地址中的一项"}, 400)
+        try:
+            normalized_public_url = normalize_public_url(app_public_url) if app_public_url else None
+        except ValueError as exc:
+            return json_response(self, {"error": str(exc)}, 400)
         settings = update_notification_runtime_settings(
             wework_webhook=wework_webhook or None,
             pushplus_token=pushplus_token or None,
-            app_public_url=app_public_url or None,
+            app_public_url=normalized_public_url,
         )
         return json_response(self, {
             **settings,

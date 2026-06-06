@@ -43,6 +43,15 @@ const META_TAGS = ["计算失误", "公式遗忘", "逻辑死角", "题意理解
 
 document.body.dataset.view = state.view;
 
+function on(selector, eventName, handler) {
+  const element = $(selector);
+  if (element) element.addEventListener(eventName, handler);
+}
+
+function onEach(selectors, eventName, handler) {
+  selectors.forEach((selector) => on(selector, eventName, handler));
+}
+
 function typesetMath(root = document.body) {
   if (window.MathJax?.typesetPromise) {
     if (window.MathJax.typesetClear) window.MathJax.typesetClear([root]);
@@ -728,10 +737,47 @@ async function rescanDocument(id) {
   await refresh();
 }
 
+function currentVisibleQuestionIds() {
+  const activeView = document.querySelector(".view.active") || document;
+  const ids = [...activeView.querySelectorAll("[data-open]")]
+    .map((el) => String(el.dataset.open || ""))
+    .filter(Boolean);
+  return [...new Set(ids)];
+}
+
+function detailNeighbor(id, step) {
+  const visibleIds = currentVisibleQuestionIds();
+  let ids = visibleIds;
+  if (!ids.includes(String(id))) {
+    const source = state.view === "mistakes" ? state.mistakeQuestions : state.questions;
+    ids = (source || []).map((q) => String(q.id));
+  }
+  const index = ids.indexOf(String(id));
+  if (index < 0) return { id: "", index: -1, total: ids.length };
+  const nextIndex = index + step;
+  return {
+    id: ids[nextIndex] || "",
+    index,
+    total: ids.length,
+  };
+}
+
+function detailPositionText(id) {
+  const visibleIds = currentVisibleQuestionIds();
+  const ids = visibleIds.includes(String(id))
+    ? visibleIds
+    : (state.view === "mistakes" ? state.mistakeQuestions : state.questions).map((q) => String(q.id));
+  const index = ids.indexOf(String(id));
+  return index >= 0 && ids.length ? `${index + 1}/${ids.length}` : "";
+}
+
 async function openDetail(id, presetStatus = "") {
   const q = await api(`/api/questions/${id}`);
   const currentStatus = presetStatus || q.status;
   const dialog = $("#detailDialog");
+  const prev = detailNeighbor(q.id, -1);
+  const next = detailNeighbor(q.id, 1);
+  const positionText = detailPositionText(q.id);
   $("#detailContent").innerHTML = `
     <div class="detail">
       <div class="detail-image">
@@ -739,6 +785,9 @@ async function openDetail(id, presetStatus = "") {
           <button class="ghost" id="zoomImage">放大查看</button>
           <button class="ghost" id="enableCrop">裁剪题目边界</button>
           <button id="saveCrop" disabled>保存裁剪</button>
+          <span class="detail-position">${positionText}</span>
+          <button class="ghost detail-nav-btn" id="prevQuestion" ${prev.id ? "" : "disabled"}><i data-lucide="chevron-left"></i>上一题</button>
+          <button class="ghost detail-nav-btn next" id="nextQuestion" ${next.id ? "" : "disabled"}>下一题<i data-lucide="chevron-right"></i></button>
         </div>
         <div class="crop-stage" id="cropStage">
           <img id="detailImage" src="${q.image_url}?t=${Date.now()}" alt="题目页面" />
@@ -802,6 +851,16 @@ async function openDetail(id, presetStatus = "") {
   typesetMath($("#detailContent"));
 
   $("#closeDetail").onclick = () => dialog.close();
+  $("#prevQuestion").onclick = () => {
+    if (!prev.id) return;
+    dialog.close();
+    openDetail(prev.id);
+  };
+  $("#nextQuestion").onclick = () => {
+    if (!next.id) return;
+    dialog.close();
+    openDetail(next.id);
+  };
   $("#saveDetail").onclick = async () => {
     await updateQuestion(q.id, {
       status: $("#detailStatus").value,
@@ -1034,7 +1093,7 @@ function setupLightbox() {
 // ==========================================================================
 // 提醒打卡
 // ==========================================================================
-const REMIND_DEFAULTS = { morningOn: "1", morningTime: "10:00", nightOn: "1", nightTime: "20:00", checkinMode: "cloud" };
+const REMIND_DEFAULTS = { morningOn: "1", morningTime: "10:00", nightOn: "1", nightTime: "20:00", weatherOn: "1", weatherTime: "22:30", checkinMode: "cloud" };
 
 function normalizeCheckinMode(value) {
   if (value === "button") return "local";
@@ -1042,31 +1101,76 @@ function normalizeCheckinMode(value) {
   return value === "local" ? "local" : "cloud";
 }
 
-function loadRemindSettings() {
-  try {
-    const settings = { ...REMIND_DEFAULTS, ...JSON.parse(localStorage.getItem("remindSettings") || "{}") };
-    settings.checkinMode = normalizeCheckinMode(settings.checkinMode);
-    return settings;
-  }
-  catch (_) { return { ...REMIND_DEFAULTS }; }
+function normalizeRemindSettings(data = {}) {
+  const morningOn = data.morning_on ?? data.morningOn ?? REMIND_DEFAULTS.morningOn;
+  const nightOn = data.night_on ?? data.nightOn ?? REMIND_DEFAULTS.nightOn;
+  const dayReminderOn = morningOn === "0" && nightOn === "0" ? "0" : "1";
+  return {
+    morningOn: dayReminderOn,
+    morningTime: data.morning_time ?? data.morningTime ?? REMIND_DEFAULTS.morningTime,
+    nightOn: dayReminderOn,
+    nightTime: data.night_time ?? data.nightTime ?? REMIND_DEFAULTS.nightTime,
+    weatherOn: data.weather_on ?? data.weatherOn ?? REMIND_DEFAULTS.weatherOn,
+    weatherTime: data.weather_time ?? data.weatherTime ?? REMIND_DEFAULTS.weatherTime,
+    checkinMode: normalizeCheckinMode(data.checkin_mode ?? data.checkinMode ?? REMIND_DEFAULTS.checkinMode),
+    cron: data.cron || {},
+  };
 }
-function saveRemindSettings() {
+
+function readRemindForm() {
+  const dayReminderOn = $("#remindMorningOn").value;
   const s = {
-    morningOn: $("#remindMorningOn").value, morningTime: $("#remindMorningTime").value,
-    nightOn: $("#remindNightOn").value, nightTime: $("#remindNightTime").value,
+    morningOn: dayReminderOn, morningTime: $("#remindMorningTime").value,
+    nightOn: dayReminderOn, nightTime: $("#remindNightTime").value,
+    weatherOn: $("#remindWeatherOn")?.value || "1", weatherTime: $("#remindWeatherTime")?.value || "22:30",
     checkinMode: normalizeCheckinMode($("#checkinMode").value),
   };
-  localStorage.setItem("remindSettings", JSON.stringify(s));
-  renderRemindGuide(s);
+  return s;
+}
+
+function applyRemindSettings(s) {
+  $("#remindMorningOn").value = s.morningOn;
+  $("#remindMorningTime").value = s.morningTime;
+  $("#remindNightTime").value = s.nightTime;
+  if ($("#remindWeatherOn")) $("#remindWeatherOn").value = s.weatherOn;
+  if ($("#remindWeatherTime")) $("#remindWeatherTime").value = s.weatherTime;
+  $("#checkinMode").value = s.checkinMode;
+}
+
+async function saveRemindSettings() {
+  const s = readRemindForm();
+  renderRemindGuide(s, "正在同步服务器定时任务...");
+  try {
+    const data = await api("/api/reminder/settings", {
+      method: "POST",
+      body: JSON.stringify({
+        morning_on: s.morningOn,
+        morning_time: s.morningTime,
+        night_on: s.nightOn,
+        night_time: s.nightTime,
+        weather_on: s.weatherOn,
+        weather_time: s.weatherTime,
+        checkin_mode: s.checkinMode,
+      }),
+    });
+    const saved = normalizeRemindSettings(data);
+    applyRemindSettings(saved);
+    renderRemindGuide(saved, data.message || saved.cron?.message || "服务器定时任务已同步。");
+  } catch (error) {
+    renderRemindGuide(s, `保存失败：${error.message}`);
+  }
 }
 
 async function loadRemind() {
-  const s = loadRemindSettings();
-  $("#remindMorningOn").value = s.morningOn;
-  $("#remindMorningTime").value = s.morningTime;
-  $("#remindNightOn").value = s.nightOn;
-  $("#remindNightTime").value = s.nightTime;
-  $("#checkinMode").value = s.checkinMode;
+  let s = { ...REMIND_DEFAULTS };
+  try {
+    s = normalizeRemindSettings(await api("/api/reminder/settings"));
+  } catch (_) {
+    try {
+      s = normalizeRemindSettings(JSON.parse(localStorage.getItem("remindSettings") || "{}"));
+    } catch (__) {}
+  }
+  applyRemindSettings(s);
   renderRemindGuide(s);
   // 今日打卡状态
   try {
@@ -1093,24 +1197,26 @@ function setCheckinUI(done) {
   }
 }
 
-function renderRemindGuide(s) {
+function renderRemindGuide(s, statusText = "") {
   {
     const mode = normalizeCheckinMode(s.checkinMode);
     const morning = s.morningTime.split(":");
     const night = s.nightTime.split(":");
+    const weather = (s.weatherTime || "22:30").split(":");
     const modeText = mode === "cloud" ? "云端打卡" : "本地打卡";
     const modeDesc = mode === "cloud"
       ? "微信/企业微信推送里的链接会打开云端 Sakura 并记录服务器打卡，适合阿里云部署，电脑关机也不影响提醒。"
       : "只在当前本地浏览器点击上方按钮记录打卡，适合本机开发和离线使用；微信里的链接不会自动连到本机。";
     const guide = `
+      ${statusText ? `<p class="remind-note"><b>同步状态：</b>${escapeHtml(statusText)}</p>` : ""}
       <p class="remind-note"><b>当前模式：</b>${modeText}。${modeDesc}</p>
-      <p>早间提醒：${s.morningOn === "1" ? `每天 ${s.morningTime}` : "已关闭"}；晚间检查：${s.nightOn === "1" ? `每天 ${s.nightTime}` : "已关闭"}。</p>
-      <p><b>云端模式</b>：服务器通过定时任务运行提醒脚本，并用企业微信群机器人发送消息。推荐用于正式使用。</p>
-      <pre class="remind-code"># 早间提醒 cron
-${morning[1] || "00"} ${morning[0] || "10"} * * * cd /opt/sakura-study && .venv/bin/python notify_daily.py --morning
-# 晚间检查 cron
-${night[1] || "00"} ${night[0] || "20"} * * * cd /opt/sakura-study && .venv/bin/python notify_daily.py --night</pre>
-      <p><b>本地模式</b>：不依赖公网，只在本页面点击“今日打卡”按钮；适合本地测试，但电脑关机后不会自动推送。</p>
+      <p>早间提醒：${s.morningOn === "1" ? `每天 ${s.morningTime}` : "已关闭"}；晚间检查：${s.nightOn === "1" ? `每天 ${s.nightTime}` : "已关闭"}；天气推送：${s.weatherOn === "1" ? `每天 ${s.weatherTime}` : "已关闭"}。</p>
+      <p><b>云端模式</b>：保存后服务器会自动重写 Sakura 专属 crontab，不需要手动进服务器改。</p>
+      <pre class="remind-code"># 当前将同步到服务器
+${s.morningOn === "1" ? `${morning[1] || "00"} ${morning[0] || "10"} * * * notify_daily.py --morning` : "# 早间提醒已关闭"}
+${s.nightOn === "1" ? `${night[1] || "00"} ${night[0] || "20"} * * * notify_daily.py --night` : "# 晚间检查已关闭"}
+${s.weatherOn === "1" ? `${weather[1] || "30"} ${weather[0] || "22"} * * * notify_daily.py --weather` : "# 天气推送已关闭"}</pre>
+      <p><b>本地模式</b>：只在本页面点击“今日打卡”按钮；服务器提醒时间仍按上面配置执行。</p>
     `;
     $("#remindGuide").innerHTML = guide;
     return;
@@ -1184,7 +1290,10 @@ async function loadNotificationSettings() {
       $("#pushConfigBadge").textContent = configured ? "推送已配置" : "未配置推送";
       $("#pushConfigBadge").className = `tag ${configured ? "status" : "status wrong"}`;
     }
-    if ($("#notifyAppPublicUrl")) $("#notifyAppPublicUrl").value = data.app_public_url || "";
+    if ($("#notifyAppPublicUrl")) {
+      $("#notifyAppPublicUrl").value = "";
+      $("#notifyAppPublicUrl").placeholder = data.masked_app_public_url ? `已保存：${data.masked_app_public_url}` : "例如：https://your-domain.example";
+    }
     if ($("#weworkWebhook")) $("#weworkWebhook").placeholder = data.masked_wework ? `已保存：${data.masked_wework}` : "未保存";
     if ($("#pushplusToken")) $("#pushplusToken").placeholder = data.masked_pushplus ? `已保存：${data.masked_pushplus}` : "未保存";
     if ($("#notifySettingsHint")) {
@@ -1215,6 +1324,7 @@ async function saveNotificationSettings() {
     });
     if ($("#weworkWebhook")) $("#weworkWebhook").value = "";
     if ($("#pushplusToken")) $("#pushplusToken").value = "";
+    if ($("#notifyAppPublicUrl")) $("#notifyAppPublicUrl").value = "";
     await loadNotificationSettings();
     if (hint) hint.textContent = data.message || "已保存推送配置。";
   } catch (error) {
@@ -2408,60 +2518,48 @@ $("#coachToday").addEventListener("click", (event) => {
 });
 
 // 提醒打卡
-if ($("#checkinBtn")) $("#checkinBtn").addEventListener("click", doCheckin);
-if ($("#testMorningBtn")) $("#testMorningBtn").addEventListener("click", () => testPush("morning"));
-if ($("#testNightBtn")) $("#testNightBtn").addEventListener("click", () => testPush("night"));
-["#remindMorningOn", "#remindMorningTime", "#remindNightOn", "#remindNightTime", "#checkinMode"].forEach((sel) => {
-  if ($(sel)) $(sel).addEventListener("change", saveRemindSettings);
-});
-if ($("#saveNotifySettings")) $("#saveNotifySettings").addEventListener("click", saveNotificationSettings);
-if ($("#saveWeatherCity")) $("#saveWeatherCity").addEventListener("click", saveWeatherCity);
-if ($("#previewWeather")) $("#previewWeather").addEventListener("click", previewWeather);
-if ($("#sendWeatherPreview")) $("#sendWeatherPreview").addEventListener("click", previewWeatherPush);
-if ($("#testWeatherPush")) $("#testWeatherPush").addEventListener("click", testWeatherPush);
+on("#checkinBtn", "click", doCheckin);
+on("#testMorningBtn", "click", () => testPush("morning"));
+on("#testNightBtn", "click", () => testPush("night"));
+onEach(["#remindMorningOn", "#remindMorningTime", "#remindNightTime", "#remindWeatherOn", "#remindWeatherTime", "#checkinMode"], "change", saveRemindSettings);
+on("#saveNotifySettings", "click", saveNotificationSettings);
+on("#saveWeatherCity", "click", saveWeatherCity);
+on("#previewWeather", "click", previewWeather);
+on("#sendWeatherPreview", "click", previewWeatherPush);
+on("#testWeatherPush", "click", testWeatherPush);
 
-if ($("#sendAiChat")) $("#sendAiChat").addEventListener("click", sendAiChat);
-if ($("#saveLlmSettings")) $("#saveLlmSettings").addEventListener("click", saveLlmSettings);
-if ($("#refreshAiMemory")) $("#refreshAiMemory").addEventListener("click", loadAiChatPanel);
-if ($("#refreshMentorExperience")) $("#refreshMentorExperience").addEventListener("click", loadMentorExperiences);
-if ($("#saveMentorExperience")) $("#saveMentorExperience").addEventListener("click", saveMentorExperience);
-if ($("#saveAiChatMemory")) {
-  $("#saveAiChatMemory").addEventListener("click", async () => {
-    const message = $("#aiChatInput")?.value.trim() || "";
-    const content = lastAiChatAnswer ? `用户问题：${message}\nAI 回答：${lastAiChatAnswer}` : message;
-    await saveAiMemory(content, "chat");
-    if ($("#aiChatOutput")) $("#aiChatOutput").textContent = "已导入老师记忆。";
-  });
-}
-if ($("#saveManualAiMemory")) {
-  $("#saveManualAiMemory").addEventListener("click", async () => {
-    await saveAiMemory($("#manualAiMemory")?.value || "", "manual");
-    if ($("#manualAiMemory")) $("#manualAiMemory").value = "";
-  });
-}
-if ($("#clearAiChat")) {
-  $("#clearAiChat").addEventListener("click", () => {
-    lastAiChatAnswer = "";
-    if ($("#aiChatInput")) $("#aiChatInput").value = "";
-    if ($("#aiChatOutput")) $("#aiChatOutput").textContent = "已清空。";
-  });
-}
-if ($("#teacherMemoryList")) {
-  $("#teacherMemoryList").addEventListener("click", async (event) => {
-    const btn = event.target.closest("[data-delete-ai-memory]");
-    if (!btn) return;
-    await api(`/api/ai-chat/memory/${encodeURIComponent(btn.dataset.deleteAiMemory)}`, { method: "DELETE" });
-    await loadAiChatPanel();
-  });
-}
-if ($("#mentorExperienceList")) {
-  $("#mentorExperienceList").addEventListener("click", async (event) => {
-    const btn = event.target.closest("[data-delete-mentor-experience]");
-    if (!btn) return;
-    await api(`/api/mentor-experience/${encodeURIComponent(btn.dataset.deleteMentorExperience)}`, { method: "DELETE" });
-    await loadMentorExperiences();
-  });
-}
+on("#sendAiChat", "click", sendAiChat);
+on("#saveLlmSettings", "click", saveLlmSettings);
+on("#refreshAiMemory", "click", loadAiChatPanel);
+on("#refreshMentorExperience", "click", loadMentorExperiences);
+on("#saveMentorExperience", "click", saveMentorExperience);
+on("#saveAiChatMemory", "click", async () => {
+  const message = $("#aiChatInput")?.value.trim() || "";
+  const content = lastAiChatAnswer ? `用户问题：${message}\nAI 回答：${lastAiChatAnswer}` : message;
+  await saveAiMemory(content, "chat");
+  if ($("#aiChatOutput")) $("#aiChatOutput").textContent = "已导入老师记忆。";
+});
+on("#saveManualAiMemory", "click", async () => {
+  await saveAiMemory($("#manualAiMemory")?.value || "", "manual");
+  if ($("#manualAiMemory")) $("#manualAiMemory").value = "";
+});
+on("#clearAiChat", "click", () => {
+  lastAiChatAnswer = "";
+  if ($("#aiChatInput")) $("#aiChatInput").value = "";
+  if ($("#aiChatOutput")) $("#aiChatOutput").textContent = "已清空。";
+});
+on("#teacherMemoryList", "click", async (event) => {
+  const btn = event.target.closest("[data-delete-ai-memory]");
+  if (!btn) return;
+  await api(`/api/ai-chat/memory/${encodeURIComponent(btn.dataset.deleteAiMemory)}`, { method: "DELETE" });
+  await loadAiChatPanel();
+});
+on("#mentorExperienceList", "click", async (event) => {
+  const btn = event.target.closest("[data-delete-mentor-experience]");
+  if (!btn) return;
+  await api(`/api/mentor-experience/${encodeURIComponent(btn.dataset.deleteMentorExperience)}`, { method: "DELETE" });
+  await loadMentorExperiences();
+});
 
 $("#focusReview").addEventListener("click", async () => {
   state.mistakeStatus = state.mistakeStatus === "review" ? "" : "review";

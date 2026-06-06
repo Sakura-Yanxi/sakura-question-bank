@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260606-mentor-experience" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260606-architecture-cleanup" />
     <script>
       window.MathJax = {
         tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] },
@@ -432,10 +432,11 @@
                 <span id="pushConfigBadge" class="tag">检测中…</span>
               </div>
               <div class="remind-grid">
-                <label class="coach-field"><span>早安提醒</span><select id="remindMorningOn"><option value="1">开启</option><option value="0">关闭</option></select></label>
+                <label class="coach-field"><span>早晚提醒</span><select id="remindMorningOn"><option value="1">开启</option><option value="0">关闭</option></select></label>
                 <label class="coach-field"><span>早安时间</span><input id="remindMorningTime" type="time" value="10:00" /></label>
-                <label class="coach-field"><span>晚间检查</span><select id="remindNightOn"><option value="1">开启</option><option value="0">关闭</option></select></label>
                 <label class="coach-field"><span>晚间时间</span><input id="remindNightTime" type="time" value="20:00" /></label>
+                <label class="coach-field"><span>天气推送</span><select id="remindWeatherOn"><option value="1">开启</option><option value="0">关闭</option></select></label>
+                <label class="coach-field"><span>天气时间</span><input id="remindWeatherTime" type="time" value="22:30" /></label>
                 <label class="coach-field"><span>打卡方式</span><select id="checkinMode"><option value="cloud">云端打卡（公网/微信链接）</option><option value="local">本地打卡（当前浏览器按钮）</option></select></label>
               </div>
               <div class="remind-actions">
@@ -459,7 +460,7 @@
               <div class="notify-settings-grid">
                 <label class="coach-field">
                   <span>公网地址</span>
-                  <input id="notifyAppPublicUrl" type="text" placeholder="例如：http://120.27.241.157" />
+                  <input id="notifyAppPublicUrl" type="url" placeholder="例如：https://your-domain.example" />
                 </label>
                 <label class="coach-field">
                   <span>企业微信机器人 Webhook</span>
@@ -504,7 +505,18 @@
               </div>
               <div class="ai-chat-grid">
                 <div class="ai-chat-main">
-                  <label class="coach-field">
+                  <div class="coach-console-head">
+                    <div>
+                      <strong>对话工作台</strong>
+                      <span>先测试 API，再决定是否沉淀为长期记忆。</span>
+                    </div>
+                    <div class="coach-mode-pills">
+                      <span><i data-lucide="sparkles"></i> 讲解</span>
+                      <span><i data-lucide="route"></i> 规划</span>
+                      <span><i data-lucide="brain-circuit"></i> 记忆</span>
+                    </div>
+                  </div>
+                  <label class="coach-field ai-prompt-field">
                     <span>想问 AI 老师什么？</span>
                     <textarea id="aiChatInput" rows="7" placeholder="例如：根据我最近的错题，帮我判断最应该先补哪类知识点。"></textarea>
                   </label>
@@ -513,34 +525,40 @@
                     <button id="saveAiChatMemory" class="ghost"><i data-lucide="brain-circuit"></i>导入本轮记忆</button>
                     <button id="clearAiChat" class="ghost"><i data-lucide="eraser"></i>清空</button>
                   </div>
-                  <pre id="aiChatOutput" class="reflection-output mathjax-container">还没有对话。先发送一个问题测试 API。</pre>
+                  <div class="ai-output-shell">
+                    <div class="ai-output-head">
+                      <span><i data-lucide="message-circle"></i> 老师回复</span>
+                      <small>支持 Markdown 与 LaTeX</small>
+                    </div>
+                    <pre id="aiChatOutput" class="reflection-output mathjax-container">还没有对话。先发送一个问题测试 API。</pre>
+                  </div>
                 </div>
 
-                <aside class="ai-memory-panel">
-                  <div class="compact-head">
-                    <span class="panel-icon"><i data-lucide="brain-circuit"></i></span>
-                    <div><h3>老师记忆</h3><p>影响后续 AI 回答风格与重点。</p></div>
-                    <button id="refreshAiMemory" class="ghost"><i data-lucide="refresh-cw"></i>刷新</button>
-                  </div>
-                  <label class="coach-field">
-                    <span>手动补充记忆</span>
-                    <textarea id="manualAiMemory" rows="4" placeholder="例如：我更喜欢先给提示，再给完整答案；408 里机组是当前重点。"></textarea>
-                  </label>
-                  <button id="saveManualAiMemory" class="ghost"><i data-lucide="plus"></i>保存记忆</button>
-                  <div id="teacherMemoryList" class="teacher-memory-list"></div>
+                <aside class="ai-side-stack">
+                  <section class="ai-side-card ai-memory-panel">
+                    <div class="compact-head">
+                      <span class="panel-icon"><i data-lucide="brain-circuit"></i></span>
+                      <div><h3>老师记忆</h3><p>偏好、长期误区、回答风格。</p></div>
+                      <button id="refreshAiMemory" class="ghost" title="刷新老师记忆"><i data-lucide="refresh-cw"></i></button>
+                    </div>
+                    <label class="coach-field">
+                      <span>手动补充</span>
+                      <textarea id="manualAiMemory" rows="3" placeholder="例如：我更喜欢先给提示，再给完整答案；408 里机组是当前重点。"></textarea>
+                    </label>
+                    <button id="saveManualAiMemory" class="ghost"><i data-lucide="plus"></i>保存记忆</button>
+                    <div id="teacherMemoryList" class="teacher-memory-list"></div>
+                  </section>
 
-                  <div class="mentor-experience-panel">
-                    <div class="mini-section-head">
-                      <div>
-                        <h3>外部经验库</h3>
-                        <p>学长学姐经验只作为参考，不覆盖你的真实错题证据。</p>
-                      </div>
-                      <button id="refreshMentorExperience" class="ghost"><i data-lucide="refresh-cw"></i></button>
+                  <section class="ai-side-card mentor-experience-panel">
+                    <div class="compact-head">
+                      <span class="panel-icon"><i data-lucide="library"></i></span>
+                      <div><h3>外部经验库</h3><p>参考经验，不覆盖真实错题证据。</p></div>
+                      <button id="refreshMentorExperience" class="ghost" title="刷新外部经验"><i data-lucide="refresh-cw"></i></button>
                     </div>
                     <div class="mentor-meta-grid">
                       <input id="mentorExperienceTitle" type="text" placeholder="标题，如：408 冲刺经验" />
                       <input id="mentorExperienceSubject" type="text" list="subjectSuggestions" placeholder="科目，可选" />
-                      <input id="mentorExperienceTags" type="text" placeholder="标签，如：冲刺/错题/背诵" />
+                      <input id="mentorExperienceTags" type="text" placeholder="标签：冲刺/错题/背诵" />
                       <select id="mentorExperienceReliability">
                         <option value="3">可信度 3</option>
                         <option value="4">可信度 4</option>
@@ -549,11 +567,11 @@
                         <option value="1">可信度 1</option>
                       </select>
                     </div>
-                    <textarea id="mentorExperienceContent" rows="4" placeholder="粘贴别人的经验：适用场景、具体做法、注意事项。最好写清楚这条经验适合什么阶段。"></textarea>
+                    <textarea id="mentorExperienceContent" rows="3" placeholder="粘贴经验：适用场景、具体做法、注意事项。最好写清楚这条经验适合什么阶段。"></textarea>
                     <input id="mentorExperienceSource" type="text" placeholder="来源，可选：同学/帖子/公众号/自我总结" />
-                    <button id="saveMentorExperience" class="ghost"><i data-lucide="library"></i>保存经验</button>
+                    <button id="saveMentorExperience" class="ghost"><i data-lucide="plus"></i>保存经验</button>
                     <div id="mentorExperienceList" class="teacher-memory-list compact"></div>
-                  </div>
+                  </section>
                 </aside>
 
                 <div class="llm-settings-card">
@@ -603,7 +621,7 @@
       <p class="lightbox-tip">滚轮缩放 · 拖拽移动 · 双击复位 · Esc 关闭</p>
     </dialog>
 
-    <script src="/static/app.js?v=20260606-mentor-experience"></script>
+    <script src="/static/app.js?v=20260606-architecture-cleanup"></script>
     
     <script>
       lucide.createIcons();
