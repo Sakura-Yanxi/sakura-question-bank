@@ -11,10 +11,10 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 
-    <link rel="stylesheet" href="/static/styles.css?v=2026-remind" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260606-mentor-experience" />
     <script>
       window.MathJax = {
-        tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"]] },
+        tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] },
         svg: { fontCache: "global" },
       };
     </script>
@@ -35,12 +35,14 @@
           <button class="nav-btn active" data-view="dashboard"><i data-lucide="layout-dashboard"></i><span>总览看板</span></button>
           <button class="nav-btn" data-view="documents"><i data-lucide="book-open"></i><span>章节做题本</span></button>
           <button class="nav-btn" data-view="mockPapers"><i data-lucide="file-stack"></i><span>全真模拟卷</span></button>
+          <button class="nav-btn" data-view="textbook"><i data-lucide="book-marked"></i><span>教材精读</span></button>
           <button class="nav-btn" data-view="chapterStats"><i data-lucide="pie-chart"></i><span>正确率统计</span></button>
           <button class="nav-btn" data-view="library"><i data-lucide="library"></i><span>题库综合检索</span></button>
           <button class="nav-btn" data-view="mistakes"><i data-lucide="x-circle"></i><span>核心错题本</span></button>
           <button class="nav-btn" data-view="reflection"><i data-lucide="notebook-pen"></i><span>周期反思复盘</span></button>
           <button class="nav-btn" data-view="daily"><i data-lucide="calendar-check"></i><span>智能每日练习</span></button>
           <button class="nav-btn" data-view="coach"><i data-lucide="compass"></i><span>学习档案</span></button>
+          <button class="nav-btn" data-view="aiChat"><i data-lucide="messages-square"></i><span>AI 学习教练</span></button>
           <button class="nav-btn" data-view="remind"><i data-lucide="bell-ring"></i><span>提醒打卡</span></button>
         </nav>
         <datalist id="subjectSuggestions"></datalist>
@@ -103,7 +105,7 @@
 
             <div class="distribution-grid">
               <div class="panel">
-                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="git-branch"></i></span><h2>高数知识树分布画像</h2></div></div>
+                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="git-branch"></i></span><h2>全科知识点分布画像</h2></div></div>
                 <div id="statsList" class="stats-list"></div>
               </div>
               <div class="panel subject-panel">
@@ -148,6 +150,7 @@
                 <div class="input-field"><input name="title" type="text" placeholder="套卷名称（如：2025真题）..." /></div>
                 <div class="input-field"><input name="subject" type="text" list="subjectSuggestions" placeholder="输入或关联科目..." /></div>
                 <div class="page-range"><input name="start_page" type="number" min="1" placeholder="起始页" /><input name="end_page" type="number" min="1" placeholder="结束页" /></div>
+                <label class="split-toggle"><input name="split_questions" type="checkbox" value="1" checked /><span><strong>按题号自动切分</strong><small>适合一页多题的真题/模拟卷，识别不到题号时退回一页一道。</small></span></label>
                 <label class="file-drop-zone">
                   <input name="file" type="file" accept="application/pdf" />
                   <span class="file-drop-icon"><i data-lucide="file-up"></i></span>
@@ -160,6 +163,63 @@
             <div class="panel">
               <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="file-check-2"></i></span><h2>模拟卷仓库</h2></div><button id="showMockQuestions" class="ghost"><i data-lucide="sparkles"></i>直达套卷题库</button></div>
               <div id="mockDocumentGrid" class="document-grid"></div>
+            </div>
+          </section>
+
+          <section id="textbook" class="view">
+            <div class="panel upload-panel textbook-upload-panel">
+              <div class="panel-head">
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="book-marked"></i></span><div><h2>教材 PDF 导入</h2><p>按页保存教材截图和文本，AI 只在你提问时读取指定页/段。</p></div></div>
+                <span class="tag kind paper"><i data-lucide="scan-text"></i>精读模式</span>
+              </div>
+              <form id="textbookUploadForm" class="upload form-grid">
+                <div class="input-field"><input name="title" type="text" placeholder="教材名称（如：专业课教材/高等数学上册）..." /></div>
+                <div class="input-field"><input name="subject" type="text" list="subjectSuggestions" placeholder="科目/课程..." /></div>
+                <label class="file-drop-zone">
+                  <input name="file" type="file" accept="application/pdf" />
+                  <span class="file-drop-icon"><i data-lucide="book-up"></i></span>
+                  <div class="file-drop-text"><strong>拖拽教材 PDF 到这里</strong><small>本地提取页面文本，不会自动消耗 AI token</small></div>
+                </label>
+                <button type="submit" class="btn-primary"><i data-lucide="import"></i>导入教材</button>
+                <p class="upload-status"></p>
+              </form>
+            </div>
+            <div class="textbook-reader-grid">
+              <div class="panel">
+                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="library-big"></i></span><h2>教材库</h2></div></div>
+                <div id="textbookList" class="document-grid compact-doc-grid"></div>
+              </div>
+              <div class="panel textbook-page-panel">
+                <div class="panel-head">
+                  <div class="panel-title"><span class="panel-icon"><i data-lucide="file-text"></i></span><div><h2>页面与段落</h2><p id="textbookPageMeta">先选择一本教材。</p></div></div>
+                  <div class="toolbar compact">
+                    <input id="textbookPageInput" type="number" min="1" value="1" />
+                    <button id="loadTextbookPage" class="ghost"><i data-lucide="search"></i>读取页</button>
+                  </div>
+                </div>
+                <div class="textbook-page-layout">
+                  <div class="textbook-image-wrap"><img id="textbookPageImage" class="hidden" alt="教材页截图" /></div>
+                  <div id="textbookParagraphs" class="textbook-paragraphs"></div>
+                </div>
+              </div>
+              <div class="panel textbook-chat-panel">
+                <div class="panel-head">
+                  <div class="panel-title"><span class="panel-icon"><i data-lucide="messages-square"></i></span><div><h2>AI 精读对话</h2><p>围绕当前页/段追问，最后可压缩导入老师记忆。</p></div></div>
+                  <span id="textbookChatBadge" class="tag">未选择段落</span>
+                </div>
+                <div id="textbookChatLog" class="textbook-chat-log mathjax-container"></div>
+                <label class="coach-field">
+                  <span>向 AI 提问</span>
+                  <textarea id="textbookQuestion" rows="4" placeholder="例如：请逐句解释这一段，尤其是这个公式为什么成立。"></textarea>
+                </label>
+                <div class="textbook-chat-actions">
+                  <button id="askTextbookAi"><i data-lucide="send"></i>发送追问</button>
+                  <button id="explainSelectedParagraph" class="ghost"><i data-lucide="sparkles"></i>解释选中段落</button>
+                  <button id="saveTextbookMemory" class="ghost"><i data-lucide="brain-circuit"></i>压缩导入记忆</button>
+                  <button id="clearTextbookChat" class="ghost"><i data-lucide="eraser"></i>清空对话</button>
+                </div>
+                <span id="textbookHint" class="coach-hint"></span>
+              </div>
             </div>
           </section>
 
@@ -222,9 +282,52 @@
           </section>
 
           <section id="daily" class="view">
+            <div class="panel daily-rule-panel">
+              <div class="panel-head">
+                <div class="panel-title">
+                  <span class="panel-icon"><i data-lucide="sliders-horizontal"></i></span>
+                  <div>
+                    <h2>自定义每日练习规则</h2>
+                    <p>按科目、做题本、知识点和章节指定错题推送范围，可为不同资料设置不同题量。</p>
+                  </div>
+                </div>
+                <span id="dailyRuleBadge" class="section-count">0 条规则</span>
+              </div>
+              <div class="daily-rule-grid">
+                <label class="coach-field"><span>科目</span><select id="dailyRuleSubject"><option value="">全部科目</option></select></label>
+                <label class="coach-field"><span>资料/做题本</span><select id="dailyRuleDocument"><option value="">全部资料</option></select></label>
+                <label class="coach-field"><span>知识点</span><select id="dailyRuleCategory"><option value="">全部知识点</option></select></label>
+                <label class="coach-field"><span>章节</span><select id="dailyRuleChapter"><option value="">全部章节</option></select></label>
+                <label class="coach-field"><span>推送范围</span><select id="dailyRuleStatus"><option value="active_wrong">当前错题+到期复习</option><option value="due">只看今天到期复习</option><option value="wrong">只看做错</option><option value="review">半会/需复习</option><option value="all_wrong_history">历史曾错题</option></select></label>
+                <label class="coach-field"><span>每次题量</span><input id="dailyRuleLimit" type="number" min="1" max="30" value="5" /></label>
+                <label class="coach-field daily-rule-name-field"><span>规则名称</span><input id="dailyRuleName" type="text" readonly placeholder="将根据上方选择自动生成" /></label>
+              </div>
+              <div class="toolbar filter-actions-bar">
+                <button id="saveDailyRule"><i data-lucide="save"></i>保存规则</button>
+                <button id="resetDailyRule" class="ghost"><i data-lucide="rotate-ccw"></i>清空表单</button>
+                <span id="dailyRuleHint" class="coach-hint"></span>
+              </div>
+              <div id="dailyRuleList" class="daily-rule-list"></div>
+            </div>
             <div class="panel daily-main-panel">
               <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="calendar-range"></i></span><div><h2>今日艾宾浩斯动态练习队列</h2><p id="dailyMessage"></p></div></div><button id="refreshDaily"><i data-lucide="refresh-cw"></i>重新调度</button></div>
               <div id="dailyGrid" class="daily-vertical-stack"></div>
+            </div>
+            <div class="panel migration-panel">
+              <div class="panel-head">
+                <div class="panel-title">
+                  <span class="panel-icon"><i data-lucide="package-open"></i></span>
+                  <div>
+                    <h2>数据迁移</h2>
+                    <p>全量导出本地数据：上传 PDF、题图、题目、标注、错题状态、复盘记录、AI 记忆和每日规则都会包含；导入时会先备份当前数据。</p>
+                  </div>
+                </div>
+              </div>
+              <div class="migration-actions">
+                <button id="exportBackup"><i data-lucide="download"></i>导出全量 ZIP</button>
+                <label class="ghost file-action"><i data-lucide="upload"></i>导入全量 ZIP<input id="importBackupFile" type="file" accept=".zip,application/zip" /></label>
+                <span id="migrationHint" class="coach-hint"></span>
+              </div>
             </div>
           </section>
 
@@ -295,7 +398,7 @@
           <section id="reflection" class="view">
             <div class="panel">
               <div class="panel-head">
-                <div class="panel-title"><span class="panel-icon"><i data-lucide="brain-circuit"></i></span><div><h2>元认知高数学习复盘</h2><p>AI 将分析错因日志，给出概念弥补策略。</p></div></div>
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="brain-circuit"></i></span><div><h2>元认知学习复盘</h2><p>AI 将按科目分析错因日志，给出概念弥补策略。</p></div></div>
                 <div class="toolbar compact">
                   <select id="reflectionPeriod"><option value="week">本周错题复盘</option><option value="month">本月系统审计</option></select>
                   <button id="generateReflection"><i data-lucide="wand-2"></i>召唤 AI 深度复盘</button>
@@ -305,7 +408,7 @@
               <div id="reflectionSubjectSummary" class="reflection-subject-summary"></div>
               <pre id="reflectionOutput" class="reflection-output mathjax-container">选择周期后点击上方按钮...</pre>
               <div id="reflectionHistory" class="reflection-history">
-                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="history"></i></span><h2>历史高数元认知归档</h2></div><button id="loadReflectionHistory" class="ghost"><i data-lucide="clock"></i>同步历史快照</button></div>
+                <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="history"></i></span><h2>历史知识归档</h2></div><button id="loadReflectionHistory" class="ghost"><i data-lucide="clock"></i>同步历史快照</button></div>
                 <div id="historyList" class="history-list"></div>
               </div>
             </div>
@@ -314,7 +417,7 @@
           <section id="remind" class="view">
             <div class="panel">
               <div class="panel-head">
-                <div class="panel-title"><span class="panel-icon"><i data-lucide="check-circle-2"></i></span><div><h2>今日打卡</h2><p>做完今天的复习，点一下打卡；晚上 8 点没打卡会被念。</p></div></div>
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="check-circle-2"></i></span><div><h2>今日打卡</h2><p>做完今天的复习后记录一次；云端模式会和服务器提醒联动。</p></div></div>
                 <span id="checkinBadge" class="section-count">未打卡</span>
               </div>
               <div class="checkin-row">
@@ -325,7 +428,7 @@
 
             <div class="panel">
               <div class="panel-head">
-                <div class="panel-title"><span class="panel-icon"><i data-lucide="bell-ring"></i></span><div><h2>微信提醒设置</h2><p>配置 PushPlus 后，可把励志语 + 错题提醒推到微信。设置仅保存在本机浏览器。</p></div></div>
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="bell-ring"></i></span><div><h2>微信提醒设置</h2><p>配置企业微信群机器人或 PushPlus 后，可把励志语、错题提醒和打卡链接推到微信。</p></div></div>
                 <span id="pushConfigBadge" class="tag">检测中…</span>
               </div>
               <div class="remind-grid">
@@ -333,7 +436,7 @@
                 <label class="coach-field"><span>早安时间</span><input id="remindMorningTime" type="time" value="10:00" /></label>
                 <label class="coach-field"><span>晚间检查</span><select id="remindNightOn"><option value="1">开启</option><option value="0">关闭</option></select></label>
                 <label class="coach-field"><span>晚间时间</span><input id="remindNightTime" type="time" value="20:00" /></label>
-                <label class="coach-field"><span>打卡方式</span><select id="checkinMode"><option value="button">App 里点按钮（无需公网）</option><option value="link">微信里点链接（需 app 可访问）</option></select></label>
+                <label class="coach-field"><span>打卡方式</span><select id="checkinMode"><option value="cloud">云端打卡（公网/微信链接）</option><option value="local">本地打卡（当前浏览器按钮）</option></select></label>
               </div>
               <div class="remind-actions">
                 <button id="testMorningBtn" class="ghost"><i data-lucide="send"></i>测试早安推送</button>
@@ -342,9 +445,130 @@
               </div>
             </div>
 
+            <div class="panel notify-settings-card">
+              <div class="panel-head">
+                <div class="panel-title">
+                  <span class="panel-icon"><i data-lucide="settings-2"></i></span>
+                  <div>
+                    <h2>推送通道配置</h2>
+                    <p>企业微信机器人、PushPlus 和公网访问地址统一保存在本地 .env；页面只显示脱敏状态。</p>
+                  </div>
+                </div>
+                <span id="notifySettingsBadge" class="tag">检测中...</span>
+              </div>
+              <div class="notify-settings-grid">
+                <label class="coach-field">
+                  <span>公网地址</span>
+                  <input id="notifyAppPublicUrl" type="text" placeholder="例如：http://120.27.241.157" />
+                </label>
+                <label class="coach-field">
+                  <span>企业微信机器人 Webhook</span>
+                  <input id="weworkWebhook" type="password" placeholder="未保存" autocomplete="off" />
+                </label>
+                <label class="coach-field">
+                  <span>PushPlus Token</span>
+                  <input id="pushplusToken" type="password" placeholder="未保存" autocomplete="off" />
+                </label>
+              </div>
+              <div class="remind-actions">
+                <button id="saveNotifySettings" class="ghost"><i data-lucide="save"></i>保存推送配置</button>
+                <span id="notifySettingsHint" class="coach-hint">不填写的密钥会保留原值，不会被清空。</span>
+              </div>
+            </div>
+
             <div class="panel">
               <div class="panel-head"><div class="panel-title"><span class="panel-icon"><i data-lucide="calendar-clock"></i></span><h2>怎么让它每天自动跑</h2></div></div>
               <div id="remindGuide" class="remind-guide"></div>
+            </div>
+
+            <div class="panel weather-config">
+              <div class="panel-head">
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="cloud-sun"></i></span><div><h2>明天天气推送</h2><p>支持北京 海淀区、山东省 日照市 东港区这类自定义地区；天气查询走 Open-Meteo，不消耗 AI token。</p></div></div>
+              </div>
+              <div class="form-grid weather-grid">
+                <label class="coach-field"><span>城市/地区</span><input id="weatherCity" type="text" placeholder="例如：北京 海淀区 / 山东省 日照市 东港区" /></label>
+                <button id="saveWeatherCity" class="ghost"><i data-lucide="save"></i>保存城市</button>
+                <button id="previewWeather" class="ghost"><i data-lucide="cloud"></i>预览天气</button>
+                <button id="sendWeatherPreview" class="ghost"><i data-lucide="send"></i>生成推送预览</button>
+                <button id="testWeatherPush" class="ghost"><i data-lucide="radio"></i>测试推送天气</button>
+              </div>
+              <pre id="weatherPreviewBox" class="reflection-output weather-preview">还没有预览天气。</pre>
+            </div>
+          </section>
+
+          <section id="aiChat" class="view">
+            <div class="panel ai-chat-panel">
+              <div class="panel-head">
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="messages-square"></i></span><div><h2>AI 对话测试台</h2><p>用于测试当前 API 是否可用；确认有价值后，再手动导入为 AI 老师记忆。</p></div></div>
+                <span id="llmStatusBadge" class="tag">检测中...</span>
+              </div>
+              <div class="ai-chat-grid">
+                <div class="ai-chat-main">
+                  <label class="coach-field">
+                    <span>想问 AI 老师什么？</span>
+                    <textarea id="aiChatInput" rows="7" placeholder="例如：根据我最近的错题，帮我判断最应该先补哪类知识点。"></textarea>
+                  </label>
+                  <div class="ai-chat-actions">
+                    <button id="sendAiChat"><i data-lucide="send"></i>发送测试</button>
+                    <button id="saveAiChatMemory" class="ghost"><i data-lucide="brain-circuit"></i>导入本轮记忆</button>
+                    <button id="clearAiChat" class="ghost"><i data-lucide="eraser"></i>清空</button>
+                  </div>
+                  <pre id="aiChatOutput" class="reflection-output mathjax-container">还没有对话。先发送一个问题测试 API。</pre>
+                </div>
+
+                <aside class="ai-memory-panel">
+                  <div class="compact-head">
+                    <span class="panel-icon"><i data-lucide="brain-circuit"></i></span>
+                    <div><h3>老师记忆</h3><p>影响后续 AI 回答风格与重点。</p></div>
+                    <button id="refreshAiMemory" class="ghost"><i data-lucide="refresh-cw"></i>刷新</button>
+                  </div>
+                  <label class="coach-field">
+                    <span>手动补充记忆</span>
+                    <textarea id="manualAiMemory" rows="4" placeholder="例如：我更喜欢先给提示，再给完整答案；408 里机组是当前重点。"></textarea>
+                  </label>
+                  <button id="saveManualAiMemory" class="ghost"><i data-lucide="plus"></i>保存记忆</button>
+                  <div id="teacherMemoryList" class="teacher-memory-list"></div>
+
+                  <div class="mentor-experience-panel">
+                    <div class="mini-section-head">
+                      <div>
+                        <h3>外部经验库</h3>
+                        <p>学长学姐经验只作为参考，不覆盖你的真实错题证据。</p>
+                      </div>
+                      <button id="refreshMentorExperience" class="ghost"><i data-lucide="refresh-cw"></i></button>
+                    </div>
+                    <div class="mentor-meta-grid">
+                      <input id="mentorExperienceTitle" type="text" placeholder="标题，如：408 冲刺经验" />
+                      <input id="mentorExperienceSubject" type="text" list="subjectSuggestions" placeholder="科目，可选" />
+                      <input id="mentorExperienceTags" type="text" placeholder="标签，如：冲刺/错题/背诵" />
+                      <select id="mentorExperienceReliability">
+                        <option value="3">可信度 3</option>
+                        <option value="4">可信度 4</option>
+                        <option value="5">可信度 5</option>
+                        <option value="2">可信度 2</option>
+                        <option value="1">可信度 1</option>
+                      </select>
+                    </div>
+                    <textarea id="mentorExperienceContent" rows="4" placeholder="粘贴别人的经验：适用场景、具体做法、注意事项。最好写清楚这条经验适合什么阶段。"></textarea>
+                    <input id="mentorExperienceSource" type="text" placeholder="来源，可选：同学/帖子/公众号/自我总结" />
+                    <button id="saveMentorExperience" class="ghost"><i data-lucide="library"></i>保存经验</button>
+                    <div id="mentorExperienceList" class="teacher-memory-list compact"></div>
+                  </div>
+                </aside>
+
+                <div class="llm-settings-card">
+                  <div class="panel-title"><span class="panel-icon"><i data-lucide="key-round"></i></span><div><h2>API 设置</h2><p>保存到本地 .env；页面不会展示完整密钥，也不要提交到 GitHub。</p></div></div>
+                  <div class="llm-settings-grid">
+                    <label class="coach-field"><span>API Key</span><input id="llmApiKey" type="password" placeholder="未保存" autocomplete="off" /></label>
+                    <label class="coach-field"><span>Base URL</span><input id="llmBaseUrl" type="text" placeholder="https://api.deepseek.com" /></label>
+                    <label class="coach-field"><span>模型名</span><input id="llmModel" type="text" placeholder="deepseek-chat" /></label>
+                  </div>
+                  <div class="ai-chat-actions">
+                    <button id="saveLlmSettings" class="ghost"><i data-lucide="save"></i>保存 API 设置</button>
+                    <span id="llmSettingsHint" class="coach-hint"></span>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
         </main>
@@ -379,7 +603,7 @@
       <p class="lightbox-tip">滚轮缩放 · 拖拽移动 · 双击复位 · Esc 关闭</p>
     </dialog>
 
-    <script src="/static/app.js?v=20260603-remind"></script>
+    <script src="/static/app.js?v=20260606-mentor-experience"></script>
     
     <script>
       lucide.createIcons();

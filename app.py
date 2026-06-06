@@ -1,20 +1,30 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import os
 import re
+import secrets
 import sqlite3
+import shutil
 import sys
+import tempfile
+import threading
+import time
 import traceback
 import uuid
 import warnings
+import zipfile
 from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import urllib.request
+import urllib.parse
 from io import BytesIO
+from html import escape as html_escape
 
 warnings.filterwarnings("ignore", message="'cgi' is deprecated.*", category=DeprecationWarning)
 import cgi
@@ -46,7 +56,34 @@ def load_local_env() -> None:
 
 load_local_env()
 
+
+def write_local_env(updates: dict[str, str]) -> None:
+    """Update .env in place for local-only settings such as API keys."""
+    env_path = ROOT / ".env"
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    seen = set()
+    out = []
+    for raw in lines:
+        if "=" not in raw or raw.strip().startswith("#"):
+            out.append(raw)
+            continue
+        key, _ = raw.split("=", 1)
+        key = key.strip().lstrip("\ufeff")
+        if key in updates:
+            out.append(f"{key}={updates[key]}")
+            seen.add(key)
+        else:
+            out.append(raw)
+    for key, value in updates.items():
+        if key not in seen:
+            out.append(f"{key}={value}")
+    env_path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+
 PORT = int(os.getenv("PORT", "8000"))
+ADMIN_PASSWORD = os.getenv("SAKURA_ADMIN_PASSWORD") or os.getenv("APP_PASSWORD") or ""
+AUTH_SECRET = os.getenv("SAKURA_AUTH_SECRET") or os.getenv("APP_SECRET") or ""
+AUTH_COOKIE_NAME = "sakura_session"
+AUTH_MAX_AGE_SECONDS = 60 * 60 * 24 * 14
 
 # === AI 接口（OpenAI 兼容）===
 # 默认接入小米 MiMo 开放平台（https://platform.xiaomimimo.com 申请 Key）。
@@ -60,8 +97,10 @@ LLM_MODEL = os.getenv("LLM_MODEL") or os.getenv("DEEPSEEK_MODEL") or "mimo-v2.5-
 # 在 https://www.pushplus.plus 用微信扫码登录，复制 token 后设环境变量 PUSHPLUS_TOKEN。
 PUSHPLUS_TOKEN = os.getenv("PUSHPLUS_TOKEN", "")
 PUSHPLUS_URL = "https://www.pushplus.plus/send"
+WEWORK_BOT_WEBHOOK = os.getenv("WEWORK_BOT_WEBHOOK", "")
 # 推送正文里的“打开做题集”链接（部署到公网后改成你的域名/IP）
 APP_PUBLIC_URL = os.getenv("APP_PUBLIC_URL", "http://127.0.0.1:8000")
+WEATHER_CITY = os.getenv("WEATHER_CITY", "北京")
 DEFAULT_SUBJECT = "未分类"
 DEFAULT_CATEGORY = "待归类"
 DEFAULT_CHAPTER = "未识别章节"
@@ -287,6 +326,104 @@ def init_db() -> None:
                 day TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS teacher_memory (
+                id TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'chat',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS mentor_experience (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL DEFAULT '',
+                content TEXT NOT NULL,
+                subject TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '[]',
+                source TEXT NOT NULL DEFAULT '',
+                reliability INTEGER NOT NULL DEFAULT 3,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_mentor_experience_subject ON mentor_experience(subject);
+            CREATE INDEX IF NOT EXISTS idx_mentor_experience_created ON mentor_experience(created_at);
+
+            CREATE TABLE IF NOT EXISTS ai_teacher_turns (
+                id TEXT PRIMARY KEY,
+                user_message TEXT NOT NULL,
+                intent TEXT NOT NULL DEFAULT '',
+                strategy TEXT NOT NULL DEFAULT '',
+                context_json TEXT NOT NULL DEFAULT '{}',
+                answer TEXT NOT NULL DEFAULT '',
+                memory_candidate TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_ai_teacher_turns_created ON ai_teacher_turns(created_at);
+
+            CREATE TABLE IF NOT EXISTS textbooks (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL DEFAULT '',
+                subject TEXT NOT NULL DEFAULT '未分类',
+                filename TEXT NOT NULL,
+                stored_path TEXT NOT NULL,
+                page_count INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS textbook_pages (
+                id TEXT PRIMARY KEY,
+                textbook_id TEXT NOT NULL,
+                page_number INTEGER NOT NULL,
+                image_path TEXT NOT NULL,
+                page_text TEXT NOT NULL DEFAULT '',
+                paragraphs_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                UNIQUE(textbook_id, page_number),
+                FOREIGN KEY(textbook_id) REFERENCES textbooks(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS textbook_chats (
+                id TEXT PRIMARY KEY,
+                textbook_id TEXT NOT NULL DEFAULT '',
+                page_number INTEGER NOT NULL DEFAULT 0,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_rules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                document_id TEXT NOT NULL DEFAULT '',
+                subject TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL DEFAULT '',
+                chapter TEXT NOT NULL DEFAULT '',
+                status_group TEXT NOT NULL DEFAULT 'active_wrong',
+                limit_count INTEGER NOT NULL DEFAULT 5,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS practice_batches (
+                id TEXT PRIMARY KEY,
+                day TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'manual',
+                title TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                completed_at TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS practice_batch_items (
+                batch_id TEXT NOT NULL,
+                question_id TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                quick_status TEXT NOT NULL DEFAULT '',
+                quick_note TEXT NOT NULL DEFAULT '',
+                completed_at TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(batch_id, question_id),
+                FOREIGN KEY(batch_id) REFERENCES practice_batches(id),
+                FOREIGN KEY(question_id) REFERENCES questions(id)
+            );
             """
         )
 
@@ -342,6 +479,10 @@ def migrate_db(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE questions ADD COLUMN mastered_at TEXT")
     conn.execute("UPDATE questions SET chapter = ? WHERE chapter = ''", (DEFAULT_CHAPTER,))
     conn.execute("UPDATE questions SET meta_tags = '[]' WHERE meta_tags = ''")
+    coach_exists = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='coach_state'").fetchone()
+    coach_columns = {row["name"] for row in conn.execute("PRAGMA table_info(coach_state)").fetchall()} if coach_exists else set()
+    if coach_exists and "weather_city" not in coach_columns:
+        conn.execute("ALTER TABLE coach_state ADD COLUMN weather_city TEXT NOT NULL DEFAULT ''")
 
 
 def to_public_path(path: str | Path) -> str:
@@ -386,6 +527,10 @@ def document_to_dict(row: sqlite3.Row) -> dict:
 
 def normalize_document_kind(value: str | None) -> str:
     clean = normalize_label(value or "", DEFAULT_DOCUMENT_KIND)
+    if clean.lower() in {"mock", "mock_paper", "paper", "exam"}:
+        return MOCK_PAPER_KIND
+    if clean.lower() in {"book", "workbook"}:
+        return DEFAULT_DOCUMENT_KIND
     return clean if clean in DOCUMENT_KINDS else DEFAULT_DOCUMENT_KIND
 
 
@@ -546,6 +691,87 @@ def text_response(handler: BaseHTTPRequestHandler, text: str, status: int = 200,
     handler.wfile.write(body)
 
 
+def redirect_response(handler: BaseHTTPRequestHandler, location: str, status: int = HTTPStatus.FOUND) -> None:
+    handler.send_response(status)
+    handler.send_header("Location", location)
+    handler.end_headers()
+
+
+def auth_enabled() -> bool:
+    return bool(ADMIN_PASSWORD)
+
+
+def auth_secret() -> str:
+    return AUTH_SECRET or ADMIN_PASSWORD or "sakura-local-dev"
+
+
+def sign_session(payload: str) -> str:
+    return hmac.new(auth_secret().encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def make_session_token() -> str:
+    expires = int(time.time()) + AUTH_MAX_AGE_SECONDS
+    nonce = secrets.token_urlsafe(18)
+    payload = f"{expires}:{nonce}"
+    return f"{payload}:{sign_session(payload)}"
+
+
+def verify_session_token(token: str) -> bool:
+    parts = (token or "").split(":")
+    if len(parts) != 3:
+        return False
+    expires, nonce, signature = parts
+    payload = f"{expires}:{nonce}"
+    if not hmac.compare_digest(signature, sign_session(payload)):
+        return False
+    try:
+        return int(expires) >= int(time.time())
+    except ValueError:
+        return False
+
+
+def login_page(error: str = "") -> str:
+    error_html = f"<div class='error'>{html_escape(error)}</div>" if error else ""
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sakura 做题集 · 登录</title>
+  <style>
+    :root {{ color-scheme: light; --pink:#ec4899; --ink:#14213d; --muted:#718096; --line:#eadfea; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin:0; min-height:100vh; display:grid; place-items:center; font-family: Inter, "Microsoft YaHei", system-ui, sans-serif; background: radial-gradient(circle at 20% 10%, #fff0f7 0, transparent 28%), linear-gradient(135deg,#f8fbff,#fff7fb 48%,#f5fffb); color:var(--ink); }}
+    .card {{ width:min(420px, calc(100vw - 32px)); background:rgba(255,255,255,.92); border:1px solid var(--line); border-radius:26px; padding:34px; box-shadow:0 28px 80px rgba(236,72,153,.16); }}
+    .logo {{ width:58px; height:58px; border-radius:18px; display:grid; place-items:center; background:#fff0f7; color:var(--pink); font-size:28px; font-weight:900; margin-bottom:18px; }}
+    h1 {{ margin:0 0 8px; font-size:28px; letter-spacing:0; }}
+    p {{ margin:0 0 24px; color:var(--muted); line-height:1.7; }}
+    label {{ display:grid; gap:8px; font-weight:800; color:#4a5568; }}
+    input {{ width:100%; height:52px; border:1px solid #e6d8e6; border-radius:16px; padding:0 16px; font-size:16px; outline:none; }}
+    input:focus {{ border-color:var(--pink); box-shadow:0 0 0 4px rgba(236,72,153,.12); }}
+    button {{ width:100%; height:52px; margin-top:18px; border:0; border-radius:16px; color:white; background:linear-gradient(135deg,#ec4899,#f472b6); font-size:16px; font-weight:900; cursor:pointer; box-shadow:0 18px 34px rgba(236,72,153,.25); }}
+    .error {{ margin-bottom:16px; padding:10px 12px; border-radius:14px; background:#fff5f5; color:#dc2626; font-weight:700; }}
+    small {{ display:block; margin-top:16px; color:#94a3b8; line-height:1.6; }}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="logo">S</div>
+    <h1>Sakura 做题集</h1>
+    <p>请输入管理员密码后进入学习面板。这样别人知道域名，也不能随意修改题库、API 和推送配置。</p>
+    {error_html}
+    <form method="post" action="/login">
+      <label>管理员密码
+        <input name="password" type="password" autocomplete="current-password" autofocus required />
+      </label>
+      <button type="submit">进入 Sakura</button>
+    </form>
+    <small>登录状态会在当前浏览器保留 14 天。忘记密码时可在服务器 .env 修改 SAKURA_ADMIN_PASSWORD。</small>
+  </main>
+</body>
+</html>"""
+
+
 def classify_by_rules(text: str) -> tuple[str, str, str]:
     haystack = text.lower()
     for category, keywords in KEYWORD_RULES:
@@ -695,6 +921,79 @@ def llm_enabled() -> bool:
     return bool(LLM_API_KEY)
 
 
+def mask_secret(value: str) -> str:
+    value = value or ""
+    if not value:
+        return ""
+    if len(value) <= 10:
+        return value[:2] + "****"
+    return value[:6] + "..." + value[-4:]
+
+
+def llm_settings_view() -> dict:
+    return {
+        "has_key": llm_enabled(),
+        "masked_key": mask_secret(LLM_API_KEY),
+        "base_url": LLM_BASE_URL,
+        "model": LLM_MODEL,
+        "key_env": "LLM_API_KEY" if LLM_API_KEY else "",
+    }
+
+
+def notification_settings_view() -> dict:
+    return {
+        "has_wework": bool(WEWORK_BOT_WEBHOOK),
+        "masked_wework": mask_secret(WEWORK_BOT_WEBHOOK),
+        "has_pushplus": bool(PUSHPLUS_TOKEN),
+        "masked_pushplus": mask_secret(PUSHPLUS_TOKEN),
+        "app_public_url": APP_PUBLIC_URL,
+    }
+
+
+def update_llm_runtime_settings(api_key: str | None = None, base_url: str | None = None, model: str | None = None) -> dict:
+    global LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+    updates = {}
+    if api_key is not None and api_key.strip():
+        LLM_API_KEY = api_key.strip()
+        os.environ["LLM_API_KEY"] = LLM_API_KEY
+        updates["LLM_API_KEY"] = LLM_API_KEY
+    if base_url is not None and base_url.strip():
+        LLM_BASE_URL = base_url.strip().rstrip("/")
+        os.environ["LLM_BASE_URL"] = LLM_BASE_URL
+        updates["LLM_BASE_URL"] = LLM_BASE_URL
+    if model is not None and model.strip():
+        LLM_MODEL = model.strip()
+        os.environ["LLM_MODEL"] = LLM_MODEL
+        updates["LLM_MODEL"] = LLM_MODEL
+    if updates:
+        write_local_env(updates)
+    return llm_settings_view()
+
+
+def update_notification_runtime_settings(
+    wework_webhook: str | None = None,
+    pushplus_token: str | None = None,
+    app_public_url: str | None = None,
+) -> dict:
+    global WEWORK_BOT_WEBHOOK, PUSHPLUS_TOKEN, APP_PUBLIC_URL
+    updates = {}
+    if wework_webhook is not None and wework_webhook.strip():
+        WEWORK_BOT_WEBHOOK = wework_webhook.strip()
+        os.environ["WEWORK_BOT_WEBHOOK"] = WEWORK_BOT_WEBHOOK
+        updates["WEWORK_BOT_WEBHOOK"] = WEWORK_BOT_WEBHOOK
+    if pushplus_token is not None and pushplus_token.strip():
+        PUSHPLUS_TOKEN = pushplus_token.strip()
+        os.environ["PUSHPLUS_TOKEN"] = PUSHPLUS_TOKEN
+        updates["PUSHPLUS_TOKEN"] = PUSHPLUS_TOKEN
+    if app_public_url is not None and app_public_url.strip():
+        APP_PUBLIC_URL = app_public_url.strip().rstrip("/")
+        os.environ["APP_PUBLIC_URL"] = APP_PUBLIC_URL
+        updates["APP_PUBLIC_URL"] = APP_PUBLIC_URL
+    if updates:
+        write_local_env(updates)
+    return notification_settings_view()
+
+
 def call_llm(prompt: str, temperature: float = 0.3) -> str:
     """统一的 OpenAI 兼容调用入口（默认小米 MiMo）。失败时抛异常，由调用方决定 fallback。"""
     from openai import OpenAI
@@ -703,6 +1002,19 @@ def call_llm(prompt: str, temperature: float = 0.3) -> str:
     result = client.chat.completions.create(
         model=LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+    )
+    return result.choices[0].message.content or ""
+
+
+def call_llm_messages(messages: list[dict], temperature: float = 0.3) -> str:
+    """OpenAI-compatible chat call used by the API test panel."""
+    from openai import OpenAI
+
+    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+    result = client.chat.completions.create(
+        model=LLM_MODEL,
+        messages=messages,
         temperature=temperature,
     )
     return result.choices[0].message.content or ""
@@ -1495,7 +1807,7 @@ def get_coach_state(conn: sqlite3.Connection) -> dict:
 
 def save_coach_state(conn: sqlite3.Connection, **fields) -> dict:
     state = get_coach_state(conn)
-    allowed = {"daily_minutes", "exam_date", "cadence", "focus_subject", "last_profile_at", "last_plan_at", "plan_json"}
+    allowed = {"daily_minutes", "exam_date", "cadence", "focus_subject", "last_profile_at", "last_plan_at", "plan_json", "weather_city"}
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if updates:
         assignments = ", ".join(f"{k} = ?" for k in updates)
@@ -1508,6 +1820,328 @@ def parse_exam_date(value: str | None) -> date:
         return date.fromisoformat((value or "").strip())
     except (TypeError, ValueError):
         return EXAM_DATE
+
+
+def load_teacher_memories(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
+    rows = conn.execute(
+        "SELECT id, content, source, created_at FROM teacher_memory ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def save_teacher_memory(conn: sqlite3.Connection, content: str, source: str = "chat") -> dict:
+    content = (content or "").strip()
+    if not content:
+        raise ValueError("记忆内容不能为空")
+    memory = {
+        "id": uuid.uuid4().hex,
+        "content": content[:2000],
+        "source": (source or "chat")[:30],
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    conn.execute(
+        "INSERT INTO teacher_memory (id, content, source, created_at) VALUES (?, ?, ?, ?)",
+        (memory["id"], memory["content"], memory["source"], memory["created_at"]),
+    )
+    return memory
+
+
+def teacher_memory_prompt(conn: sqlite3.Connection) -> str:
+    memories = load_teacher_memories(conn, limit=8)
+    if not memories:
+        return "暂无主动导入的对话记忆。"
+    return "\n".join(f"- {item['content']}" for item in memories)
+
+
+def parse_tags(value) -> list[str]:
+    if isinstance(value, list):
+        raw = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+            raw = parsed if isinstance(parsed, list) else re.split(r"[,，、\s]+", text)
+        except json.JSONDecodeError:
+            raw = re.split(r"[,，、\s]+", text)
+    return [str(item).strip()[:30] for item in raw if str(item).strip()][:12]
+
+
+def mentor_experience_to_dict(row) -> dict:
+    item = dict(row)
+    try:
+        item["tags"] = json.loads(item.get("tags") or "[]")
+    except (TypeError, json.JSONDecodeError):
+        item["tags"] = []
+    return item
+
+
+def load_mentor_experiences(conn: sqlite3.Connection, limit: int = 30) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT * FROM mentor_experience
+        ORDER BY reliability DESC, created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [mentor_experience_to_dict(row) for row in rows]
+
+
+def save_mentor_experience(conn: sqlite3.Connection, payload: dict) -> dict:
+    content = str(payload.get("content", "")).strip()
+    if not content:
+        raise ValueError("经验内容不能为空")
+    reliability = parse_positive_int(str(payload.get("reliability", "3")), 3) or 3
+    reliability = max(1, min(5, reliability))
+    item = {
+        "id": uuid.uuid4().hex,
+        "title": str(payload.get("title", "")).strip()[:80],
+        "content": content[:3000],
+        "subject": str(payload.get("subject", "")).strip()[:60],
+        "tags": parse_tags(payload.get("tags", "")),
+        "source": str(payload.get("source", "")).strip()[:80],
+        "reliability": reliability,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    conn.execute(
+        """
+        INSERT INTO mentor_experience (id, title, content, subject, tags, source, reliability, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            item["id"], item["title"], item["content"], item["subject"],
+            json.dumps(item["tags"], ensure_ascii=False), item["source"], item["reliability"], item["created_at"],
+        ),
+    )
+    return item
+
+
+def select_relevant_mentor_experiences(conn: sqlite3.Connection, message: str = "", subject_hint: str = "", limit: int = 5) -> list[dict]:
+    experiences = load_mentor_experiences(conn, limit=80)
+    text = (message or "").lower()
+    tokens = [token for token in re.split(r"[,，、\s。！？；;:：/\\-]+", text) if len(token) >= 2]
+    ranked = []
+    for item in experiences:
+        haystack = " ".join([
+            item.get("title", ""),
+            item.get("content", ""),
+            item.get("subject", ""),
+            " ".join(item.get("tags", [])),
+        ]).lower()
+        score = item.get("reliability", 3) * 0.2
+        if subject_hint and subject_hint == item.get("subject"):
+            score += 2
+        for token in tokens:
+            if token and token in haystack:
+                score += 1
+        if score > 0.5:
+            ranked.append((score, item))
+    ranked.sort(key=lambda pair: pair[0], reverse=True)
+    return [item for _, item in ranked[:limit]]
+
+
+AI_TEACHER_PROTOCOL = """
+你是 Sakura 做题集的 AI 学习教练，不是聊天陪练，也不是只给答案的解析器。
+你的回答必须遵守这个教学协议：
+1. 先判断用户意图：API 测试、知识讲解、错题复盘、计划制定、情绪/节奏调整。
+2. 若涉及学习建议，必须优先使用“本地上下文”里的真实证据；没有证据时明确说“当前证据不足”，不要编造做题记录。
+3. 默认采用启发式教学：先给概念抓手，再给关键一步，最后才给完整解法；用户明确要求完整答案时可以直接完整展开。
+4. 每次回答至少落到一个可执行动作：今天做什么、做几道、看哪个知识点、如何检查是否掌握。
+5. 遇到错题原因，要区分：计算失误、公式遗忘、逻辑死角、题意理解偏差，并给对应纠偏动作。
+6. “外部经验库”只能作为参考，不等同于用户自己的证据；如果引用，必须说清楚“这是经验参考，需结合你的错题验证”。
+7. 不要长篇鸡汤；语言要像认真负责的老师，清楚、具体、能执行。
+推荐输出结构：
+- 判断：你现在的问题属于什么类型
+- 依据：引用本地上下文中的薄弱点/错题/记忆；没有就说明证据不足
+- 教学：概念提示 → 关键步骤 → 必要时完整说明
+- 行动：下一步 1-3 个任务
+""".strip()
+
+
+TEACHER_INTENTS = {
+    "api_test": "API 测试",
+    "concept_explain": "知识讲解",
+    "wrong_review": "错题复盘",
+    "plan": "计划制定",
+    "motivation": "节奏调整",
+    "memory_update": "记忆更新",
+}
+
+
+TEACHER_STRATEGIES = {
+    "scaffold": {
+        "name": "启发式引导",
+        "rule": "先给概念抓手，再给关键一步，最后询问是否展开完整解法。",
+    },
+    "diagnose": {
+        "name": "证据诊断",
+        "rule": "先引用本地证据，再指出主要矛盾和一个优先级最高的纠偏动作。",
+    },
+    "drill": {
+        "name": "变式训练",
+        "rule": "给 Base / Advanced / Pro 三层变式，但每层只保留一个训练目标。",
+    },
+    "schedule": {
+        "name": "复习调度",
+        "rule": "把建议转成今日任务、到期复习和薄弱点攻坚，不写空泛计划。",
+    },
+    "memory": {
+        "name": "记忆压缩",
+        "rule": "把用户偏好、长期误区和学习策略压缩成可复用老师记忆。",
+    },
+}
+
+
+def infer_teacher_intent(message: str) -> str:
+    text = (message or "").lower()
+    if any(k in text for k in ["今天", "明天", "每日", "复习", "计划", "安排", "进度", "考试", "时间", "任务"]):
+        return "plan"
+    if any(k in text for k in ["api", "key", "密钥", "能用", "测试", "deepseek"]):
+        return "api_test"
+    if any(k in text for k in ["错题", "错因", "为什么错", "复盘", "不会", "半会"]):
+        return "wrong_review"
+    if any(k in text for k in ["记住", "记忆", "偏好", "以后", "导入"]):
+        return "memory_update"
+    if any(k in text for k in ["烦", "焦虑", "不想", "坚持", "动力", "累", "崩"]):
+        return "motivation"
+    return "concept_explain"
+
+
+def choose_teacher_strategy(intent: str, context: dict) -> dict:
+    if intent == "wrong_review":
+        key = "diagnose"
+    elif intent == "plan":
+        key = "schedule"
+    elif intent == "memory_update":
+        key = "memory"
+    elif intent == "api_test":
+        key = "diagnose"
+    else:
+        key = "scaffold"
+    strategy = dict(TEACHER_STRATEGIES[key])
+    strategy["key"] = key
+    if context.get("top_gaps") and intent in {"concept_explain", "wrong_review"}:
+        strategy["must_reference_gap"] = context["top_gaps"][0].get("name", "")
+    return strategy
+
+
+def build_teacher_turn_instruction(intent: str, strategy: dict) -> str:
+    return f"""
+本轮意图：{TEACHER_INTENTS.get(intent, intent)}
+本轮教学策略：{strategy.get('name')}。
+策略规则：{strategy.get('rule')}
+执行要求：
+1. 开头用一句话说明你判断到的意图。
+2. 如果本地上下文里有相关证据，必须引用 1-3 条；如果没有，明确说证据不足。
+3. 对知识问题默认不要一上来全解，先用启发式引导；用户要求 full solution 时再完整展开。
+4. 对计划问题必须给出具体题量、筛选条件或复习对象。
+5. 结尾必须给“下一步动作”，最多 3 条。
+""".strip()
+
+
+def build_memory_candidate(user_message: str, answer: str, intent: str, strategy: dict, context: dict) -> str:
+    if intent not in {"wrong_review", "plan", "memory_update", "motivation"}:
+        return ""
+    profile = context.get("profile", {})
+    parts = [
+        f"意图：{TEACHER_INTENTS.get(intent, intent)}",
+        f"策略：{strategy.get('name', '')}",
+    ]
+    if profile.get("headline"):
+        parts.append(f"档案判断：{profile.get('headline')}")
+    if context.get("top_gaps"):
+        parts.append("当前优先薄弱点：" + "、".join(g.get("name", "") for g in context["top_gaps"][:3] if g.get("name")))
+    concise_user = re.sub(r"\s+", " ", user_message).strip()[:120]
+    concise_answer = re.sub(r"\s+", " ", answer).strip()[:180]
+    parts.append(f"用户本轮问题：{concise_user}")
+    parts.append(f"老师本轮建议：{concise_answer}")
+    return "；".join(parts)[:900]
+
+
+def recent_learning_evidence(conn: sqlite3.Connection, limit: int = 8) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT q.id, q.status, q.category, q.chapter, q.difficulty,
+               q.mistake_reason, q.meta_tags, q.review_stage, q.retention_stage,
+               q.next_review_at, q.created_at,
+               d.subject, d.title document_title
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        WHERE q.status IN ('做错', '半会', '需复习') OR q.ever_wrong = 1
+        ORDER BY COALESCE(q.last_reviewed_at, q.created_at) DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    evidence = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["meta_tags"] = json.loads(item.get("meta_tags") or "[]")
+        except (TypeError, json.JSONDecodeError):
+            item["meta_tags"] = []
+        evidence.append(item)
+    return evidence
+
+
+def build_ai_teacher_context(conn: sqlite3.Connection, message: str = "") -> dict:
+    state = get_coach_state(conn)
+    latest = load_latest_profile(conn)
+    profile = latest["profile"] if latest else {}
+    gaps = rank_gaps_from_profile(profile, top_n=5) if profile else []
+    backlog = compute_review_backlog(conn, date.today())
+    exam = parse_exam_date(state.get("exam_date"))
+    days_left = (exam - date.today()).days
+    daily_minutes = int(state.get("daily_minutes") or DEFAULT_DAILY_MINUTES)
+    today_actions = build_today_actions(
+        conn,
+        gaps,
+        backlog,
+        daily_minutes,
+        days_left < 14,
+        state.get("focus_subject", ""),
+    ) if profile else []
+    recent_evidence = recent_learning_evidence(conn, limit=8)
+    stats = gather_knowledge_stats(conn)[:10]
+    subject_hint = state.get("focus_subject", "")
+    mentor_experiences = select_relevant_mentor_experiences(conn, message, subject_hint, limit=5)
+    return {
+        "teacher_memories": teacher_memory_prompt(conn),
+        "mentor_experiences": mentor_experiences,
+        "mentor_experience_policy": "这些是外部经验参考，不是用户个人做题证据；只能辅助生成策略，不能替代本地错题统计。",
+        "settings": {
+            "daily_minutes": daily_minutes,
+            "exam_date": exam.isoformat(),
+            "days_left": days_left,
+            "cadence": state.get("cadence", "immediate"),
+            "focus_subject": subject_hint,
+        },
+        "profile": {
+            "version": latest["version"] if latest else 0,
+            "has_profile": bool(latest),
+            "headline": profile.get("headline", ""),
+            "pattern_summary": profile.get("pattern_summary", ""),
+            "avg_mastery": profile.get("avg_mastery", 0),
+            "evidence_count": profile.get("evidence_count", 0),
+            "error_mode_profile": profile.get("error_mode_profile", {}),
+            "recurring_misconceptions": profile.get("recurring_misconceptions", [])[:6],
+            "prereq_gaps": profile.get("prereq_gaps", [])[:8],
+        },
+        "top_gaps": gaps,
+        "review_backlog": backlog,
+        "today_actions": today_actions,
+        "recent_wrong_or_review_questions": recent_evidence,
+        "knowledge_stats_sample": stats,
+        "response_contract": {
+            "must_use_evidence": True,
+            "avoid_fabrication": True,
+            "default_scaffolding": "概念提示 -> 关键一步 -> 完整说明",
+            "must_end_with_actions": True,
+        },
+    }
 
 
 # ==========================================================================
@@ -1805,6 +2439,8 @@ def build_daily_reminder(conn: sqlite3.Connection) -> dict:
     exam = parse_exam_date(state.get("exam_date"))
     days_left = (exam - today).days
     due_total = backlog["overdue"] + backlog["due_today"]
+    batch = create_practice_batch(conn, "daily_push")
+    practice_url = f"{APP_PUBLIC_URL.rstrip('/')}/practice/{batch['id']}"
 
     rows = conn.execute(
         """
@@ -1836,8 +2472,267 @@ def build_daily_reminder(conn: sqlite3.Connection) -> dict:
     else:
         lines.append("🎉 今天没有到期的错题，保持节奏，可以预习新内容！")
     lines.append("")
-    lines.append(f"👉 [打开做题集开始复习]({APP_PUBLIC_URL})")
-    return {"title": title, "content": "\n".join(lines), "due_total": due_total, "days_left": days_left}
+    lines.append(f"👉 [手机快速回填本批次 {batch['question_count']} 道题]({practice_url})")
+    lines.append(f"💻 [打开完整做题集]({APP_PUBLIC_URL})")
+    return {
+        "title": title,
+        "content": "\n".join(lines),
+        "due_total": due_total,
+        "days_left": days_left,
+        "batch_id": batch["id"],
+        "practice_url": practice_url,
+    }
+
+
+WEATHER_CODE_TEXT = {
+    0: "晴",
+    1: "大部晴朗",
+    2: "局部多云",
+    3: "阴",
+    45: "雾",
+    48: "雾凇",
+    51: "小毛毛雨",
+    53: "毛毛雨",
+    55: "强毛毛雨",
+    61: "小雨",
+    63: "中雨",
+    65: "大雨",
+    71: "小雪",
+    73: "中雪",
+    75: "大雪",
+    80: "小阵雨",
+    81: "阵雨",
+    82: "强阵雨",
+    95: "雷雨",
+    96: "雷雨伴冰雹",
+    99: "强雷雨伴冰雹",
+}
+
+WEATHER_CITY_COORDS = {
+    "北京": (39.9042, 116.4074, "北京"),
+    "北京市": (39.9042, 116.4074, "北京"),
+    "北京海淀": (39.9599, 116.2983, "北京海淀区"),
+    "北京海淀区": (39.9599, 116.2983, "北京海淀区"),
+    "北京市海淀区": (39.9599, 116.2983, "北京海淀区"),
+    "海淀区": (39.9599, 116.2983, "北京海淀区"),
+    "海淀": (39.9599, 116.2983, "北京海淀区"),
+    "上海": (31.2304, 121.4737, "上海"),
+    "上海市": (31.2304, 121.4737, "上海"),
+    "广州": (23.1291, 113.2644, "广州"),
+    "深圳": (22.5431, 114.0579, "深圳"),
+    "杭州": (30.2741, 120.1551, "杭州"),
+    "南京": (32.0603, 118.7969, "南京"),
+    "武汉": (30.5928, 114.3055, "武汉"),
+    "成都": (30.5728, 104.0668, "成都"),
+    "重庆": (29.5630, 106.5516, "重庆"),
+    "西安": (34.3416, 108.9398, "西安"),
+    "天津": (39.3434, 117.3616, "天津"),
+    "苏州": (31.2989, 120.5853, "苏州"),
+    "长沙": (28.2282, 112.9388, "长沙"),
+    "郑州": (34.7466, 113.6254, "郑州"),
+    "青岛": (36.0671, 120.3826, "青岛"),
+    "山东日照": (35.4164, 119.5269, "山东日照"),
+    "山东省日照市": (35.4164, 119.5269, "山东日照"),
+    "日照": (35.4164, 119.5269, "日照"),
+    "日照市": (35.4164, 119.5269, "日照"),
+    "山东日照东港": (35.4254, 119.4623, "日照东港区"),
+    "山东省日照市东港区": (35.4254, 119.4623, "日照东港区"),
+    "日照东港": (35.4254, 119.4623, "日照东港区"),
+    "日照市东港区": (35.4254, 119.4623, "日照东港区"),
+    "东港区": (35.4254, 119.4623, "日照东港区"),
+}
+
+WTTR_DESC_ZH = {
+    "sunny": "晴",
+    "clear": "晴",
+    "partly cloudy": "局部多云",
+    "cloudy": "多云",
+    "overcast": "阴",
+    "mist": "薄雾",
+    "fog": "雾",
+    "patchy rain possible": "局部有雨",
+    "light drizzle": "小毛毛雨",
+    "light rain": "小雨",
+    "moderate rain": "中雨",
+    "heavy rain": "大雨",
+    "patchy snow possible": "局部有雪",
+    "light snow": "小雪",
+    "moderate snow": "中雪",
+    "heavy snow": "大雪",
+    "thundery outbreaks possible": "可能有雷雨",
+}
+
+
+def normalize_weather_location(value: str) -> str:
+    return re.sub(r"[\s,，/、|]+", "", (value or "").strip())
+
+
+def weather_location_attempts(city: str) -> list[str]:
+    raw = (city or WEATHER_CITY or "北京").strip()
+    compact = normalize_weather_location(raw)
+    attempts = []
+    for item in (raw, compact):
+        if item and item not in attempts:
+            attempts.append(item)
+    stripped = compact
+    for suffix in ("省", "市", "区", "县"):
+        stripped = stripped.replace(suffix, "")
+    if stripped and stripped not in attempts:
+        attempts.append(stripped)
+    parts = [p for p in re.split(r"[\s,，/、|]+", raw) if p.strip()]
+    if parts:
+        joined = "".join(parts)
+        if joined and joined not in attempts:
+            attempts.append(joined)
+        last_two = "".join(parts[-2:])
+        if last_two and last_two not in attempts:
+            attempts.append(last_two)
+        last = parts[-1]
+        if last and last not in attempts:
+            attempts.append(last)
+    if "北京" in compact and "海淀" in compact:
+        attempts.insert(0, "北京海淀区")
+    if "日照" in compact and "东港" in compact:
+        attempts.insert(0, "山东省日照市东港区")
+    return list(dict.fromkeys(attempts))
+
+
+def wttr_query_name(city: str) -> str:
+    compact = normalize_weather_location(city)
+    if "北京" in compact and "海淀" in compact:
+        return "Haidian,Beijing"
+    if "日照" in compact and "东港" in compact:
+        return "Donggang,Rizhao,Shandong"
+    if city == "北京":
+        return "Beijing"
+    if city == "上海":
+        return "Shanghai"
+    return city
+
+
+def weather_city_from_state(conn: sqlite3.Connection) -> str:
+    state = get_coach_state(conn)
+    return (state.get("weather_city") or WEATHER_CITY or "北京").strip()
+
+
+def geocode_weather_city(city: str) -> dict:
+    city = (city or WEATHER_CITY or "北京").strip()
+    for candidate in weather_location_attempts(city):
+        if candidate in WEATHER_CITY_COORDS:
+            lat, lon, name = WEATHER_CITY_COORDS[candidate]
+            return {"name": name, "country": "中国", "latitude": lat, "longitude": lon, "timezone": "Asia/Shanghai"}
+    attempts = weather_location_attempts(city)
+    if city == "北京":
+        attempts.append("Beijing")
+    if "海淀" in normalize_weather_location(city):
+        attempts.append("Haidian")
+    if "日照" in normalize_weather_location(city):
+        attempts.append("Rizhao")
+    if "东港" in normalize_weather_location(city):
+        attempts.append("Donggang")
+    for name in attempts:
+        url = (
+            "https://geocoding-api.open-meteo.com/v1/search?"
+            + urllib.parse.urlencode({"name": name, "count": 1, "language": "zh", "format": "json"})
+        )
+        with urllib.request.urlopen(url, timeout=12) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        results = data.get("results") or []
+        if results:
+            item = results[0]
+            return {
+                "name": item.get("name") or city,
+                "country": item.get("country") or "",
+                "latitude": item["latitude"],
+                "longitude": item["longitude"],
+                "timezone": item.get("timezone") or "Asia/Shanghai",
+            }
+    raise ValueError(f"没有找到城市：{city}")
+
+
+def fetch_tomorrow_weather(city: str) -> dict:
+    try:
+        geo = geocode_weather_city(city)
+        params = {
+            "latitude": geo["latitude"],
+            "longitude": geo["longitude"],
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max",
+            "forecast_days": 2,
+            "timezone": "Asia/Shanghai",
+        }
+        url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(params)
+        with urllib.request.urlopen(url, timeout=12) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        daily = data.get("daily") or {}
+        idx = 1 if len(daily.get("time", [])) > 1 else 0
+        code = int((daily.get("weather_code") or [0])[idx])
+        return {
+            "city": city,
+            "resolved_city": geo["name"],
+            "country": geo["country"],
+            "date": (daily.get("time") or [""])[idx],
+            "weather_code": code,
+            "weather_text": WEATHER_CODE_TEXT.get(code, f"天气代码 {code}"),
+            "temp_max": (daily.get("temperature_2m_max") or [None])[idx],
+            "temp_min": (daily.get("temperature_2m_min") or [None])[idx],
+            "rain_probability": (daily.get("precipitation_probability_max") or [None])[idx],
+            "wind_max": (daily.get("wind_speed_10m_max") or [None])[idx],
+            "source": "open-meteo",
+        }
+    except Exception:
+        return fetch_tomorrow_weather_wttr(city)
+
+
+def fetch_tomorrow_weather_wttr(city: str) -> dict:
+    city = (city or WEATHER_CITY or "北京").strip()
+    query_city = wttr_query_name(city)
+    url = f"https://wttr.in/{urllib.parse.quote(query_city)}?format=j1&lang=zh"
+    with urllib.request.urlopen(url, timeout=15) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    days = data.get("weather") or []
+    item = days[1] if len(days) > 1 else days[0]
+    hourly = item.get("hourly") or [{}]
+    noon = hourly[min(4, len(hourly) - 1)] if hourly else {}
+    desc = ""
+    if noon.get("lang_zh"):
+        desc = noon["lang_zh"][0].get("value", "")
+    if not desc and noon.get("weatherDesc"):
+        desc = noon["weatherDesc"][0].get("value", "")
+    desc = WTTR_DESC_ZH.get(desc.strip().lower(), desc)
+    rain_values = [parse_positive_int(h.get("chanceofrain"), 0) or 0 for h in hourly]
+    wind_values = [parse_positive_int(h.get("windspeedKmph"), 0) or 0 for h in hourly]
+    return {
+        "city": city,
+        "resolved_city": city,
+        "country": "",
+        "date": item.get("date", ""),
+        "weather_code": parse_positive_int(noon.get("weatherCode"), 0) or 0,
+        "weather_text": desc or "天气信息",
+        "temp_max": parse_positive_int(item.get("maxtempC"), None),
+        "temp_min": parse_positive_int(item.get("mintempC"), None),
+        "rain_probability": max(rain_values) if rain_values else 0,
+        "wind_max": max(wind_values) if wind_values else 0,
+        "source": "wttr.in",
+    }
+
+
+def build_weather_reminder(conn: sqlite3.Connection, city: str | None = None) -> dict:
+    city = (city or weather_city_from_state(conn)).strip()
+    info = fetch_tomorrow_weather(city)
+    display_city = info["resolved_city"] or city
+    title = f"明天天气提醒 · {display_city}"
+    lines = [
+        f"### 明天天气提醒：{display_city}",
+        f"- 日期：**{info['date']}**",
+        f"- 天气：**{info['weather_text']}**",
+        f"- 温度：**{info['temp_min']}°C ~ {info['temp_max']}°C**",
+        f"- 降水概率：**{info['rain_probability']}%**",
+        f"- 最大风速：**{info['wind_max']} km/h**",
+        "",
+        "晚上提前看一下天气，第二天出门少一点临时慌张。",
+        f"👉 [打开 Sakura 做题集]({APP_PUBLIC_URL.rstrip('/')})",
+    ]
+    return {"title": title, "content": "\n".join(lines), "weather": info}
 
 
 def send_pushplus(title: str, content: str, template: str = "markdown") -> dict:
@@ -1853,6 +2748,48 @@ def send_pushplus(title: str, content: str, template: str = "markdown") -> dict:
     except Exception as exc:
         traceback.print_exc()
         return {"ok": False, "error": str(exc)}
+
+
+def send_wework_bot(title: str, content: str) -> dict:
+    if not WEWORK_BOT_WEBHOOK:
+        return {"ok": False, "channel": "wework", "error": "WEWORK_BOT_WEBHOOK is not configured."}
+    markdown = f"### {title}\n\n{content}".strip()
+    payload = json.dumps(
+        {"msgtype": "markdown", "markdown": {"content": markdown}},
+        ensure_ascii=False,
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        WEWORK_BOT_WEBHOOK,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        resp = json.loads(urllib.request.urlopen(req, timeout=15).read().decode("utf-8"))
+        return {"ok": resp.get("errcode") == 0, "channel": "wework", "resp": resp}
+    except Exception as exc:
+        traceback.print_exc()
+        return {"ok": False, "channel": "wework", "error": str(exc)}
+
+
+def send_notification(title: str, content: str) -> dict:
+    results = []
+    if WEWORK_BOT_WEBHOOK:
+        results.append(send_wework_bot(title, content))
+    if PUSHPLUS_TOKEN:
+        results.append(send_pushplus(title, content))
+    if not results:
+        return {
+            "ok": False,
+            "configured": False,
+            "detail": "No notification channel configured. Set WEWORK_BOT_WEBHOOK or PUSHPLUS_TOKEN.",
+            "results": [],
+        }
+    return {
+        "ok": any(item.get("ok") for item in results),
+        "configured": True,
+        "detail": results,
+        "results": results,
+    }
 
 
 def today_quote() -> str:
@@ -1885,7 +2822,13 @@ def build_morning_reminder(conn: sqlite3.Connection) -> dict:
         f"✅ [我已完成]({checkin_url})\n\n"
         f"（晚上 8 点会检查；没打卡的话，某人会来念你 👀）"
     )
-    return {"title": f"🌅 早安 · {base['title']}", "content": content, "due_total": base["due_total"]}
+    return {
+        "title": f"🌅 早安 · {base['title']}",
+        "content": content,
+        "due_total": base["due_total"],
+        "batch_id": base.get("batch_id", ""),
+        "practice_url": base.get("practice_url", ""),
+    }
 
 
 def build_night_check(conn: sqlite3.Connection) -> dict:
@@ -2071,6 +3014,423 @@ def build_mistakes_pdf(conn: sqlite3.Connection, query: dict, mistakes_only: boo
     return pdf_bytes, len(rows)
 
 
+def daily_rule_to_dict(row: sqlite3.Row) -> dict:
+    item = dict(row)
+    item["enabled"] = bool(item.get("enabled"))
+    item["limit_count"] = int(item.get("limit_count") or 5)
+    return item
+
+
+def load_daily_rules(conn: sqlite3.Connection, enabled_only: bool = False) -> list[dict]:
+    where = "WHERE enabled = 1" if enabled_only else ""
+    rows = conn.execute(
+        f"SELECT * FROM daily_rules {where} ORDER BY enabled DESC, updated_at DESC, created_at DESC"
+    ).fetchall()
+    return [daily_rule_to_dict(row) for row in rows]
+
+
+def save_daily_rule(conn: sqlite3.Connection, payload: dict) -> dict:
+    now = datetime.now().isoformat(timespec="seconds")
+    rule_id = str(payload.get("id") or uuid.uuid4().hex)
+    limit_count = parse_positive_int(str(payload.get("limit_count", "")), 5) or 5
+    limit_count = max(1, min(30, limit_count))
+    status_group = str(payload.get("status_group") or "active_wrong")
+    if status_group not in {"active_wrong", "due", "wrong", "review", "all_wrong_history"}:
+        status_group = "active_wrong"
+    values = {
+        "id": rule_id,
+        "name": str(payload.get("name") or "").strip()[:100],
+        "enabled": 1 if payload.get("enabled", True) else 0,
+        "document_id": str(payload.get("document_id") or "").strip(),
+        "subject": str(payload.get("subject") or "").strip(),
+        "category": str(payload.get("category") or "").strip(),
+        "chapter": str(payload.get("chapter") or "").strip(),
+        "status_group": status_group,
+        "limit_count": limit_count,
+        "created_at": now,
+        "updated_at": now,
+    }
+    existing = conn.execute("SELECT created_at FROM daily_rules WHERE id = ?", (rule_id,)).fetchone()
+    if existing:
+        values["created_at"] = existing["created_at"]
+    conn.execute(
+        """
+        INSERT INTO daily_rules (
+            id, name, enabled, document_id, subject, category, chapter,
+            status_group, limit_count, created_at, updated_at
+        ) VALUES (
+            :id, :name, :enabled, :document_id, :subject, :category, :chapter,
+            :status_group, :limit_count, :created_at, :updated_at
+        )
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            enabled = excluded.enabled,
+            document_id = excluded.document_id,
+            subject = excluded.subject,
+            category = excluded.category,
+            chapter = excluded.chapter,
+            status_group = excluded.status_group,
+            limit_count = excluded.limit_count,
+            updated_at = excluded.updated_at
+        """,
+        values,
+    )
+    row = conn.execute("SELECT * FROM daily_rules WHERE id = ?", (rule_id,)).fetchone()
+    return daily_rule_to_dict(row)
+
+
+def daily_rule_where(rule: dict, today_iso: str) -> tuple[str, list[str]]:
+    clauses = []
+    params: list[str] = []
+    if rule.get("document_id"):
+        clauses.append("q.document_id = ?")
+        params.append(rule["document_id"])
+    if rule.get("subject"):
+        clauses.append("d.subject = ?")
+        params.append(rule["subject"])
+    if rule.get("category"):
+        clauses.append("q.category = ?")
+        params.append(rule["category"])
+    if rule.get("chapter"):
+        clauses.append("q.chapter = ?")
+        params.append(rule["chapter"])
+    status_group = rule.get("status_group") or "active_wrong"
+    if status_group == "due":
+        clauses.append(
+            "(q.ever_wrong = 1 AND q.mastered_at IS NULL AND q.next_review_at IS NOT NULL AND date(q.next_review_at) <= date(?))"
+        )
+        params.append(today_iso)
+    elif status_group == "wrong":
+        clauses.append("q.status = '做错'")
+    elif status_group == "review":
+        clauses.append("q.status IN ('需复习', '半会')")
+    elif status_group == "all_wrong_history":
+        clauses.append("q.ever_wrong = 1")
+    else:
+        clauses.append(
+            "(q.status IN ('做错', '需复习', '半会') OR (q.ever_wrong = 1 AND q.mastered_at IS NULL AND q.next_review_at IS NOT NULL AND date(q.next_review_at) <= date(?)))"
+        )
+        params.append(today_iso)
+    return " AND ".join(clauses), params
+
+
+def select_daily_questions_for_rule(conn: sqlite3.Connection, rule: dict, today_iso: str, used_ids: set[str]) -> list[dict]:
+    where, params = daily_rule_where(rule, today_iso)
+    if used_ids:
+        where += f" AND q.id NOT IN ({','.join('?' for _ in used_ids)})"
+        params.extend(list(used_ids))
+    rows = conn.execute(
+        f"""
+        SELECT q.*, d.filename, d.title document_title, d.subject, d.document_kind
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        WHERE {where}
+        ORDER BY
+            CASE q.status WHEN '做错' THEN 0 WHEN '需复习' THEN 1 WHEN '半会' THEN 2 ELSE 3 END,
+            q.review_stage ASC,
+            COALESCE(q.next_review_at, q.last_reviewed_at, q.created_at) ASC,
+            q.page_number ASC
+        LIMIT ?
+        """,
+        [*params, int(rule.get("limit_count") or 5)],
+    ).fetchall()
+    result = []
+    for row in rows:
+        item = row_to_dict(row)
+        item["daily_kind"] = "custom"
+        item["daily_rule_id"] = rule["id"]
+        result.append(item)
+    return result
+
+
+def build_custom_daily_groups(conn: sqlite3.Connection) -> tuple[list[dict], list[dict]]:
+    today_iso = date.today().isoformat()
+    rules = load_daily_rules(conn, enabled_only=True)
+    groups = []
+    used_ids: set[str] = set()
+    for rule in rules:
+        questions = select_daily_questions_for_rule(conn, rule, today_iso, used_ids)
+        for q in questions:
+            used_ids.add(q["id"])
+        if questions:
+            title = rule.get("name") or "自定义错题推送"
+            groups.append({"title": title, "rule": rule, "questions": questions})
+    return groups, rules
+
+
+def daily_rule_option_where(query: dict, skip: str = "") -> tuple[str, list[str]]:
+    clauses = []
+    params: list[str] = []
+    mapping = {
+        "document_id": "q.document_id",
+        "subject": "d.subject",
+        "category": "q.category",
+        "chapter": "q.chapter",
+    }
+    for key, column in mapping.items():
+        if key == skip:
+            continue
+        value = query.get(key, [""])[0].strip()
+        if value:
+            clauses.append(f"{column} = ?")
+            params.append(value)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    return where, params
+
+
+def get_daily_rule_options(conn: sqlite3.Connection, query: dict) -> dict:
+    doc_where, doc_params = daily_rule_option_where(query, skip="document_id")
+    subject_where, subject_params = daily_rule_option_where(query, skip="subject")
+    category_where, category_params = daily_rule_option_where(query, skip="category")
+    chapter_where, chapter_params = daily_rule_option_where(query, skip="chapter")
+
+    documents = [
+        document_to_dict(row)
+        for row in conn.execute(
+            f"""
+            SELECT DISTINCT d.*
+            FROM documents d
+            JOIN questions q ON q.document_id = d.id
+            {doc_where}
+            ORDER BY d.subject ASC, COALESCE(NULLIF(d.title, ''), d.filename) ASC
+            """,
+            doc_params,
+        ).fetchall()
+    ]
+    subjects = [
+        row["subject"]
+        for row in conn.execute(
+            f"""
+            SELECT d.subject, MIN(q.page_number) first_page
+            FROM questions q
+            JOIN documents d ON d.id = q.document_id
+            {subject_where}
+            GROUP BY d.subject
+            HAVING d.subject <> ''
+            ORDER BY first_page ASC, d.subject ASC
+            """,
+            subject_params,
+        ).fetchall()
+    ]
+    categories = [
+        row["category"]
+        for row in conn.execute(
+            f"""
+            SELECT q.category, MIN(q.page_number) first_page
+            FROM questions q
+            JOIN documents d ON d.id = q.document_id
+            {category_where}
+            GROUP BY q.category
+            HAVING q.category <> ''
+            ORDER BY first_page ASC, q.category ASC
+            """,
+            category_params,
+        ).fetchall()
+    ]
+    chapters = [
+        row["chapter"]
+        for row in conn.execute(
+            f"""
+            SELECT q.chapter, MIN(q.page_number) first_page
+            FROM questions q
+            JOIN documents d ON d.id = q.document_id
+            {chapter_where}
+            GROUP BY q.chapter
+            HAVING q.chapter <> ''
+            ORDER BY first_page ASC, q.chapter ASC
+            """,
+            chapter_params,
+        ).fetchall()
+    ]
+    return {"documents": documents, "subjects": subjects, "categories": categories, "chapters": chapters}
+
+
+def build_daily_payload(conn: sqlite3.Connection) -> dict:
+    today = date.today().isoformat()
+    custom_groups, custom_rules = build_custom_daily_groups(conn)
+    if custom_rules:
+        groups = custom_groups
+        message = "已启用自定义每日练习规则；系统会按做题本、科目、知识点和章节筛选错题。"
+        return {
+            "date": today,
+            "groups": groups,
+            "plan": [question for group in groups for question in group["questions"]],
+            "custom_rules": custom_rules,
+            "message": message,
+        }
+
+    rows = conn.execute(
+        """
+        SELECT q.*, d.filename, d.title document_title, d.subject, d.document_kind
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        WHERE q.status IN ('做错', '需复习', '半会')
+           OR (
+               q.ever_wrong = 1
+               AND q.mastered_at IS NULL
+               AND q.next_review_at IS NOT NULL
+               AND date(q.next_review_at) <= date(?)
+           )
+        ORDER BY
+            d.subject ASC,
+            COALESCE(NULLIF(d.title, ''), d.filename) ASC,
+            CASE q.status
+                WHEN '做错' THEN 0
+                WHEN '需复习' THEN 1
+                WHEN '半会' THEN 2
+                WHEN '做对' THEN 3
+                ELSE 4
+            END,
+            q.review_stage ASC,
+            COALESCE(q.next_review_at, q.last_reviewed_at, q.created_at) ASC
+        """,
+        (today,),
+    ).fetchall()
+    dependency_map = weak_chapter_dependencies(conn)
+    groups_map: dict[str, dict] = {}
+    used_ids: set[str] = set()
+    for row in rows:
+        item = row_to_dict(row)
+        item["daily_kind"] = "review"
+        used_ids.add(item["id"])
+        book_name = item.get("document_title") or item.get("filename") or "做题本"
+        group_key = f"{item.get('subject') or DEFAULT_SUBJECT} / {item.get('document_kind') or DEFAULT_DOCUMENT_KIND} / {book_name}"
+        if group_key not in groups_map:
+            groups_map[group_key] = {"title": group_key, "questions": []}
+        if len(groups_map[group_key]["questions"]) < 4:
+            groups_map[group_key]["questions"].append(item)
+    for group_key, dependencies in dependency_map.items():
+        if group_key not in groups_map or len(groups_map[group_key]["questions"]) >= 5:
+            continue
+        subject = group_key.split(" / ", 1)[0]
+        foundations = find_foundation_questions(conn, subject, dependencies, used_ids)
+        if foundations:
+            groups_map[group_key]["questions"].append(foundations[0])
+            used_ids.add(foundations[0]["id"])
+    groups = [group for group in groups_map.values() if group["questions"]]
+    return {
+        "date": today,
+        "groups": groups,
+        "plan": [question for group in groups for question in group["questions"]],
+        "message": "每日练习由当前错题、到期复习题和低正确率章节的前置基础题组成；每组最多 5 道，其中约 20% 用于补基础。",
+    }
+
+
+def create_practice_batch(conn: sqlite3.Connection, source: str = "push") -> dict:
+    payload = build_daily_payload(conn)
+    questions = payload.get("plan") or []
+    now = datetime.now().isoformat(timespec="seconds")
+    batch_id = uuid.uuid4().hex
+    title = f"{date.today().isoformat()} 每日错题回填"
+    conn.execute(
+        "INSERT INTO practice_batches (id, day, source, title, created_at) VALUES (?, ?, ?, ?, ?)",
+        (batch_id, date.today().isoformat(), source, title, now),
+    )
+    for index, question in enumerate(questions, start=1):
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO practice_batch_items (batch_id, question_id, position)
+            VALUES (?, ?, ?)
+            """,
+            (batch_id, question["id"], index),
+        )
+    return {"id": batch_id, "title": title, "question_count": len(questions), "payload": payload}
+
+
+def practice_batch_payload(conn: sqlite3.Connection, batch_id: str) -> dict | None:
+    batch = conn.execute("SELECT * FROM practice_batches WHERE id = ?", (batch_id,)).fetchone()
+    if not batch:
+        return None
+    rows = conn.execute(
+        """
+        SELECT
+            p.position, p.quick_status, p.quick_note, p.completed_at batch_completed_at,
+            q.id, q.document_id, q.page_number, q.seq_no, q.question_no, q.image_path,
+            q.ocr_text, q.category, q.subcategory, q.chapter, q.difficulty, q.status,
+            q.user_note, q.meta_tags, q.ever_wrong, q.review_stage, q.next_review_at,
+            q.retention_stage, q.mastered_at,
+            d.filename, d.title document_title, d.subject, d.document_kind
+        FROM practice_batch_items p
+        JOIN questions q ON q.id = p.question_id
+        JOIN documents d ON d.id = q.document_id
+        WHERE p.batch_id = ?
+        ORDER BY p.position ASC
+        """,
+        (batch_id,),
+    ).fetchall()
+    questions = []
+    for row in rows:
+        item = row_to_dict(row)
+        item["batch_position"] = row["position"]
+        item["quick_status"] = row["quick_status"]
+        item["quick_note"] = row["quick_note"]
+        item["batch_completed_at"] = row["batch_completed_at"]
+        questions.append(item)
+    done = sum(1 for item in questions if item.get("quick_status"))
+    batch_dict = dict(batch)
+    batch_dict["question_count"] = len(questions)
+    batch_dict["done_count"] = done
+    return {"batch": batch_dict, "questions": questions}
+
+
+def apply_practice_feedback(conn: sqlite3.Connection, batch_id: str, q_id: str, status: str, note: str = "") -> dict:
+    status = normalize_label(status, "")
+    if status not in {"做对", "做错", "半会", "需复习"}:
+        raise ValueError("状态只能是：做对、做错、半会、需复习。")
+    current = conn.execute("SELECT * FROM questions WHERE id = ?", (q_id,)).fetchone()
+    if not current:
+        raise ValueError("题目不存在。")
+    item = conn.execute(
+        "SELECT 1 FROM practice_batch_items WHERE batch_id = ? AND question_id = ?",
+        (batch_id, q_id),
+    ).fetchone()
+    if not item:
+        raise ValueError("这道题不属于当前推送批次。")
+    now = datetime.now()
+    updates = {
+        "status": status,
+        "user_note": note.strip()[:1000] or current["user_note"],
+        "last_reviewed_at": now.isoformat(timespec="seconds"),
+        "review_count": "review_count + 1",
+    }
+    updates.update(schedule_for_status(current, status, now))
+    assignments = []
+    params = []
+    for key, value in updates.items():
+        if key == "review_count":
+            assignments.append("review_count = review_count + 1")
+        else:
+            assignments.append(f"{key} = ?")
+            params.append(value)
+    params.append(q_id)
+    conn.execute(f"UPDATE questions SET {', '.join(assignments)} WHERE id = ?", params)
+    completed_at = now.isoformat(timespec="seconds")
+    conn.execute(
+        """
+        UPDATE practice_batch_items
+        SET quick_status = ?, quick_note = ?, completed_at = ?
+        WHERE batch_id = ? AND question_id = ?
+        """,
+        (status, note.strip()[:1000], completed_at, batch_id, q_id),
+    )
+    remaining = conn.execute(
+        "SELECT COUNT(*) n FROM practice_batch_items WHERE batch_id = ? AND quick_status = ''",
+        (batch_id,),
+    ).fetchone()["n"]
+    if remaining == 0:
+        conn.execute("UPDATE practice_batches SET completed_at = ? WHERE id = ?", (completed_at, batch_id))
+    row = conn.execute(
+        """
+        SELECT q.*, d.filename, d.title document_title, d.subject, d.document_kind
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        WHERE q.id = ?
+        """,
+        (q_id,),
+    ).fetchone()
+    return row_to_dict(row) | {"quick_status": status, "quick_note": note.strip()[:1000], "remaining": remaining}
+
+
 def render_page_image(page: fitz.Page, image_path: Path) -> None:
     page_rect = page.rect
     target_width = 1800
@@ -2078,6 +3438,184 @@ def render_page_image(page: fitz.Page, image_path: Path) -> None:
     matrix = fitz.Matrix(zoom, zoom)
     pix = page.get_pixmap(matrix=matrix, colorspace=fitz.csRGB, alpha=False, annots=True)
     pix.save(image_path)
+
+
+def render_page_clip_image(page: fitz.Page, clip: fitz.Rect, image_path: Path) -> None:
+    target_width = 1800
+    zoom = max(1.8, min(3.5, target_width / max(clip.width, 1)))
+    matrix = fitz.Matrix(zoom, zoom)
+    pix = page.get_pixmap(matrix=matrix, colorspace=fitz.csRGB, alpha=False, annots=True, clip=clip)
+    pix.save(image_path)
+
+
+def detect_question_slices(page: fitz.Page) -> list[dict]:
+    """Split a multi-question exam page by visible question numbers such as 1、2. 3．"""
+    page_rect = page.rect
+    data = page.get_text("dict", sort=True)
+    starts = []
+    question_no_pattern = re.compile(r"^\s*(\d{1,3})(?:\s*[、.．)]|[^\d])")
+    for block in data.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            line_text = "".join(span.get("text", "") for span in line.get("spans", [])).strip()
+            match = question_no_pattern.match(line_text)
+            if not match:
+                continue
+            bbox = fitz.Rect(line.get("bbox", block.get("bbox", page_rect)))
+            # 题号一般在正文左侧，排除页眉、页脚、目录编号等干扰。
+            if bbox.y0 < page_rect.height * 0.08 or bbox.x0 > page_rect.width * 0.35:
+                continue
+            starts.append({"number": match.group(1), "y": max(page_rect.y0, bbox.y0 - 8)})
+
+    deduped = []
+    for item in sorted(starts, key=lambda item: item["y"]):
+        if deduped and abs(item["y"] - deduped[-1]["y"]) < 12:
+            continue
+        deduped.append(item)
+    if len(deduped) < 2:
+        return []
+
+    slices = []
+    for index, start in enumerate(deduped):
+        next_y = deduped[index + 1]["y"] if index + 1 < len(deduped) else page_rect.y1 - 16
+        top = max(page_rect.y0, start["y"])
+        bottom = min(page_rect.y1, next_y - 4)
+        if bottom - top < 36:
+            continue
+        clip = fitz.Rect(page_rect.x0 + 18, top, page_rect.x1 - 18, bottom)
+        slices.append({"question_no": start["number"], "clip": clip})
+    return slices
+
+
+def split_textbook_paragraphs(text: str) -> list[str]:
+    clean_lines = [line.strip() for line in (text or "").replace("\r\n", "\n").split("\n")]
+    paragraphs = []
+    buffer = []
+    for line in clean_lines:
+        if not line:
+            if buffer:
+                paragraphs.append(" ".join(buffer).strip())
+                buffer = []
+            continue
+        buffer.append(line)
+        if len("".join(buffer)) > 180 or re.search(r"[。！？；.!?;]$", line):
+            paragraphs.append(" ".join(buffer).strip())
+            buffer = []
+    if buffer:
+        paragraphs.append(" ".join(buffer).strip())
+    paragraphs = [p for p in paragraphs if p]
+    if not paragraphs and text.strip():
+        paragraphs = [text.strip()]
+    return paragraphs
+
+
+def textbook_to_dict(row: sqlite3.Row) -> dict:
+    item = dict(row)
+    item["page_count"] = int(item.get("page_count") or 0)
+    item["saved_pages"] = int(item.get("saved_pages") or item["page_count"] or 0)
+    return item
+
+
+def textbook_page_to_dict(row: sqlite3.Row) -> dict:
+    item = dict(row)
+    item["image_url"] = to_public_path(item.get("image_path") or "")
+    try:
+        item["paragraphs"] = json.loads(item.get("paragraphs_json") or "[]")
+    except json.JSONDecodeError:
+        item["paragraphs"] = []
+    return item
+
+
+def import_textbook_pdf(filename: str, pdf_bytes: bytes, title: str = "", subject: str = "") -> dict:
+    book_id = uuid.uuid4().hex
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", filename) or "textbook.pdf"
+    pdf_path = UPLOAD_DIR / f"{book_id}_{safe_name}"
+    pdf_path.write_bytes(pdf_bytes)
+    title = title.strip() or Path(filename).stem
+    subject = normalize_label(subject, DEFAULT_SUBJECT)
+    now = datetime.now().isoformat(timespec="seconds")
+    pdf = fitz.open(pdf_path)
+    page_count = pdf.page_count
+    try:
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO textbooks (id, title, subject, filename, stored_path, page_count, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (book_id, title, subject, filename, str(pdf_path), page_count, now),
+            )
+            for index, page in enumerate(pdf, start=1):
+                page_id = uuid.uuid4().hex
+                text = page.get_text("text", sort=True).strip()
+                paragraphs = split_textbook_paragraphs(text)
+                image_path = PAGE_DIR / f"{book_id}_textbook_page_{index:03d}.png"
+                render_page_image(page, image_path)
+                conn.execute(
+                    """
+                    INSERT INTO textbook_pages (
+                        id, textbook_id, page_number, image_path, page_text, paragraphs_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (page_id, book_id, index, str(image_path), text, json.dumps(paragraphs, ensure_ascii=False), now),
+                )
+    finally:
+        pdf.close()
+    return {"textbook_id": book_id, "title": title, "subject": subject, "page_count": page_count}
+
+
+def build_textbook_context(conn: sqlite3.Connection, textbook_id: str, page_number: int, paragraph_index: int = 0) -> tuple[dict, dict]:
+    book = conn.execute("SELECT * FROM textbooks WHERE id = ?", (textbook_id,)).fetchone()
+    if not book:
+        raise ValueError("教材不存在。")
+    page = conn.execute(
+        "SELECT * FROM textbook_pages WHERE textbook_id = ? AND page_number = ?",
+        (textbook_id, page_number),
+    ).fetchone()
+    if not page:
+        raise ValueError("教材页不存在。")
+    page_item = textbook_page_to_dict(page)
+    paragraphs = page_item.get("paragraphs") or []
+    selected = ""
+    if paragraph_index > 0 and paragraph_index <= len(paragraphs):
+        selected = paragraphs[paragraph_index - 1]
+    return dict(book), {**page_item, "selected_paragraph": selected}
+
+
+def explain_textbook_with_ai(book: dict, page: dict, message: str, history: list[dict]) -> str:
+    selected = page.get("selected_paragraph") or ""
+    paragraphs = page.get("paragraphs") or []
+    paragraph_preview = "\n".join(f"{i + 1}. {p}" for i, p in enumerate(paragraphs[:12]))
+    system = (
+        "你是 Sakura 做题集的教材精读老师。用中文回答，讲清概念、公式来源、直觉和常见误区。"
+        "如果涉及数学公式，使用 Markdown + LaTeX，显示公式优先使用 \\[...\\]。"
+        "不要假装读过整本书，只根据提供的页面/段落和学生问题解释。"
+    )
+    context = f"""
+教材：{book.get('title')} / {book.get('subject')}
+页码：{page.get('page_number')}
+选中段落：{selected or '未指定'}
+本页段落：
+{paragraph_preview}
+
+本页全文（截断）：
+{(page.get('page_text') or '')[:5000]}
+"""
+    messages = [{"role": "system", "content": system}, {"role": "system", "content": context}]
+    for item in history[-8:]:
+        if item.get("role") in {"user", "assistant"} and item.get("content"):
+            messages.append({"role": item["role"], "content": str(item["content"])[:2000]})
+    messages.append({"role": "user", "content": message})
+    if not llm_enabled():
+        return (
+            "当前未配置 AI 接口密钥，先给出本地精读提示：\n"
+            f"1. 先定位第 {page.get('page_number')} 页的核心概念。\n"
+            "2. 把不懂的句子拆成“定义、条件、结论、推导依据”。\n"
+            f"3. 你选中的段落是：{selected or '未指定具体段落'}\n"
+            "配置 API Key 后可以获得逐句讲解和追问。"
+        )
+    return call_llm_messages(messages, temperature=0.35)
 
 
 def extract_text_and_chapters(pdf_path: Path, document_kind: str = DEFAULT_DOCUMENT_KIND) -> list[dict]:
@@ -2116,6 +3654,7 @@ def import_pdf(
     document_kind: str = DEFAULT_DOCUMENT_KIND,
     start_page: int | None = None,
     end_page: int | None = None,
+    split_questions: bool = False,
 ) -> dict:
     doc_id = uuid.uuid4().hex
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", filename) or "questions.pdf"
@@ -2142,9 +3681,9 @@ def import_pdf(
             page_end = min(end_page or pdf.page_count, pdf.page_count)
             if page_start > page_end:
                 raise ValueError("页码范围无效，请检查起止页。")
+            seq_no = 0
             for index in range(page_start, page_end + 1):
                 page = pdf[index - 1]
-                q_id = uuid.uuid4().hex
                 text = page.get_text("text", sort=True).strip()
                 if document_kind == MOCK_PAPER_KIND:
                     chapter_hint = MOCK_PAPER_CHAPTER
@@ -2153,39 +3692,55 @@ def import_pdf(
                     if extracted_chapter != DEFAULT_CHAPTER:
                         last_chapter = extracted_chapter
                     chapter_hint = last_chapter if last_chapter != DEFAULT_CHAPTER else extracted_chapter
-                image_path = PAGE_DIR / f"{doc_id}_page_{index:03d}.png"
-                render_page_image(page, image_path)
-                classification = classify_question_locally(text, subject, chapter_hint, document_kind)
-                conn.execute(
-                    """
-                    INSERT INTO questions (
-                        id, document_id, page_number, seq_no, image_path, ocr_text, category,
-                        subcategory, chapter, difficulty, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        q_id,
-                        doc_id,
-                        index,
-                        index - page_start + 1,
-                        str(image_path),
-                        text,
-                        classification["category"],
-                        classification["subcategory"],
-                        classification["chapter"],
-                        classification["difficulty"],
-                        now,
-                    ),
-                )
-                inserted.append(
-                    {
-                        "id": q_id,
-                        "page_number": index,
-                        "category": classification["category"],
-                        "subcategory": classification["subcategory"],
-                        "chapter": classification["chapter"],
-                    }
-                )
+                slices = detect_question_slices(page) if document_kind == MOCK_PAPER_KIND and split_questions else []
+                if not slices:
+                    slices = [{"question_no": "", "clip": None}]
+                for slice_index, item in enumerate(slices, start=1):
+                    seq_no += 1
+                    q_id = uuid.uuid4().hex
+                    clip = item.get("clip")
+                    if clip:
+                        image_path = PAGE_DIR / f"{doc_id}_page_{index:03d}_q{slice_index:02d}.png"
+                        render_page_clip_image(page, clip, image_path)
+                        question_text = page.get_text("text", sort=True, clip=clip).strip()
+                    else:
+                        image_path = PAGE_DIR / f"{doc_id}_page_{index:03d}.png"
+                        render_page_image(page, image_path)
+                        question_text = text
+                    classification = classify_question_locally(question_text or text, subject, chapter_hint, document_kind)
+                    conn.execute(
+                        """
+                        INSERT INTO questions (
+                            id, document_id, page_number, seq_no, question_no, image_path, ocr_text, category,
+                            subcategory, chapter, difficulty, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            q_id,
+                            doc_id,
+                            index,
+                            seq_no,
+                            str(item.get("question_no") or ""),
+                            str(image_path),
+                            question_text or text,
+                            classification["category"],
+                            classification["subcategory"],
+                            classification["chapter"],
+                            classification["difficulty"],
+                            now,
+                        ),
+                    )
+                    inserted.append(
+                        {
+                            "id": q_id,
+                            "page_number": index,
+                            "seq_no": seq_no,
+                            "question_no": str(item.get("question_no") or ""),
+                            "category": classification["category"],
+                            "subcategory": classification["subcategory"],
+                            "chapter": classification["chapter"],
+                        }
+                    )
     finally:
         pdf.close()
 
@@ -2224,21 +3779,182 @@ def prune_empty_documents(conn: sqlite3.Connection) -> int:
     return len(rows)
 
 
+def build_backup_zip_file(target: Path) -> Path:
+    manifest = {
+        "app": "Sakura做题集",
+        "version": 1,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "includes": ["database", "uploads", "pages", "textbooks"],
+    }
+    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+        zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        if DB_PATH.exists():
+            zf.write(DB_PATH, "data/gaoshu_demo.sqlite3")
+        for folder_name, folder in (("uploads", UPLOAD_DIR), ("pages", PAGE_DIR)):
+            if not folder.exists():
+                continue
+            for file in folder.rglob("*"):
+                if file.is_file():
+                    zf.write(file, f"data/{folder_name}/{file.relative_to(folder).as_posix()}")
+    return target
+
+
+def restore_backup_zip(zip_bytes: bytes) -> dict:
+    print(f"[migration] restore start: {len(zip_bytes)} bytes", flush=True)
+    backup_root = ROOT / "migration_backups"
+    backup_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    current_backup = backup_root / f"before_restore_{stamp}"
+    current_backup.mkdir(parents=True, exist_ok=True)
+    if DB_PATH.exists():
+        shutil.copy2(DB_PATH, current_backup / DB_PATH.name)
+    for folder in (UPLOAD_DIR, PAGE_DIR):
+        if folder.exists():
+            shutil.copytree(folder, current_backup / folder.name, dirs_exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        archive_path = tmp_path / "backup.zip"
+        archive_path.write_bytes(zip_bytes)
+        with zipfile.ZipFile(archive_path) as zf:
+            names = set(zf.namelist())
+            print(f"[migration] archive entries: {len(names)}", flush=True)
+            if "manifest.json" not in names or "data/gaoshu_demo.sqlite3" not in names:
+                raise ValueError("这不是 Sakura 做题集完整迁移包：缺少 manifest 或数据库。")
+            for member in zf.infolist():
+                target = (tmp_path / "extract" / member.filename).resolve()
+                if not str(target).startswith(str((tmp_path / "extract").resolve())):
+                    raise ValueError("迁移包路径不安全，已拒绝导入。")
+            zf.extractall(tmp_path / "extract")
+            print("[migration] archive extracted", flush=True)
+
+        extracted = tmp_path / "extract" / "data"
+        ensure_dirs()
+        shutil.copy2(extracted / "gaoshu_demo.sqlite3", DB_PATH)
+        print("[migration] database restored", flush=True)
+        for name, target in (("uploads", UPLOAD_DIR), ("pages", PAGE_DIR)):
+            source = extracted / name
+            if target.exists():
+                shutil.rmtree(target)
+            target.mkdir(parents=True, exist_ok=True)
+            if source.exists():
+                shutil.copytree(source, target, dirs_exist_ok=True)
+            print(f"[migration] folder restored: {name}", flush=True)
+    init_db()
+    print("[migration] restore done", flush=True)
+    return {"ok": True, "backup_path": str(current_backup)}
+
+
+MIGRATION_JOBS: dict[str, dict] = {}
+MIGRATION_LOCK = threading.Lock()
+
+
+def set_migration_job(job_id: str, **updates) -> None:
+    with MIGRATION_LOCK:
+        job = MIGRATION_JOBS.setdefault(job_id, {})
+        job.update(updates)
+        job["updated_at"] = datetime.now().isoformat(timespec="seconds")
+
+
+def get_migration_job(job_id: str) -> dict | None:
+    with MIGRATION_LOCK:
+        job = MIGRATION_JOBS.get(job_id)
+        return dict(job) if job else None
+
+
+def run_migration_import_job(job_id: str, upload_path: Path) -> None:
+    set_migration_job(job_id, status="running", message="Restoring backup...")
+    try:
+        result = restore_backup_zip(upload_path.read_bytes())
+        set_migration_job(job_id, status="done", message="Import completed.", result=result)
+    except Exception as exc:
+        traceback.print_exc()
+        set_migration_job(job_id, status="failed", message=str(exc), error=str(exc))
+    finally:
+        try:
+            upload_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 class DemoHandler(BaseHTTPRequestHandler):
     server_version = "GaoshuDemo/0.1"
 
     def log_message(self, format: str, *args) -> None:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] {format % args}")
 
+    def is_public_path(self, path: str) -> bool:
+        return (
+            path in {"/login", "/api/health"}
+            or path.startswith("/practice/")
+            or path.startswith("/api/practice/")
+        )
+
+    def get_cookie(self, name: str) -> str:
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            if "=" not in part:
+                continue
+            key, value = part.strip().split("=", 1)
+            if key == name:
+                return urllib.parse.unquote(value)
+        return ""
+
+    def is_authenticated(self) -> bool:
+        if not auth_enabled():
+            return True
+        return verify_session_token(self.get_cookie(AUTH_COOKIE_NAME))
+
+    def require_auth(self, path: str) -> bool:
+        if self.is_public_path(path) or self.is_authenticated():
+            return True
+        if path.startswith("/api/"):
+            return json_response(self, {"error": "请先登录 Sakura 做题集。", "login_required": True}, HTTPStatus.UNAUTHORIZED)
+        return redirect_response(self, "/login")
+
+    def handle_login_get(self) -> None:
+        if self.is_authenticated():
+            return redirect_response(self, "/")
+        return text_response(self, login_page(), content_type="text/html")
+
+    def handle_login_post(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length).decode("utf-8") if length else ""
+        fields = parse_qs(raw)
+        password = fields.get("password", [""])[0]
+        if not auth_enabled():
+            return redirect_response(self, "/")
+        if not hmac.compare_digest(password, ADMIN_PASSWORD):
+            return text_response(self, login_page("密码不正确，请重新输入。"), HTTPStatus.UNAUTHORIZED, "text/html")
+        token = make_session_token()
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", "/")
+        self.send_header(
+            "Set-Cookie",
+            f"{AUTH_COOKIE_NAME}={urllib.parse.quote(token)}; Path=/; Max-Age={AUTH_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax",
+        )
+        self.end_headers()
+
     def do_GET(self) -> None:
         try:
             parsed = urlparse(self.path)
+            if parsed.path == "/login":
+                return self.handle_login_get()
+            if not self.require_auth(parsed.path):
+                return
             if parsed.path == "/":
                 return self.serve_file(STATIC_DIR / "index.html")
+            if parsed.path.startswith("/practice/"):
+                batch_id = parsed.path.split("/")[-1]
+                return self.handle_practice_page(batch_id)
             if parsed.path == "/api/health":
                 return json_response(self, {"ok": True, "date": date.today().isoformat()})
             if parsed.path == "/api/documents":
                 return self.handle_documents()
+            if parsed.path == "/api/textbooks":
+                return self.handle_textbooks()
+            if parsed.path.startswith("/api/textbooks/") and "/pages/" in parsed.path:
+                parts = parsed.path.split("/")
+                return self.handle_textbook_page(parts[3], int(parts[5]))
             if parsed.path.startswith("/api/documents/") and parsed.path.endswith("/chapter-stats"):
                 doc_id = parsed.path.split("/")[-2]
                 return self.handle_chapter_stats(doc_id)
@@ -2246,6 +3962,17 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return self.handle_questions(parse_qs(parsed.query))
             if parsed.path == "/api/daily":
                 return self.handle_daily()
+            if parsed.path.startswith("/api/practice/"):
+                batch_id = parsed.path.split("/")[-1]
+                return self.handle_practice_batch_get(batch_id)
+            if parsed.path == "/api/daily/rules":
+                return self.handle_daily_rules_get()
+            if parsed.path == "/api/daily/rule-options":
+                return self.handle_daily_rule_options(parse_qs(parsed.query))
+            if parsed.path == "/api/backup/export":
+                return self.handle_backup_export()
+            if parsed.path == "/api/backup/import-status":
+                return self.handle_backup_import_status(parse_qs(parsed.query))
             if parsed.path == "/api/reflection":
                 return self.handle_reflection_preview(parse_qs(parsed.query))
             if parsed.path == "/api/countdown":
@@ -2256,6 +3983,18 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return self.handle_coach_get()
             if parsed.path == "/api/coach/settings":
                 return self.handle_coach_settings_get()
+            if parsed.path == "/api/weather/settings":
+                return self.handle_weather_settings_get()
+            if parsed.path == "/api/weather/preview":
+                return self.handle_weather_preview(parse_qs(parsed.query))
+            if parsed.path == "/api/ai-chat/memory":
+                return self.handle_ai_memory_get()
+            if parsed.path == "/api/mentor-experience":
+                return self.handle_mentor_experience_get()
+            if parsed.path == "/api/llm/settings":
+                return self.handle_llm_settings_get()
+            if parsed.path in ("/api/notification/settings", "/api/notify/settings"):
+                return self.handle_notification_settings_get()
             if parsed.path == "/api/today/done":
                 return self.handle_today_done()
             if parsed.path == "/api/today/status":
@@ -2277,11 +4016,38 @@ class DemoHandler(BaseHTTPRequestHandler):
             traceback.print_exc()
             return json_response(self, {"error": str(exc)}, 500)
 
+    def do_HEAD(self) -> None:
+        try:
+            parsed = urlparse(self.path)
+            if parsed.path == "/api/health":
+                self.send_response(HTTPStatus.OK)
+            elif parsed.path == "/login":
+                self.send_response(HTTPStatus.OK)
+            elif not self.require_auth(parsed.path):
+                return
+            else:
+                self.send_response(HTTPStatus.OK)
+            self.end_headers()
+        except Exception:
+            traceback.print_exc()
+            self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
+            self.end_headers()
+
     def do_POST(self) -> None:
         try:
             parsed = urlparse(self.path)
+            if parsed.path == "/login":
+                return self.handle_login_post()
+            if not self.require_auth(parsed.path):
+                return
             if parsed.path == "/api/upload":
                 return self.handle_upload()
+            if parsed.path == "/api/textbooks/upload":
+                return self.handle_textbook_upload()
+            if parsed.path == "/api/textbooks/chat":
+                return self.handle_textbook_chat()
+            if parsed.path == "/api/textbooks/memory":
+                return self.handle_textbook_memory()
             if parsed.path.startswith("/api/documents/") and parsed.path.endswith("/rescan-chapters"):
                 doc_id = parsed.path.split("/")[-2]
                 return self.handle_rescan_chapters(doc_id)
@@ -2305,12 +4071,35 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return self.handle_coach_post()
             if parsed.path == "/api/coach/settings":
                 return self.handle_coach_settings_post()
+            if parsed.path == "/api/daily/rules":
+                return self.handle_daily_rule_save()
+            if parsed.path == "/api/backup/import":
+                return self.handle_backup_import()
+            if parsed.path == "/api/weather/settings":
+                return self.handle_weather_settings_post()
+            if parsed.path == "/api/weather/reminder":
+                return self.handle_weather_reminder_preview()
+            if parsed.path.startswith("/api/practice/") and "/questions/" in parsed.path:
+                parts = parsed.path.strip("/").split("/")
+                return self.handle_practice_feedback(parts[2], parts[4])
             if parsed.path == "/api/push/daily":
                 return self.handle_push_daily()
             if parsed.path == "/api/push/morning":
                 return self.handle_push_morning()
             if parsed.path == "/api/push/night":
                 return self.handle_push_night()
+            if parsed.path == "/api/push/weather":
+                return self.handle_push_weather()
+            if parsed.path == "/api/ai-chat":
+                return self.handle_ai_chat()
+            if parsed.path == "/api/ai-chat/memory":
+                return self.handle_ai_memory_post()
+            if parsed.path == "/api/mentor-experience":
+                return self.handle_mentor_experience_post()
+            if parsed.path == "/api/llm/settings":
+                return self.handle_llm_settings_post()
+            if parsed.path in ("/api/notification/settings", "/api/notify/settings"):
+                return self.handle_notification_settings_post()
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
         except Exception as exc:
             traceback.print_exc()
@@ -2319,8 +4108,13 @@ class DemoHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         try:
             parsed = urlparse(self.path)
+            if not self.require_auth(parsed.path):
+                return
             if parsed.path == "/api/coach/plan":
                 return self.handle_clear_coach_plan()
+            if parsed.path.startswith("/api/textbooks/"):
+                book_id = parsed.path.split("/")[-1]
+                return self.handle_delete_textbook(book_id)
             if parsed.path.startswith("/api/documents/"):
                 doc_id = parsed.path.split("/")[-1]
                 return self.handle_delete_document(doc_id)
@@ -2330,6 +4124,15 @@ class DemoHandler(BaseHTTPRequestHandler):
             if parsed.path.startswith("/api/reflections/"):
                 ref_id = parsed.path.split("/")[-1]
                 return self.handle_delete_reflection(ref_id)
+            if parsed.path.startswith("/api/daily/rules/"):
+                rule_id = parsed.path.split("/")[-1]
+                return self.handle_daily_rule_delete(rule_id)
+            if parsed.path.startswith("/api/ai-chat/memory/"):
+                memory_id = parsed.path.split("/")[-1]
+                return self.handle_ai_memory_delete(memory_id)
+            if parsed.path.startswith("/api/mentor-experience/"):
+                exp_id = parsed.path.split("/")[-1]
+                return self.handle_mentor_experience_delete(exp_id)
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
         except Exception as exc:
             traceback.print_exc()
@@ -2338,6 +4141,8 @@ class DemoHandler(BaseHTTPRequestHandler):
     def do_PATCH(self) -> None:
         try:
             parsed = urlparse(self.path)
+            if not self.require_auth(parsed.path):
+                return
             if parsed.path.startswith("/api/documents/"):
                 doc_id = parsed.path.split("/")[-1]
                 return self.handle_update_document(doc_id)
@@ -2360,9 +4165,9 @@ class DemoHandler(BaseHTTPRequestHandler):
         if not str(resolved).startswith(str(ROOT)) or not resolved.exists() or resolved.is_dir():
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
         content_types = {
-            ".html": "text/html",
-            ".css": "text/css",
-            ".js": "application/javascript",
+            ".html": "text/html; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8",
             ".png": "image/png",
             ".jpg": "image/jpeg",
             ".jpeg": "image/jpeg",
@@ -2387,8 +4192,108 @@ class DemoHandler(BaseHTTPRequestHandler):
         document_kind = form.getfirst("document_kind", DEFAULT_DOCUMENT_KIND)
         start_page = parse_positive_int(form.getfirst("start_page", ""), None)
         end_page = parse_positive_int(form.getfirst("end_page", ""), None)
-        result = import_pdf(file_item.filename, file_item.file.read(), title, subject, document_kind, start_page, end_page)
+        split_questions = form.getfirst("split_questions", "") in {"1", "true", "on", "yes"}
+        result = import_pdf(file_item.filename, file_item.file.read(), title, subject, document_kind, start_page, end_page, split_questions)
         return json_response(self, result)
+
+    def handle_textbook_upload(self) -> None:
+        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})
+        file_item = form["file"] if "file" in form else None
+        if file_item is None or not file_item.filename:
+            return json_response(self, {"error": "请上传教材 PDF。"}, 400)
+        if not file_item.filename.lower().endswith(".pdf"):
+            return json_response(self, {"error": "教材精读目前只支持 PDF。"}, 400)
+        title = form.getfirst("title", "")
+        subject = form.getfirst("subject", "")
+        result = import_textbook_pdf(file_item.filename, file_item.file.read(), title, subject)
+        return json_response(self, result)
+
+    def handle_textbooks(self) -> None:
+        with connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.*, COUNT(p.id) saved_pages
+                FROM textbooks t
+                LEFT JOIN textbook_pages p ON p.textbook_id = t.id
+                GROUP BY t.id
+                ORDER BY t.created_at DESC
+                """
+            ).fetchall()
+        return json_response(self, {"textbooks": [textbook_to_dict(row) for row in rows]})
+
+    def handle_textbook_page(self, textbook_id: str, page_number: int) -> None:
+        with connect() as conn:
+            book, page = build_textbook_context(conn, textbook_id, page_number)
+        return json_response(self, {"textbook": book, "page": page})
+
+    def handle_delete_textbook(self, textbook_id: str) -> None:
+        with connect() as conn:
+            book = conn.execute("SELECT stored_path FROM textbooks WHERE id = ?", (textbook_id,)).fetchone()
+            if not book:
+                return json_response(self, {"error": "教材不存在。"}, 404)
+            page_rows = conn.execute("SELECT image_path FROM textbook_pages WHERE textbook_id = ?", (textbook_id,)).fetchall()
+            for row in page_rows:
+                unlink_if_inside_data(row["image_path"])
+            unlink_if_inside_data(book["stored_path"])
+            conn.execute("DELETE FROM textbook_chats WHERE textbook_id = ?", (textbook_id,))
+            conn.execute("DELETE FROM textbook_pages WHERE textbook_id = ?", (textbook_id,))
+            conn.execute("DELETE FROM textbooks WHERE id = ?", (textbook_id,))
+        return json_response(self, {"ok": True})
+
+    def handle_textbook_chat(self) -> None:
+        payload = self.read_json()
+        textbook_id = str(payload.get("textbook_id", "")).strip()
+        page_number = parse_positive_int(str(payload.get("page_number", "")), 1) or 1
+        paragraph_index = parse_positive_int(str(payload.get("paragraph_index", "")), 0) or 0
+        message = str(payload.get("message", "")).strip()
+        history = payload.get("history") if isinstance(payload.get("history"), list) else []
+        if not textbook_id or not message:
+            return json_response(self, {"error": "请选择教材并输入问题。"}, 400)
+        with connect() as conn:
+            book, page = build_textbook_context(conn, textbook_id, page_number, paragraph_index)
+            now = datetime.now().isoformat(timespec="seconds")
+            conn.execute(
+                "INSERT INTO textbook_chats (id, textbook_id, page_number, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (uuid.uuid4().hex, textbook_id, page_number, "user", message[:4000], now),
+            )
+            try:
+                answer = explain_textbook_with_ai(book, page, message, history)
+            except Exception as exc:
+                traceback.print_exc()
+                return json_response(self, {"error": f"AI 精读失败：{exc}"}, 500)
+            conn.execute(
+                "INSERT INTO textbook_chats (id, textbook_id, page_number, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (uuid.uuid4().hex, textbook_id, page_number, "assistant", answer[:8000], datetime.now().isoformat(timespec="seconds")),
+            )
+        return json_response(self, {"answer": answer, "textbook": book, "page": page, "has_key": llm_enabled()})
+
+    def handle_textbook_memory(self) -> None:
+        payload = self.read_json()
+        textbook_id = str(payload.get("textbook_id", "")).strip()
+        page_number = parse_positive_int(str(payload.get("page_number", "")), 1) or 1
+        paragraph_index = parse_positive_int(str(payload.get("paragraph_index", "")), 0) or 0
+        history = payload.get("history") if isinstance(payload.get("history"), list) else []
+        if not textbook_id:
+            return json_response(self, {"error": "请选择教材。"}, 400)
+        with connect() as conn:
+            book, page = build_textbook_context(conn, textbook_id, page_number, paragraph_index)
+            selected = page.get("selected_paragraph") or "未指定"
+            if llm_enabled() and history:
+                prompt = (
+                    "请把下面教材精读对话压缩成一条长期学习记忆，100-180字，包含教材、页码、困惑、关键理解和后续复习建议。\n"
+                    f"教材：{book.get('title')}；页码：{page_number}；段落：{selected}\n"
+                    + json.dumps(history[-10:], ensure_ascii=False)
+                )
+                try:
+                    content = call_llm(prompt, temperature=0.2)
+                except Exception:
+                    traceback.print_exc()
+                    content = ""
+            else:
+                last_user = next((item.get("content", "") for item in reversed(history) if item.get("role") == "user"), "")
+                content = f"教材精读：{book.get('title')} 第{page_number}页。困惑：{last_user or '未记录'}。关键段落：{selected[:160]}。后续复习时优先回看该页概念与例题。"
+            memory = save_teacher_memory(conn, content, "textbook")
+        return json_response(self, {"memory": memory})
 
     def handle_documents(self) -> None:
         with connect() as conn:
@@ -2591,7 +4496,11 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_update_question(self, q_id: str) -> None:
         payload = self.read_json()
-        allowed = {"status", "mistake_reason", "meta_tags", "user_note", "category", "subcategory", "chapter", "difficulty", "question_no"}
+        allowed = {
+            "status", "mistake_reason", "meta_tags", "user_note", "category",
+            "subcategory", "chapter", "difficulty", "question_no",
+            "ai_analysis", "ai_hint", "ai_variations",
+        }
         updates = {k: v for k, v in payload.items() if k in allowed}
         if not updates:
             return json_response(self, {"error": "没有可更新字段。"}, 400)
@@ -2798,6 +4707,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             "exam_date": state.get("exam_date") or EXAM_DATE.isoformat(),
             "cadence": state.get("cadence", "immediate"),
             "focus_subject": state.get("focus_subject", ""),
+            "weather_city": state.get("weather_city", "") or WEATHER_CITY,
             "last_profile_at": state.get("last_profile_at"),
             "last_plan_at": state.get("last_plan_at"),
         }
@@ -2841,6 +4751,190 @@ class DemoHandler(BaseHTTPRequestHandler):
         with connect() as conn:
             state = save_coach_state(conn, **fields)
         return json_response(self, self._coach_settings_view(state))
+
+    def handle_weather_settings_get(self) -> None:
+        with connect() as conn:
+            city = weather_city_from_state(conn)
+        return json_response(self, {"city": city, "default_city": WEATHER_CITY})
+
+    def handle_weather_settings_post(self) -> None:
+        payload = self.read_json()
+        city = str(payload.get("city", "")).strip()[:80]
+        if not city:
+            return json_response(self, {"error": "请填写城市名称"}, 400)
+        with connect() as conn:
+            save_coach_state(conn, weather_city=city)
+        return json_response(self, {"city": city})
+
+    def handle_weather_preview(self, query: dict) -> None:
+        city = (query.get("city", [""])[0] or "").strip()
+        with connect() as conn:
+            if not city:
+                city = weather_city_from_state(conn)
+            info = fetch_tomorrow_weather(city)
+        return json_response(self, {"weather": info})
+
+    def handle_weather_reminder_preview(self) -> None:
+        payload_in = self.read_json()
+        with connect() as conn:
+            payload = build_weather_reminder(conn, str(payload_in.get("city", "")).strip() or None)
+        return json_response(self, {
+            "ok": True,
+            "title": payload["title"],
+            "content": payload["content"],
+            "weather": payload["weather"],
+            "will_send": False,
+        })
+
+    def handle_ai_memory_get(self) -> None:
+        with connect() as conn:
+            memories = load_teacher_memories(conn, limit=30)
+        return json_response(self, {
+            "memories": memories,
+            **llm_settings_view(),
+        })
+
+    def handle_llm_settings_get(self) -> None:
+        return json_response(self, llm_settings_view())
+
+    def handle_llm_settings_post(self) -> None:
+        payload = self.read_json()
+        api_key = str(payload.get("api_key", "")).strip()
+        base_url = str(payload.get("base_url", "")).strip()
+        model = str(payload.get("model", "")).strip()
+        if not any([api_key, base_url, model]):
+            return json_response(self, {"error": "至少填写 API Key、Base URL 或模型名中的一项"}, 400)
+        settings = update_llm_runtime_settings(
+            api_key=api_key or None,
+            base_url=base_url or None,
+            model=model or None,
+        )
+        return json_response(self, {
+            **settings,
+            "message": "已保存到本地 .env，并已更新当前运行中的服务。",
+        })
+
+    def handle_notification_settings_get(self) -> None:
+        return json_response(self, notification_settings_view())
+
+    def handle_notification_settings_post(self) -> None:
+        payload = self.read_json()
+        wework_webhook = str(payload.get("wework_webhook", "")).strip()
+        pushplus_token = str(payload.get("pushplus_token", "")).strip()
+        app_public_url = str(payload.get("app_public_url", "")).strip()
+        if not any([wework_webhook, pushplus_token, app_public_url]):
+            return json_response(self, {"error": "至少填写企业微信 Webhook、PushPlus Token 或公网地址中的一项"}, 400)
+        settings = update_notification_runtime_settings(
+            wework_webhook=wework_webhook or None,
+            pushplus_token=pushplus_token or None,
+            app_public_url=app_public_url or None,
+        )
+        return json_response(self, {
+            **settings,
+            "message": "已保存到本地 .env，并已更新当前运行中的推送配置。",
+        })
+
+    def handle_ai_memory_post(self) -> None:
+        payload = self.read_json()
+        try:
+            with connect() as conn:
+                memory = save_teacher_memory(conn, str(payload.get("content", "")), str(payload.get("source", "chat")))
+        except ValueError as exc:
+            return json_response(self, {"error": str(exc)}, 400)
+        return json_response(self, {"memory": memory})
+
+    def handle_ai_memory_delete(self, memory_id: str) -> None:
+        with connect() as conn:
+            row = conn.execute("SELECT id FROM teacher_memory WHERE id = ?", (memory_id,)).fetchone()
+            if not row:
+                return json_response(self, {"error": "记忆不存在"}, 404)
+            conn.execute("DELETE FROM teacher_memory WHERE id = ?", (memory_id,))
+        return json_response(self, {"ok": True})
+
+    def handle_mentor_experience_get(self) -> None:
+        with connect() as conn:
+            experiences = load_mentor_experiences(conn, limit=50)
+        return json_response(self, {"experiences": experiences})
+
+    def handle_mentor_experience_post(self) -> None:
+        payload = self.read_json()
+        try:
+            with connect() as conn:
+                item = save_mentor_experience(conn, payload)
+        except ValueError as exc:
+            return json_response(self, {"error": str(exc)}, 400)
+        return json_response(self, {"experience": item})
+
+    def handle_mentor_experience_delete(self, exp_id: str) -> None:
+        with connect() as conn:
+            row = conn.execute("SELECT id FROM mentor_experience WHERE id = ?", (exp_id,)).fetchone()
+            if not row:
+                return json_response(self, {"error": "经验不存在"}, 404)
+            conn.execute("DELETE FROM mentor_experience WHERE id = ?", (exp_id,))
+        return json_response(self, {"ok": True})
+
+    def handle_ai_chat(self) -> None:
+        payload = self.read_json()
+        message = str(payload.get("message", "")).strip()
+        if not message:
+            return json_response(self, {"error": "请输入要测试的问题"}, 400)
+        if not llm_enabled():
+            return json_response(self, {
+                "error": "未配置 LLM_API_KEY / MIMO_API_KEY / DEEPSEEK_API_KEY，无法调用真实 AI。",
+                "has_key": False,
+                "model": LLM_MODEL,
+                "base_url": LLM_BASE_URL,
+            }, 400)
+        with connect() as conn:
+            context = build_ai_teacher_context(conn, message)
+        intent = infer_teacher_intent(message)
+        strategy = choose_teacher_strategy(intent, context)
+        turn_instruction = build_teacher_turn_instruction(intent, strategy)
+        try:
+            answer = call_llm_messages(
+                [
+                    {"role": "system", "content": AI_TEACHER_PROTOCOL},
+                    {"role": "system", "content": turn_instruction},
+                    {"role": "system", "content": "本地上下文：\n" + json.dumps(context, ensure_ascii=False)},
+                    {"role": "user", "content": message},
+                ],
+                temperature=0.35,
+            )
+        except Exception as exc:
+            traceback.print_exc()
+            return json_response(self, {"error": f"AI 调用失败：{exc}", "has_key": True}, 500)
+        memory_candidate = build_memory_candidate(message, answer, intent, strategy, context)
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ai_teacher_turns (id, user_message, intent, strategy, context_json, answer, memory_candidate, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    uuid.uuid4().hex,
+                    message[:2000],
+                    intent,
+                    strategy.get("key", ""),
+                    json.dumps({
+                        "profile": context.get("profile", {}),
+                        "top_gaps": context.get("top_gaps", [])[:5],
+                        "review_backlog": context.get("review_backlog", {}),
+                        "today_actions": context.get("today_actions", [])[:5],
+                    }, ensure_ascii=False),
+                    answer[:8000],
+                    memory_candidate,
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+        return json_response(self, {
+            "answer": answer,
+            "has_key": True,
+            "model": LLM_MODEL,
+            "base_url": LLM_BASE_URL,
+            "teacher_intent": intent,
+            "teacher_strategy": strategy,
+            "memory_candidate": memory_candidate,
+        })
 
     def handle_coach_get(self) -> None:
         """纯读记忆：返回设置 + 最新档案摘要 + 缓存计划 + 是否需要刷新。零 token。"""
@@ -2899,39 +4993,197 @@ class DemoHandler(BaseHTTPRequestHandler):
             save_coach_state(conn, plan_json=json.dumps(plan, ensure_ascii=False), last_plan_at=plan["generated_at"])
         return json_response(self, plan)
 
+    def handle_practice_page(self, batch_id: str) -> None:
+        safe_batch = re.sub(r"[^a-fA-F0-9]", "", batch_id)
+        if not safe_batch:
+            return text_response(self, "Invalid practice batch.", HTTPStatus.BAD_REQUEST)
+        html = f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sakura 快速回填</title>
+  <style>
+    :root {{ --pink:#ec4899; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --ink:#172033; --muted:#718096; --line:#eadde7; --bg:#fff7fb; }}
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--ink); background:linear-gradient(180deg,#fff 0%,var(--bg) 100%); }}
+    header {{ position:sticky; top:0; z-index:3; padding:14px 16px; background:rgba(255,255,255,.92); backdrop-filter:blur(14px); border-bottom:1px solid var(--line); }}
+    h1 {{ margin:0; font-size:20px; }}
+    .sub {{ margin-top:6px; color:var(--muted); font-size:13px; }}
+    .progress {{ margin-top:10px; height:8px; background:#f3e8ef; border-radius:999px; overflow:hidden; }}
+    .bar {{ height:100%; width:0%; background:linear-gradient(90deg,var(--pink),#f472b6); transition:.2s; }}
+    main {{ padding:14px; max-width:760px; margin:0 auto; }}
+    .card {{ background:#fff; border:1px solid var(--line); border-radius:18px; margin:0 0 14px; overflow:hidden; box-shadow:0 10px 28px rgba(236,72,153,.08); }}
+    .qhead {{ display:flex; justify-content:space-between; gap:10px; padding:12px 14px; border-bottom:1px solid #f3e8ef; }}
+    .qhead strong {{ font-size:16px; }}
+    .qhead span {{ color:var(--muted); font-size:12px; text-align:right; }}
+    .image-wrap {{ padding:10px; background:#fbfafc; }}
+    img {{ width:100%; display:block; border-radius:12px; border:1px solid #eee; background:#fff; }}
+    .meta {{ padding:0 14px 10px; display:flex; flex-wrap:wrap; gap:8px; }}
+    .tag {{ border-radius:999px; padding:5px 9px; font-size:12px; background:#f8eaf2; color:#9d174d; }}
+    textarea {{ width:calc(100% - 28px); margin:0 14px 12px; min-height:64px; resize:vertical; border:1px solid var(--line); border-radius:12px; padding:10px; font:inherit; }}
+    .actions {{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:0 14px 14px; }}
+    button {{ border:0; border-radius:13px; padding:12px 8px; font-weight:800; color:#fff; font-size:15px; }}
+    .ok {{ background:var(--green); }} .bad {{ background:var(--red); }} .half {{ background:var(--amber); }}
+    .done {{ outline:3px solid rgba(16,185,129,.25); }}
+    .empty {{ padding:40px 18px; text-align:center; color:var(--muted); }}
+    .toast {{ position:fixed; left:16px; right:16px; bottom:18px; padding:12px 14px; background:#172033; color:#fff; border-radius:14px; opacity:0; transform:translateY(12px); transition:.2s; text-align:center; }}
+    .toast.show {{ opacity:1; transform:translateY(0); }}
+    a {{ color:var(--pink); font-weight:800; }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Sakura 快速回填</h1>
+    <div class="sub" id="summary">正在读取本次推送...</div>
+    <div class="progress"><div class="bar" id="bar"></div></div>
+  </header>
+  <main id="list"></main>
+  <div class="toast" id="toast"></div>
+  <script>
+    const batchId = "{safe_batch}";
+    const list = document.getElementById("list");
+    const summary = document.getElementById("summary");
+    const bar = document.getElementById("bar");
+    const toast = document.getElementById("toast");
+    let state = null;
+    function esc(s) {{ return String(s ?? "").replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;","\\\"":"&quot;","'":"&#39;"}}[c])); }}
+    function showToast(text) {{ toast.textContent = text; toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 1500); }}
+    async function load() {{
+      const res = await fetch(`/api/practice/${{batchId}}`);
+      if (!res.ok) {{ list.innerHTML = '<div class="empty">这个批次不存在或已失效。</div>'; return; }}
+      state = await res.json();
+      render();
+    }}
+    function render() {{
+      const b = state.batch;
+      const qs = state.questions || [];
+      summary.textContent = `${{b.day}} · 已回填 ${{b.done_count}}/${{b.question_count}} 道`;
+      bar.style.width = b.question_count ? `${{Math.round(b.done_count / b.question_count * 100)}}%` : "0%";
+      list.innerHTML = qs.map(q => `
+        <article class="card ${{q.quick_status ? "done" : ""}}" id="q-${{q.id}}">
+          <div class="qhead">
+            <strong>第 ${{q.batch_position}} 题 · ${{esc(q.category || "待归类")}}</strong>
+            <span>${{esc(q.subject || "")}}<br>${{esc(q.document_title || q.filename || "")}}</span>
+          </div>
+          <div class="image-wrap"><img src="${{q.image_url}}" alt="题目图" loading="lazy"></div>
+          <div class="meta">
+            <span class="tag">当前：${{esc(q.status || "未做")}}</span>
+            <span class="tag">${{esc(q.chapter || "未识别章节")}}</span>
+            ${{q.quick_status ? `<span class="tag">已回填：${{esc(q.quick_status)}}</span>` : ""}}
+          </div>
+          <textarea data-note="${{q.id}}" placeholder="可选：一句话备注，电脑端之后可详细复盘">${{esc(q.quick_note || "")}}</textarea>
+          <div class="actions">
+            <button class="ok" data-id="${{q.id}}" data-status="做对">做对</button>
+            <button class="bad" data-id="${{q.id}}" data-status="做错">做错</button>
+            <button class="half" data-id="${{q.id}}" data-status="半会">半会</button>
+          </div>
+        </article>`).join("") || '<div class="empty">本次推送没有题目。<br><a href="/">回到做题集</a></div>';
+    }}
+    list.addEventListener("click", async (event) => {{
+      const btn = event.target.closest("button[data-id]");
+      if (!btn) return;
+      btn.disabled = true;
+      const id = btn.dataset.id;
+      const noteEl = document.querySelector(`[data-note="${{id}}"]`);
+      const note = noteEl ? noteEl.value : "";
+      try {{
+        const res = await fetch(`/api/practice/${{batchId}}/questions/${{id}}`, {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{ status: btn.dataset.status, note }})
+        }});
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "保存失败");
+        showToast(`已保存：${{btn.dataset.status}}`);
+        await load();
+      }} catch (e) {{
+        showToast(e.message);
+      }} finally {{
+        btn.disabled = false;
+      }}
+    }});
+    load();
+  </script>
+</body>
+</html>"""
+        return text_response(self, html, content_type="text/html")
+
+    def handle_practice_batch_get(self, batch_id: str) -> None:
+        with connect() as conn:
+            payload = practice_batch_payload(conn, batch_id)
+        if not payload:
+            return json_response(self, {"error": "批次不存在"}, 404)
+        return json_response(self, payload)
+
+    def handle_practice_feedback(self, batch_id: str, q_id: str) -> None:
+        payload = self.read_json()
+        try:
+            with connect() as conn:
+                result = apply_practice_feedback(
+                    conn,
+                    batch_id,
+                    q_id,
+                    str(payload.get("status") or ""),
+                    str(payload.get("note") or ""),
+                )
+        except ValueError as exc:
+            return json_response(self, {"error": str(exc)}, 400)
+        return json_response(self, {"ok": True, "question": result})
+
     def handle_push_daily(self) -> None:
         with connect() as conn:
             reminder = build_daily_reminder(conn)
-        result = send_pushplus(reminder["title"], reminder["content"])
+        result = send_notification(reminder["title"], reminder["content"])
         status = 200 if result["ok"] else 400
         return json_response(self, {
             "ok": result["ok"],
             "title": reminder["title"],
             "due_total": reminder["due_total"],
             "days_left": reminder["days_left"],
-            "detail": result.get("resp") or result.get("error"),
-            "configured": bool(PUSHPLUS_TOKEN),
+            "batch_id": reminder.get("batch_id", ""),
+            "practice_url": reminder.get("practice_url", ""),
+            "detail": result.get("detail") or result.get("resp") or result.get("error"),
+            "configured": result.get("configured", bool(PUSHPLUS_TOKEN or WEWORK_BOT_WEBHOOK)),
         }, status)
 
     def handle_push_morning(self) -> None:
         with connect() as conn:
             reminder = build_morning_reminder(conn)
-        result = send_pushplus(reminder["title"], reminder["content"])
+        result = send_notification(reminder["title"], reminder["content"])
         status = 200 if result["ok"] else 400
         return json_response(self, {
             "ok": result["ok"], "kind": "morning", "title": reminder["title"],
-            "detail": result.get("resp") or result.get("error"), "configured": bool(PUSHPLUS_TOKEN),
+            "batch_id": reminder.get("batch_id", ""), "practice_url": reminder.get("practice_url", ""),
+            "detail": result.get("detail") or result.get("resp") or result.get("error"),
+            "configured": result.get("configured", bool(PUSHPLUS_TOKEN or WEWORK_BOT_WEBHOOK)),
         }, status)
 
     def handle_push_night(self) -> None:
         with connect() as conn:
             checked = is_checked_in(conn)
             payload = build_night_check(conn)
-        result = send_pushplus(payload["title"], payload["content"])
+        result = send_notification(payload["title"], payload["content"])
         status = 200 if result["ok"] else 400
         return json_response(self, {
             "ok": result["ok"], "kind": "night", "checked_in": checked, "title": payload["title"],
-            "detail": result.get("resp") or result.get("error"), "configured": bool(PUSHPLUS_TOKEN),
+            "detail": result.get("detail") or result.get("resp") or result.get("error"),
+            "configured": result.get("configured", bool(PUSHPLUS_TOKEN or WEWORK_BOT_WEBHOOK)),
+        }, status)
+
+    def handle_push_weather(self) -> None:
+        payload_in = self.read_json()
+        with connect() as conn:
+            payload = build_weather_reminder(conn, str(payload_in.get("city", "")).strip() or None)
+        result = send_notification(payload["title"], payload["content"])
+        status = 200 if result["ok"] else 400
+        return json_response(self, {
+            "ok": result["ok"],
+            "kind": "weather",
+            "title": payload["title"],
+            "weather": payload["weather"],
+            "detail": result.get("detail") or result.get("resp") or result.get("error"),
+            "configured": result.get("configured", bool(PUSHPLUS_TOKEN or WEWORK_BOT_WEBHOOK)),
         }, status)
 
     def handle_today_done(self) -> None:
@@ -2974,6 +5226,90 @@ class DemoHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(pdf_bytes)))
         self.end_headers()
         self.wfile.write(pdf_bytes)
+
+    def handle_daily_rules_get(self) -> None:
+        with connect() as conn:
+            rules = load_daily_rules(conn)
+        return json_response(self, {"rules": rules})
+
+    def handle_daily_rule_options(self, query: dict) -> None:
+        with connect() as conn:
+            options = get_daily_rule_options(conn, query)
+        return json_response(self, options)
+
+    def handle_daily_rule_save(self) -> None:
+        payload = self.read_json()
+        with connect() as conn:
+            rule = save_daily_rule(conn, payload)
+        return json_response(self, {"rule": rule})
+
+    def handle_daily_rule_delete(self, rule_id: str) -> None:
+        with connect() as conn:
+            row = conn.execute("SELECT id FROM daily_rules WHERE id = ?", (rule_id,)).fetchone()
+            if not row:
+                return json_response(self, {"error": "规则不存在"}, 404)
+            conn.execute("DELETE FROM daily_rules WHERE id = ?", (rule_id,))
+        return json_response(self, {"ok": True})
+
+    def handle_backup_export(self) -> None:
+        filename = f"sakura_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            build_backup_zip_file(tmp_path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Length", str(tmp_path.stat().st_size))
+            self.end_headers()
+            with tmp_path.open("rb") as fh:
+                while True:
+                    chunk = fh.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def handle_backup_import(self) -> None:
+        print("[migration] request received", flush=True)
+        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})
+        file_item = form["backup"] if "backup" in form else form["file"] if "file" in form else None
+        if file_item is None or not file_item.filename:
+            return json_response(self, {"error": "请上传 Sakura 迁移 ZIP 包。"}, 400)
+        job_id = uuid.uuid4().hex
+        upload_dir = DATA_DIR / "migration_uploads"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        upload_path = upload_dir / f"{job_id}.zip"
+        with upload_path.open("wb") as out:
+            shutil.copyfileobj(file_item.file, out, length=1024 * 1024)
+        size = upload_path.stat().st_size
+        print(f"[migration] uploaded file: {file_item.filename}, {size} bytes, job={job_id}", flush=True)
+        now = datetime.now().isoformat(timespec="seconds")
+        set_migration_job(
+            job_id,
+            id=job_id,
+            status="queued",
+            message="Backup uploaded. Waiting to restore...",
+            filename=file_item.filename,
+            size=size,
+            created_at=now,
+        )
+        worker = threading.Thread(target=run_migration_import_job, args=(job_id, upload_path), daemon=True)
+        worker.start()
+        return json_response(self, {"ok": True, "job_id": job_id, "status": "queued", "size": size}, 202)
+
+    def handle_backup_import_status(self, query: dict) -> None:
+        job_id = (query.get("id") or [""])[0]
+        if not job_id:
+            return json_response(self, {"error": "Missing import job id."}, 400)
+        job = get_migration_job(job_id)
+        if not job:
+            return json_response(self, {"error": "Import job not found. The service may have restarted."}, 404)
+        return json_response(self, job)
 
     def handle_reflection_history(self) -> None:
         with connect() as conn:
@@ -3018,70 +5354,9 @@ class DemoHandler(BaseHTTPRequestHandler):
         self.wfile.write(text.encode("utf-8"))
 
     def handle_daily(self) -> None:
-        today = date.today().isoformat()
         with connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT q.*, d.filename, d.title document_title, d.subject, d.document_kind
-                FROM questions q
-                JOIN documents d ON d.id = q.document_id
-                WHERE q.status IN ('做错', '需复习', '半会')
-                   OR (
-                       q.ever_wrong = 1
-                       AND q.mastered_at IS NULL
-                       AND q.next_review_at IS NOT NULL
-                       AND date(q.next_review_at) <= date(?)
-                   )
-                ORDER BY
-                    d.subject ASC,
-                    COALESCE(NULLIF(d.title, ''), d.filename) ASC,
-                    CASE q.status
-                        WHEN '做错' THEN 0
-                        WHEN '需复习' THEN 1
-                        WHEN '半会' THEN 2
-                        WHEN '做对' THEN 3
-                        ELSE 4
-                    END,
-                    q.review_stage ASC,
-                    COALESCE(q.next_review_at, q.last_reviewed_at, q.created_at) ASC
-                """
-                ,
-                (today,),
-            ).fetchall()
-            dependency_map = weak_chapter_dependencies(conn)
-        groups_map: dict[str, dict] = {}
-        used_ids: set[str] = set()
-        for row in rows:
-            item = row_to_dict(row)
-            item["daily_kind"] = "review"
-            used_ids.add(item["id"])
-            book_name = item.get("document_title") or item.get("filename") or "做题本"
-            group_key = f"{item.get('subject') or DEFAULT_SUBJECT} / {item.get('document_kind') or DEFAULT_DOCUMENT_KIND} / {book_name}"
-            if group_key not in groups_map:
-                groups_map[group_key] = {"title": group_key, "questions": []}
-            if len(groups_map[group_key]["questions"]) < 4:
-                groups_map[group_key]["questions"].append(item)
-        with connect() as conn:
-            for group_key, dependencies in dependency_map.items():
-                if group_key not in groups_map:
-                    continue
-                subject = group_key.split(" / ", 1)[0]
-                if len(groups_map[group_key]["questions"]) >= 5:
-                    continue
-                foundations = find_foundation_questions(conn, subject, dependencies, used_ids)
-                if foundations:
-                    groups_map[group_key]["questions"].append(foundations[0])
-                    used_ids.add(foundations[0]["id"])
-        groups = [group for group in groups_map.values() if group["questions"]]
-        return json_response(
-            self,
-            {
-                "date": date.today().isoformat(),
-                "groups": groups,
-                "plan": [question for group in groups for question in group["questions"]],
-                "message": "每日练习由当前错题、到期复习题和低正确率章节的前置基础题组成；每组最多 5 道，其中约 20% 用于补基础。",
-            },
-        )
+            payload = build_daily_payload(conn)
+        return json_response(self, payload)
 
 
 def main() -> None:

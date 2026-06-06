@@ -29,6 +29,12 @@ const state = {
   mistakeChapter: "",
   mistakeStatus: "",
   selectedMistakes: new Set(),
+  dailyRules: [],
+  textbooks: [],
+  textbookId: "",
+  textbookPage: 1,
+  textbookParagraph: 0,
+  textbookChat: [],
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -39,8 +45,78 @@ document.body.dataset.view = state.view;
 
 function typesetMath(root = document.body) {
   if (window.MathJax?.typesetPromise) {
+    if (window.MathJax.typesetClear) window.MathJax.typesetClear([root]);
     window.MathJax.typesetPromise([root]).catch(() => {});
   }
+}
+
+function markdownLineToHtml(line) {
+  let text = escapeHtml(line.trim());
+  text = text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  if (!text) return "";
+  if (/^---+$/.test(text)) return "<hr />";
+  const heading = text.match(/^(#{1,4})\s+(.+)$/);
+  if (heading) {
+    const level = Math.min(4, heading[1].length + 2);
+    return `<h${level}>${heading[2]}</h${level}>`;
+  }
+  if (/^[-*]\s+/.test(text)) return `<li>${text.replace(/^[-*]\s+/, "")}</li>`;
+  if (/^\d+\.\s+/.test(text)) return `<li>${text.replace(/^\d+\.\s+/, "")}</li>`;
+  return `<p>${text}</p>`;
+}
+
+function normalizeLatexText(text) {
+  return String(text || "");
+}
+
+function markdownToHtml(text) {
+  const source = normalizeLatexText(text);
+  const mathBlocks = [];
+  const protectedSource = source.replace(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g, (block) => {
+    const token = `@@MATH_BLOCK_${mathBlocks.length}@@`;
+    mathBlocks.push(block);
+    return token;
+  });
+  const lines = protectedSource.split(/\r?\n/);
+  const html = [];
+  let list = [];
+  const flushList = () => {
+    if (!list.length) return;
+    html.push(`<ul>${list.join("")}</ul>`);
+    list = [];
+  };
+  for (const line of lines) {
+    const mathToken = line.trim().match(/^@@MATH_BLOCK_(\d+)@@$/);
+    if (mathToken) {
+      flushList();
+      html.push(`<div class="math-block">${escapeHtml(mathBlocks[Number(mathToken[1])] || "")}</div>`);
+      continue;
+    }
+    const rendered = markdownLineToHtml(line);
+    if (!rendered) {
+      flushList();
+      continue;
+    }
+    if (rendered.startsWith("<li>")) {
+      list.push(rendered);
+    } else {
+      flushList();
+      html.push(rendered);
+    }
+  }
+  flushList();
+  return html.join("").replace(/@@MATH_BLOCK_(\d+)@@/g, (_, index) => {
+    return `<span class="math-inline-block">${escapeHtml(mathBlocks[Number(index)] || "")}</span>`;
+  });
+}
+
+function renderAiOutput(selector, text, placeholder = "") {
+  const node = typeof selector === "string" ? $(selector) : selector;
+  if (!node) return;
+  const raw = String(text || placeholder || "");
+  node.innerHTML = markdownToHtml(raw);
+  node.classList.add("mathjax-container");
+  typesetMath(node);
 }
 
 function statusClass(status) {
@@ -152,8 +228,10 @@ async function loadMistakes() {
 
 async function refresh() {
   await loadDocuments();
+  if ($("#textbookList")) await loadTextbooks();
+  if ($("#dailyRuleDocument")) await populateDailyRuleFilters();
   await loadDashboardData();
-  await loadQuestions();
+  if (state.view === "library" || state.view === "mockPapers") await loadQuestions();
   if (state.view === "mistakes") await loadMistakes();
 }
 
@@ -237,18 +315,31 @@ function renderQuestionFilters() {
 
 function renderMistakeFilters() {
   const docs = state.documents.filter((doc) => !state.mistakeSubject || doc.subject === state.mistakeSubject);
+  const doc = docs.find((item) => item.id === state.mistakeDocumentId);
+  if (state.mistakeDocumentId && !doc) state.mistakeDocumentId = "";
+  if (doc?.subject && !state.mistakeSubject) state.mistakeSubject = doc.subject;
+  const scopedReady = Boolean(state.mistakeSubject && state.mistakeDocumentId);
   $("#mistakeDocumentFilter").innerHTML = `<option value="">全部资料</option>${docs
     .map((doc) => `<option value="${doc.id}" ${doc.id === state.mistakeDocumentId ? "selected" : ""}>${documentLabel(doc)}</option>`)
     .join("")}`;
   $("#mistakeSubjectFilter").innerHTML = `<option value="">全部科目</option>${state.mistakeSubjects
     .map((subject) => `<option ${subject === state.mistakeSubject ? "selected" : ""}>${subject}</option>`)
     .join("")}`;
-  $("#mistakeCategoryFilter").innerHTML = `<option value="">全部知识点</option>${state.mistakeCategories
-    .map((category) => `<option ${category === state.mistakeCategory ? "selected" : ""}>${category}</option>`)
-    .join("")}`;
-  $("#mistakeChapterFilter").innerHTML = `<option value="">全部章节</option>${state.mistakeChapters
-    .map((chapter) => `<option ${chapter === state.mistakeChapter ? "selected" : ""}>${chapter}</option>`)
-    .join("")}`;
+  if (scopedReady) {
+    unlockSelect("#mistakeCategoryFilter");
+    unlockSelect("#mistakeChapterFilter");
+    $("#mistakeCategoryFilter").innerHTML = `<option value="">全部知识点</option>${state.mistakeCategories
+      .map((category) => `<option ${category === state.mistakeCategory ? "selected" : ""}>${category}</option>`)
+      .join("")}`;
+    $("#mistakeChapterFilter").innerHTML = `<option value="">全部章节</option>${state.mistakeChapters
+      .map((chapter) => `<option ${chapter === state.mistakeChapter ? "selected" : ""}>${chapter}</option>`)
+      .join("")}`;
+  } else {
+    state.mistakeCategory = "";
+    state.mistakeChapter = "";
+    setSelectLocked("#mistakeCategoryFilter", "请先选择科目和资料");
+    setSelectLocked("#mistakeChapterFilter", "请先选择科目和资料");
+  }
 }
 
 function renderMistakeGrid() {
@@ -344,6 +435,151 @@ function documentCard(doc) {
             <button class="danger" data-delete-doc="${doc.id}">删除</button>
           </div>
         </article>`;
+}
+
+async function loadTextbooks() {
+  const data = await api("/api/textbooks");
+  state.textbooks = data.textbooks || [];
+  renderTextbooks();
+  if (!state.textbookId && state.textbooks.length) {
+    state.textbookId = state.textbooks[0].id;
+    state.textbookPage = 1;
+    await loadTextbookPage();
+  }
+}
+
+function renderTextbooks() {
+  const node = $("#textbookList");
+  if (!node) return;
+  node.innerHTML =
+    state.textbooks
+      .map(
+        (book) => `
+        <article class="document-card ${book.id === state.textbookId ? "selected-doc" : ""}">
+          <div>
+            <h3>${escapeHtml(book.title || book.filename)}</h3>
+            <p>${escapeHtml(book.subject || "未分类")} · ${book.page_count || 0} 页 · 已索引 ${book.saved_pages || 0} 页</p>
+            <span class="tag kind paper">教材</span>
+            <p>${escapeHtml(book.filename || "")}</p>
+          </div>
+          <div class="doc-actions">
+            <button data-open-textbook="${escapeAttr(book.id)}">精读</button>
+            <button class="danger" data-delete-textbook="${escapeAttr(book.id)}">删除</button>
+          </div>
+        </article>`
+      )
+      .join("") || `<p class="empty-note">还没有教材。先在上方上传 PDF。</p>`;
+}
+
+function selectedTextbook() {
+  return state.textbooks.find((book) => book.id === state.textbookId);
+}
+
+async function loadTextbookPage() {
+  if (!state.textbookId) return;
+  const pageNumber = Math.max(1, Number($("#textbookPageInput")?.value || state.textbookPage || 1));
+  const data = await api(`/api/textbooks/${encodeURIComponent(state.textbookId)}/pages/${pageNumber}`);
+  state.textbookPage = data.page.page_number;
+  state.textbookParagraph = 0;
+  if ($("#textbookPageInput")) $("#textbookPageInput").value = state.textbookPage;
+  renderTextbooks();
+  renderTextbookPage(data.textbook, data.page);
+}
+
+function renderTextbookPage(book, page) {
+  $("#textbookPageMeta").textContent = `${book.title} · 第 ${page.page_number}/${book.page_count} 页 · ${page.paragraphs.length} 段`;
+  $("#textbookPageImage").src = `${page.image_url}?t=${Date.now()}`;
+  $("#textbookPageImage").classList.toggle("hidden", !page.image_url);
+  $("#textbookParagraphs").innerHTML =
+    (page.paragraphs || [])
+      .map(
+        (paragraph, index) => `
+        <button class="textbook-paragraph ${state.textbookParagraph === index + 1 ? "active" : ""}" data-textbook-paragraph="${index + 1}">
+          <span>第 ${index + 1} 段</span>
+          <p>${escapeHtml(paragraph)}</p>
+        </button>`
+      )
+      .join("") || `<p class="empty-note">这一页没有可提取文字。可以直接根据页图向 AI 提问，但效果取决于文本层质量。</p>`;
+  updateTextbookChatBadge();
+}
+
+function updateTextbookChatBadge() {
+  const book = selectedTextbook();
+  const text = book ? `${book.title} · 第 ${state.textbookPage} 页${state.textbookParagraph ? ` · 第 ${state.textbookParagraph} 段` : ""}` : "未选择教材";
+  $("#textbookChatBadge").textContent = text;
+}
+
+function renderTextbookChat() {
+  const node = $("#textbookChatLog");
+  if (!node) return;
+  node.innerHTML =
+    state.textbookChat
+      .map((item) => `<article class="textbook-chat-msg ${item.role}"><strong>${item.role === "user" ? "我" : "AI 老师"}</strong><div>${markdownToHtml(item.content)}</div></article>`)
+      .join("") || `<p class="empty-note">选择教材页和段落后，可以让 AI 逐句解释、补例子或联系错题。</p>`;
+  typesetMath(node);
+  node.scrollTop = node.scrollHeight;
+}
+
+async function askTextbookAi(message = "") {
+  const hint = $("#textbookHint");
+  const content = (message || $("#textbookQuestion")?.value || "").trim();
+  if (!state.textbookId) {
+    if (hint) hint.textContent = "请先选择教材。";
+    return;
+  }
+  if (!content) {
+    if (hint) hint.textContent = "请输入要问的问题。";
+    return;
+  }
+  state.textbookChat.push({ role: "user", content });
+  renderTextbookChat();
+  if ($("#textbookQuestion")) $("#textbookQuestion").value = "";
+  if (hint) hint.textContent = "AI 正在精读当前页...";
+  const data = await api("/api/textbooks/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      textbook_id: state.textbookId,
+      page_number: state.textbookPage,
+      paragraph_index: state.textbookParagraph,
+      message: content,
+      history: state.textbookChat,
+    }),
+  });
+  state.textbookChat.push({ role: "assistant", content: data.answer || "" });
+  renderTextbookChat();
+  if (hint) hint.textContent = data.has_key ? "已完成。可以继续追问，或压缩导入记忆。" : "未配置 API，已返回本地提示。";
+}
+
+async function saveTextbookMemory() {
+  const hint = $("#textbookHint");
+  if (!state.textbookId || !state.textbookChat.length) {
+    if (hint) hint.textContent = "先完成一轮教材精读对话，再导入记忆。";
+    return;
+  }
+  if (hint) hint.textContent = "正在压缩对话并写入老师记忆...";
+  const data = await api("/api/textbooks/memory", {
+    method: "POST",
+    body: JSON.stringify({
+      textbook_id: state.textbookId,
+      page_number: state.textbookPage,
+      paragraph_index: state.textbookParagraph,
+      history: state.textbookChat,
+    }),
+  });
+  if (hint) hint.textContent = `已导入老师记忆：${data.memory.content.slice(0, 48)}...`;
+}
+
+async function deleteTextbook(id) {
+  const book = state.textbooks.find((item) => item.id === id);
+  const name = book ? book.title || book.filename : "这本教材";
+  if (!confirm(`确定删除「${name}」吗？这会删除教材 PDF、页图和精读对话记录。`)) return;
+  await api(`/api/textbooks/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (state.textbookId === id) {
+    state.textbookId = "";
+    state.textbookChat = [];
+  }
+  await loadTextbooks();
+  renderTextbookChat();
 }
 
 async function editDocument(id) {
@@ -551,14 +787,18 @@ async function openDetail(id, presetStatus = "") {
           <button id="hint2" class="ghost">Get Hint L2</button>
           <button id="hint3" class="ghost">Full Solution</button>
           <button id="generateVariations" class="ghost">举一反三</button>
+          <button id="clearAnalysisAnswer" class="ghost">清空解析</button>
+          <button id="clearVariationAnswer" class="ghost">清空举一反三</button>
           <button id="needReview" class="ghost">加入复习</button>
           <button id="deleteDetailQuestion" class="danger">删除题目</button>
         </div>
-        <article id="analysisBox" class="math-output">${q.ai_hint || q.ai_analysis || "先尝试 Level 1 概念提示；仍卡住再逐级展开到完整解析。"}</article>
-        <pre id="variationsBox">${q.ai_variations || "点击“举一反三”，生成同类变式练习。"}</pre>
+        <article id="analysisBox" class="math-output mathjax-container"></article>
+        <article id="variationsBox" class="math-output mathjax-container"></article>
       </div>
     </div>`;
   dialog.showModal();
+  renderAiOutput("#analysisBox", q.ai_hint || q.ai_analysis, "先尝试 Level 1 概念提示；仍卡住再逐级展开到完整解析。");
+  renderAiOutput("#variationsBox", q.ai_variations, "点击“举一反三”，生成同类变式练习。");
   typesetMath($("#detailContent"));
 
   $("#closeDetail").onclick = () => dialog.close();
@@ -581,8 +821,26 @@ async function openDetail(id, presetStatus = "") {
     dialog.close();
     await deleteQuestion(q.id);
   };
+  $("#clearAnalysisAnswer").onclick = async () => {
+    if (!confirm("确定清空这道题已保存的 AI 解析和提示吗？")) return;
+    await api(`/api/questions/${q.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ ai_analysis: "", ai_hint: "" }),
+    });
+    renderAiOutput("#analysisBox", "", "解析已清空。可以重新生成 Hint、Full Solution 或错题分析。");
+    await refresh();
+  };
+  $("#clearVariationAnswer").onclick = async () => {
+    if (!confirm("确定清空这道题已保存的举一反三吗？")) return;
+    await api(`/api/questions/${q.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ ai_variations: "" }),
+    });
+    renderAiOutput("#variationsBox", "", "举一反三已清空。");
+    await refresh();
+  };
   $("#analyzeQuestion").onclick = async () => {
-    $("#analysisBox").textContent = "正在生成错题分析并写入学习档案...";
+    renderAiOutput("#analysisBox", "正在生成错题分析并写入学习档案...");
     await api(`/api/questions/${q.id}`, {
       method: "PATCH",
       body: JSON.stringify({
@@ -598,13 +856,12 @@ async function openDetail(id, presetStatus = "") {
     const chip = ins.root_cause
       ? `\n\n— 已写入学习档案：考点「${(ins.knowledge_points || []).join("、")}」· 错因「${ins.root_cause}」`
       : "\n\n— 已写入学习档案。";
-    $("#analysisBox").textContent = (data.ai_analysis || "") + chip;
-    typesetMath($("#analysisBox"));
+    renderAiOutput("#analysisBox", (data.ai_analysis || "") + chip);
     await refresh();
   };
   [1, 2, 3].forEach((level) => {
     $(`#hint${level}`).onclick = async () => {
-      $("#analysisBox").textContent = level === 3 ? "正在生成完整 LaTeX 解析..." : "正在生成提示...";
+      renderAiOutput("#analysisBox", level === 3 ? "正在生成完整 LaTeX 解析..." : "正在生成提示...");
       await api(`/api/questions/${q.id}`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -616,13 +873,12 @@ async function openDetail(id, presetStatus = "") {
         }),
       });
       const data = await api(`/api/questions/${q.id}/hint`, { method: "POST", body: JSON.stringify({ level }) });
-      $("#analysisBox").textContent = data.hint;
-      typesetMath($("#analysisBox"));
+      renderAiOutput("#analysisBox", data.hint);
       await refresh();
     };
   });
   $("#generateVariations").onclick = async () => {
-    $("#variationsBox").textContent = "正在生成难度梯度变式...";
+    renderAiOutput("#variationsBox", "正在生成难度梯度变式...");
     await api(`/api/questions/${q.id}`, {
       method: "PATCH",
       body: JSON.stringify({
@@ -634,8 +890,7 @@ async function openDetail(id, presetStatus = "") {
       }),
     });
     const data = await api(`/api/questions/${q.id}/variations`, { method: "POST", body: "{}" });
-    $("#variationsBox").textContent = data.ai_variations;
-    typesetMath($("#variationsBox"));
+    renderAiOutput("#variationsBox", data.ai_variations);
     await refresh();
   };
   setupCropTool(q.id);
@@ -779,17 +1034,27 @@ function setupLightbox() {
 // ==========================================================================
 // 提醒打卡
 // ==========================================================================
-const REMIND_DEFAULTS = { morningOn: "1", morningTime: "10:00", nightOn: "1", nightTime: "20:00", checkinMode: "button" };
+const REMIND_DEFAULTS = { morningOn: "1", morningTime: "10:00", nightOn: "1", nightTime: "20:00", checkinMode: "cloud" };
+
+function normalizeCheckinMode(value) {
+  if (value === "button") return "local";
+  if (value === "link") return "cloud";
+  return value === "local" ? "local" : "cloud";
+}
 
 function loadRemindSettings() {
-  try { return { ...REMIND_DEFAULTS, ...JSON.parse(localStorage.getItem("remindSettings") || "{}") }; }
+  try {
+    const settings = { ...REMIND_DEFAULTS, ...JSON.parse(localStorage.getItem("remindSettings") || "{}") };
+    settings.checkinMode = normalizeCheckinMode(settings.checkinMode);
+    return settings;
+  }
   catch (_) { return { ...REMIND_DEFAULTS }; }
 }
 function saveRemindSettings() {
   const s = {
     morningOn: $("#remindMorningOn").value, morningTime: $("#remindMorningTime").value,
     nightOn: $("#remindNightOn").value, nightTime: $("#remindNightTime").value,
-    checkinMode: $("#checkinMode").value,
+    checkinMode: normalizeCheckinMode($("#checkinMode").value),
   };
   localStorage.setItem("remindSettings", JSON.stringify(s));
   renderRemindGuide(s);
@@ -810,6 +1075,7 @@ async function loadRemind() {
   } catch (_) {}
   $("#pushConfigBadge").textContent = "点测试按钮检测";
   $("#pushConfigBadge").className = "tag";
+  await loadNotificationSettings();
 }
 
 function setCheckinUI(done) {
@@ -828,6 +1094,27 @@ function setCheckinUI(done) {
 }
 
 function renderRemindGuide(s) {
+  {
+    const mode = normalizeCheckinMode(s.checkinMode);
+    const morning = s.morningTime.split(":");
+    const night = s.nightTime.split(":");
+    const modeText = mode === "cloud" ? "云端打卡" : "本地打卡";
+    const modeDesc = mode === "cloud"
+      ? "微信/企业微信推送里的链接会打开云端 Sakura 并记录服务器打卡，适合阿里云部署，电脑关机也不影响提醒。"
+      : "只在当前本地浏览器点击上方按钮记录打卡，适合本机开发和离线使用；微信里的链接不会自动连到本机。";
+    const guide = `
+      <p class="remind-note"><b>当前模式：</b>${modeText}。${modeDesc}</p>
+      <p>早间提醒：${s.morningOn === "1" ? `每天 ${s.morningTime}` : "已关闭"}；晚间检查：${s.nightOn === "1" ? `每天 ${s.nightTime}` : "已关闭"}。</p>
+      <p><b>云端模式</b>：服务器通过定时任务运行提醒脚本，并用企业微信群机器人发送消息。推荐用于正式使用。</p>
+      <pre class="remind-code"># 早间提醒 cron
+${morning[1] || "00"} ${morning[0] || "10"} * * * cd /opt/sakura-study && .venv/bin/python notify_daily.py --morning
+# 晚间检查 cron
+${night[1] || "00"} ${night[0] || "20"} * * * cd /opt/sakura-study && .venv/bin/python notify_daily.py --night</pre>
+      <p><b>本地模式</b>：不依赖公网，只在本页面点击“今日打卡”按钮；适合本地测试，但电脑关机后不会自动推送。</p>
+    `;
+    $("#remindGuide").innerHTML = guide;
+    return;
+  }
   const morning = s.morningTime.split(":");
   const night = s.nightTime.split(":");
   const guide = `
@@ -868,12 +1155,12 @@ async function testPush(kind) {
     });
     const r = await res.json();
     if (r.configured === false) {
-      hint.textContent = "未配置 PUSHPLUS_TOKEN：先按下方教程设好 token 再重启服务。";
-      $("#pushConfigBadge").textContent = "未配置 token";
+      hint.textContent = "未配置推送通道：请先在服务器 .env 配置 WEWORK_BOT_WEBHOOK 或 PUSHPLUS_TOKEN 后重启服务。";
+      $("#pushConfigBadge").textContent = "未配置推送";
       $("#pushConfigBadge").className = "tag status wrong";
     } else if (r.ok) {
-      hint.textContent = "已发送，去微信「pushplus推送加」公众号看看 ✅";
-      $("#pushConfigBadge").textContent = "已配置 ✅";
+      hint.textContent = "已发送，请到企业微信群或微信推送通道查看。";
+      $("#pushConfigBadge").textContent = "推送已配置";
       $("#pushConfigBadge").className = "tag status";
     } else {
       const detail = r.detail || {};
@@ -884,6 +1171,284 @@ async function testPush(kind) {
   } catch (e) {
     hint.textContent = "请求失败：" + e.message;
   }
+}
+
+async function loadNotificationSettings() {
+  if (!$("#notifySettingsBadge")) return;
+  try {
+    const data = await api("/api/notification/settings");
+    const configured = data.has_wework || data.has_pushplus;
+    $("#notifySettingsBadge").textContent = configured ? "推送已配置" : "未配置推送";
+    $("#notifySettingsBadge").className = `tag ${configured ? "" : "status wrong"}`;
+    if ($("#pushConfigBadge")) {
+      $("#pushConfigBadge").textContent = configured ? "推送已配置" : "未配置推送";
+      $("#pushConfigBadge").className = `tag ${configured ? "status" : "status wrong"}`;
+    }
+    if ($("#notifyAppPublicUrl")) $("#notifyAppPublicUrl").value = data.app_public_url || "";
+    if ($("#weworkWebhook")) $("#weworkWebhook").placeholder = data.masked_wework ? `已保存：${data.masked_wework}` : "未保存";
+    if ($("#pushplusToken")) $("#pushplusToken").placeholder = data.masked_pushplus ? `已保存：${data.masked_pushplus}` : "未保存";
+    if ($("#notifySettingsHint")) {
+      const channels = [
+        data.has_wework ? "企业微信机器人" : "",
+        data.has_pushplus ? "PushPlus" : "",
+      ].filter(Boolean).join("、");
+      $("#notifySettingsHint").textContent = channels ? `当前通道：${channels}。不填写的密钥会保留原值。` : "还没有推送通道；填写企业微信 Webhook 或 PushPlus Token 后保存。";
+    }
+  } catch (error) {
+    $("#notifySettingsBadge").textContent = "配置读取失败";
+    $("#notifySettingsBadge").className = "tag status wrong";
+    if ($("#notifySettingsHint")) $("#notifySettingsHint").textContent = error.message;
+  }
+}
+
+async function saveNotificationSettings() {
+  const hint = $("#notifySettingsHint");
+  if (hint) hint.textContent = "正在保存推送配置...";
+  try {
+    const data = await api("/api/notification/settings", {
+      method: "POST",
+      body: JSON.stringify({
+        app_public_url: $("#notifyAppPublicUrl")?.value.trim() || "",
+        wework_webhook: $("#weworkWebhook")?.value.trim() || "",
+        pushplus_token: $("#pushplusToken")?.value.trim() || "",
+      }),
+    });
+    if ($("#weworkWebhook")) $("#weworkWebhook").value = "";
+    if ($("#pushplusToken")) $("#pushplusToken").value = "";
+    await loadNotificationSettings();
+    if (hint) hint.textContent = data.message || "已保存推送配置。";
+  } catch (error) {
+    if (hint) hint.textContent = error.message;
+  }
+}
+
+// ==========================================================================
+// 天气推送设置
+// ==========================================================================
+async function loadWeatherSettings() {
+  if (!$("#weatherCity")) return;
+  try {
+    const data = await api("/api/weather/settings");
+    $("#weatherCity").value = data.city || data.default_city || "";
+  } catch (_) {}
+}
+
+async function saveWeatherCity() {
+  const city = $("#weatherCity")?.value.trim();
+  if (!city) return;
+  const box = $("#weatherPreviewBox");
+  box.textContent = "正在保存城市...";
+  try {
+    const data = await api("/api/weather/settings", {
+      method: "POST",
+      body: JSON.stringify({ city }),
+    });
+    box.textContent = `已保存城市：${data.city}`;
+  } catch (error) {
+    box.textContent = error.message;
+  }
+}
+
+function weatherInfoText(info) {
+  if (!info) return "没有天气数据。";
+  return [
+    `${info.city || ""} → ${info.resolved_city || ""}`,
+    `日期：${info.date || "-"}`,
+    `天气：${info.weather_text || "-"}`,
+    `气温：${info.temp_min ?? "-"}℃ ~ ${info.temp_max ?? "-"}℃`,
+    `降水概率：${info.rain_probability ?? "-"}%`,
+    `最大风速：${info.wind_max ?? "-"} km/h`,
+    `来源：${info.source || "open-meteo"}`,
+  ].join("\n");
+}
+
+async function previewWeather() {
+  const city = $("#weatherCity")?.value.trim();
+  const box = $("#weatherPreviewBox");
+  box.textContent = "正在查询明天天气...";
+  try {
+    const data = await api(`/api/weather/preview?city=${encodeURIComponent(city || "")}`);
+    box.textContent = weatherInfoText(data.weather);
+  } catch (error) {
+    box.textContent = error.message;
+  }
+}
+
+async function previewWeatherPush() {
+  const city = $("#weatherCity")?.value.trim();
+  const box = $("#weatherPreviewBox");
+  box.textContent = "正在生成推送预览...";
+  try {
+    const data = await api("/api/weather/reminder", {
+      method: "POST",
+      body: JSON.stringify({ city }),
+    });
+    box.textContent = `${data.title}\n\n${data.content}`;
+  } catch (error) {
+    box.textContent = error.message;
+  }
+}
+
+async function testWeatherPush() {
+  const city = $("#weatherCity")?.value.trim();
+  const box = $("#weatherPreviewBox");
+  box.textContent = "正在发送天气测试推送...";
+  try {
+    const data = await api("/api/push/weather", {
+      method: "POST",
+      body: JSON.stringify({ city }),
+    });
+    if (data.ok) {
+      box.textContent = `已发送天气推送：${data.title}\n\n请到企业微信群或 PushPlus 通道查看。`;
+      if ($("#pushConfigBadge")) {
+        $("#pushConfigBadge").textContent = "推送已配置";
+        $("#pushConfigBadge").className = "tag status";
+      }
+    } else {
+      box.textContent = "发送失败：" + JSON.stringify(data.detail || data, null, 2);
+    }
+  } catch (error) {
+    box.textContent = error.message;
+  }
+}
+
+// ==========================================================================
+// AI 对话测试台 / API 设置
+// ==========================================================================
+let lastAiChatAnswer = "";
+
+function updateLlmFields(data) {
+  if (!data) return;
+  if ($("#llmStatusBadge")) {
+    $("#llmStatusBadge").textContent = data.has_key ? `已配置 · ${data.model || ""}` : "未配置 API";
+    $("#llmStatusBadge").className = `tag ${data.has_key ? "" : "status wrong"}`;
+  }
+  if ($("#llmApiKey")) $("#llmApiKey").placeholder = data.masked_key ? `已保存：${data.masked_key}` : "未保存";
+  if ($("#llmBaseUrl")) $("#llmBaseUrl").value = data.base_url || "";
+  if ($("#llmModel")) $("#llmModel").value = data.model || "";
+}
+
+function renderTeacherMemories(memories = []) {
+  const node = $("#teacherMemoryList");
+  if (!node) return;
+  node.innerHTML = memories.length
+    ? memories.map((m) => `
+      <article class="memory-item">
+        <p>${escapeHtml(m.content)}</p>
+        <small>${escapeHtml(m.source || "chat")} · ${escapeHtml(m.created_at || "")}</small>
+        <button class="ghost" data-delete-ai-memory="${escapeAttr(m.id)}"><i data-lucide="trash-2"></i>删除</button>
+      </article>`).join("")
+    : `<p class="empty-note">还没有老师记忆。发送对话后，可把有价值的一轮主动导入。</p>`;
+  if (window.lucide) lucide.createIcons();
+}
+
+function renderMentorExperiences(experiences = []) {
+  const node = $("#mentorExperienceList");
+  if (!node) return;
+  node.innerHTML = experiences.length
+    ? experiences.map((item) => `
+      <article class="memory-item mentor-item">
+        <p><strong>${escapeHtml(item.title || "外部经验")}</strong><br>${escapeHtml(item.content)}</p>
+        <small>${escapeHtml(item.subject || "未指定科目")} · 可信度 ${escapeHtml(item.reliability || 3)} · ${(item.tags || []).map(escapeHtml).join(" / ")}${item.source ? ` · ${escapeHtml(item.source)}` : ""}</small>
+        <button class="ghost" data-delete-mentor-experience="${escapeAttr(item.id)}"><i data-lucide="trash-2"></i>删除</button>
+      </article>`).join("")
+    : `<p class="empty-note">还没有外部经验。可以粘贴学长学姐经验、帖子总结或自己的方法论。</p>`;
+  if (window.lucide) lucide.createIcons();
+}
+
+async function loadMentorExperiences() {
+  if (!$("#mentorExperienceList")) return;
+  try {
+    const data = await api("/api/mentor-experience");
+    renderMentorExperiences(data.experiences || []);
+  } catch (error) {
+    $("#mentorExperienceList").innerHTML = `<p class="empty-note">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function loadAiChatPanel() {
+  if (!$("#aiChatInput")) return;
+  try {
+    const data = await api("/api/ai-chat/memory");
+    updateLlmFields(data);
+    renderTeacherMemories(data.memories || []);
+    await loadMentorExperiences();
+  } catch (error) {
+    if ($("#aiChatOutput")) $("#aiChatOutput").textContent = error.message;
+  }
+}
+
+async function saveLlmSettings() {
+  const hint = $("#llmSettingsHint");
+  if (hint) hint.textContent = "正在保存 API 设置...";
+  try {
+    const data = await api("/api/llm/settings", {
+      method: "POST",
+      body: JSON.stringify({
+        api_key: $("#llmApiKey")?.value.trim() || "",
+        base_url: $("#llmBaseUrl")?.value.trim() || "",
+        model: $("#llmModel")?.value.trim() || "",
+      }),
+    });
+    updateLlmFields(data);
+    if ($("#llmApiKey")) $("#llmApiKey").value = "";
+    if (hint) hint.textContent = data.message || "已保存。";
+  } catch (error) {
+    if (hint) hint.textContent = error.message;
+  }
+}
+
+async function sendAiChat() {
+  const input = $("#aiChatInput");
+  const output = $("#aiChatOutput");
+  const message = input?.value.trim();
+  if (!message) return;
+  renderAiOutput(output, "正在请求 AI 老师...");
+  try {
+    const data = await api("/api/ai-chat", {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    });
+    lastAiChatAnswer = data.answer || "";
+    updateLlmFields(data);
+    const strategyName = data.teacher_strategy?.name || "";
+    const intentText = data.teacher_intent ? `意图：${data.teacher_intent}` : "";
+    const strategyText = strategyName ? `策略：${strategyName}` : "";
+    const prefix = [intentText, strategyText].filter(Boolean).join(" · ");
+    renderAiOutput(output, `${prefix ? `【${prefix}】\n\n` : ""}${lastAiChatAnswer || "AI 没有返回内容。"}`);
+  } catch (error) {
+    renderAiOutput(output, error.message);
+  }
+}
+
+async function saveAiMemory(content, source = "chat") {
+  const text = (content || "").trim();
+  if (!text) return;
+  await api("/api/ai-chat/memory", {
+    method: "POST",
+    body: JSON.stringify({ content: text, source }),
+  });
+  await loadAiChatPanel();
+}
+
+async function saveMentorExperience() {
+  const content = $("#mentorExperienceContent")?.value.trim() || "";
+  if (!content) return;
+  await api("/api/mentor-experience", {
+    method: "POST",
+    body: JSON.stringify({
+      title: $("#mentorExperienceTitle")?.value.trim() || "",
+      subject: $("#mentorExperienceSubject")?.value.trim() || "",
+      tags: $("#mentorExperienceTags")?.value.trim() || "",
+      reliability: $("#mentorExperienceReliability")?.value || "3",
+      source: $("#mentorExperienceSource")?.value.trim() || "",
+      content,
+    }),
+  });
+  ["#mentorExperienceTitle", "#mentorExperienceSubject", "#mentorExperienceTags", "#mentorExperienceContent", "#mentorExperienceSource"].forEach((sel) => {
+    if ($(sel)) $(sel).value = "";
+  });
+  await loadMentorExperiences();
 }
 
 async function loadChapterStats(documentId) {
@@ -1019,6 +1584,7 @@ async function generateReflection() {
 }
 
 async function loadDaily() {
+  if ($("#dailyRuleList")) await loadDailyRules();
   const data = await api("/api/daily");
   $("#dailyMessage").textContent = `${data.date} · ${data.message}`;
   $("#dailyGrid").innerHTML =
@@ -1061,6 +1627,235 @@ async function loadDaily() {
         </section>`
       )
       .join("") || "<p>暂无每日练习。先上传做题本或标记错题。</p>";
+}
+
+function setSelectOptions(selector, values, allLabel, current = "") {
+  const el = $(selector);
+  if (!el) return "";
+  const safeValues = (values || []).filter((value) => value !== null && value !== undefined && String(value).trim() !== "");
+  const hasCurrent = current && safeValues.some((value) => String(value) === String(current));
+  const nextValue = hasCurrent ? current : "";
+  el.innerHTML = `<option value="">${allLabel}</option>${safeValues
+    .map((value) => `<option value="${escapeAttr(value)}" ${String(value) === String(nextValue) ? "selected" : ""}>${escapeHtml(value)}</option>`)
+    .join("")}`;
+  el.value = nextValue;
+  return nextValue;
+}
+
+function setSelectLocked(selector, label) {
+  const el = $(selector);
+  if (!el) return;
+  el.innerHTML = `<option value="">${escapeHtml(label)}</option>`;
+  el.value = "";
+  el.disabled = true;
+}
+
+function unlockSelect(selector) {
+  const el = $(selector);
+  if (el) el.disabled = false;
+}
+
+function dailyRuleStatusLabel(value) {
+  return {
+    active_wrong: "当前错题+到期复习",
+    due: "只看今天到期复习",
+    wrong: "只看做错",
+    review: "半会/需复习",
+    all_wrong_history: "历史曾错题",
+  }[value || "active_wrong"] || "当前错题+到期复习";
+}
+
+function selectedOptionText(selector, fallback) {
+  const el = $(selector);
+  if (!el) return fallback;
+  return el.selectedOptions?.[0]?.textContent?.trim() || fallback;
+}
+
+function cleanDailyRulePart(text) {
+  return String(text || "")
+    .replace(/\s+[·路]\s*(做题本|模拟卷|资料)$/u, "")
+    .trim();
+}
+
+function buildDailyRuleName() {
+  const subject = $("#dailyRuleSubject")?.value || "";
+  const documentId = $("#dailyRuleDocument")?.value || "";
+  const category = $("#dailyRuleCategory")?.value || "";
+  const chapter = $("#dailyRuleChapter")?.value || "";
+  const status = $("#dailyRuleStatus")?.value || "active_wrong";
+  const limit = Math.max(1, Math.min(30, Number($("#dailyRuleLimit")?.value) || 5));
+  const parts = [];
+  if (subject) parts.push(subject);
+  if (documentId) parts.push(cleanDailyRulePart(selectedOptionText("#dailyRuleDocument", "指定资料")));
+  if (category) parts.push(category);
+  if (chapter) parts.push(chapter);
+  parts.push(dailyRuleStatusLabel(status));
+  parts.push(`${limit}题`);
+  return parts.join(" · ");
+}
+
+function updateDailyRuleName() {
+  const el = $("#dailyRuleName");
+  if (el) el.value = buildDailyRuleName();
+}
+
+async function populateDailyRuleFilters(resetFrom = "") {
+  if (!$("#dailyRuleDocument")) return;
+  const documentId = $("#dailyRuleDocument").value;
+  let subject = $("#dailyRuleSubject").value;
+  if (resetFrom === "document") {
+    const doc = state.documents.find((item) => item.id === documentId);
+    subject = doc?.subject || "";
+  }
+  const category = ["document", "subject"].includes(resetFrom) ? "" : $("#dailyRuleCategory").value;
+  const chapter = ["document", "subject", "category"].includes(resetFrom) ? "" : $("#dailyRuleChapter").value;
+  const params = new URLSearchParams();
+  if (documentId) params.set("document_id", documentId);
+  if (subject) params.set("subject", subject);
+  if (category) params.set("category", category);
+  if (chapter) params.set("chapter", chapter);
+  const data = await api(`/api/daily/rule-options?${params}`);
+  const docs = (data.documents || []).map((doc) => ({
+    value: doc.id,
+    label: documentLabel(doc),
+  }));
+  const docEl = $("#dailyRuleDocument");
+  const keepDoc = docs.some((doc) => String(doc.value) === String(documentId)) ? documentId : "";
+  docEl.innerHTML = `<option value="">全部资料</option>${docs
+    .map((doc) => `<option value="${escapeAttr(doc.value)}" ${String(doc.value) === String(keepDoc) ? "selected" : ""}>${escapeHtml(doc.label)}</option>`)
+    .join("")}`;
+  docEl.value = keepDoc;
+  subject = setSelectOptions("#dailyRuleSubject", data.subjects, "全部科目", subject);
+  const scopedReady = Boolean(keepDoc && subject);
+  if (scopedReady) {
+    unlockSelect("#dailyRuleCategory");
+    unlockSelect("#dailyRuleChapter");
+    setSelectOptions("#dailyRuleCategory", data.categories, "全部知识点", category);
+    setSelectOptions("#dailyRuleChapter", data.chapters, "全部章节", chapter);
+  } else {
+    setSelectLocked("#dailyRuleCategory", "请先选择科目和资料");
+    setSelectLocked("#dailyRuleChapter", "请先选择科目和资料");
+  }
+  updateDailyRuleName();
+}
+
+function resetDailyRuleForm() {
+  if ($("#dailyRuleStatus")) $("#dailyRuleStatus").value = "active_wrong";
+  if ($("#dailyRuleLimit")) $("#dailyRuleLimit").value = 5;
+  if ($("#dailyRuleSubject")) $("#dailyRuleSubject").value = "";
+  if ($("#dailyRuleDocument")) $("#dailyRuleDocument").value = "";
+  if ($("#dailyRuleCategory")) $("#dailyRuleCategory").value = "";
+  if ($("#dailyRuleChapter")) $("#dailyRuleChapter").value = "";
+  populateDailyRuleFilters().catch((err) => {
+    const hint = $("#dailyRuleHint");
+    if (hint) hint.textContent = err.message;
+  });
+}
+
+async function loadDailyRules() {
+  if (!$("#dailyRuleList")) return;
+  const data = await api("/api/daily/rules");
+  state.dailyRules = data.rules || [];
+  $("#dailyRuleBadge").textContent = `${state.dailyRules.length} 条规则`;
+  $("#dailyRuleList").innerHTML =
+    state.dailyRules
+      .map(
+        (rule) => `
+        <article class="daily-rule-item ${rule.enabled ? "" : "disabled"}">
+          <div>
+            <strong>${escapeHtml(rule.name || "未命名规则")}</strong>
+            <p>${escapeHtml(rule.document_title || "全部资料")} · ${escapeHtml(rule.subject || "全部科目")} · ${escapeHtml(rule.category || "全部知识点")} · ${escapeHtml(rule.chapter || "全部章节")}</p>
+            <small>${escapeHtml(dailyRuleStatusLabel(rule.status_group))} · 每次 ${rule.limit_count || 5} 题</small>
+          </div>
+          <div class="daily-rule-actions">
+            <label class="switch-lite"><input type="checkbox" data-daily-rule-enabled="${escapeAttr(rule.id)}" ${rule.enabled ? "checked" : ""} /><span>启用</span></label>
+            <button class="ghost danger-soft-btn" data-delete-daily-rule="${escapeAttr(rule.id)}"><i data-lucide="trash-2"></i>删除</button>
+          </div>
+        </article>`
+      )
+      .join("") || `<p class="empty-note">还没有自定义规则。选择科目、做题本或章节后保存即可。</p>`;
+  if (window.lucide) lucide.createIcons();
+}
+
+async function saveDailyRule() {
+  const hint = $("#dailyRuleHint");
+  updateDailyRuleName();
+  if (hint) hint.textContent = "正在保存规则...";
+  const selectedDocument = $("#dailyRuleDocument")?.value || "";
+  const selectedSubject = $("#dailyRuleSubject")?.value || "";
+  if (!selectedSubject || !selectedDocument) {
+    if (hint) hint.textContent = "请先选择科目和资料/做题本，再保存规则。";
+    return;
+  }
+  const payload = {
+    name: $("#dailyRuleName")?.value || buildDailyRuleName(),
+    document_id: selectedDocument,
+    subject: selectedSubject,
+    category: $("#dailyRuleCategory")?.value || "",
+    chapter: $("#dailyRuleChapter")?.value || "",
+    status_group: $("#dailyRuleStatus")?.value || "active_wrong",
+    limit_count: Math.max(1, Math.min(30, Number($("#dailyRuleLimit")?.value) || 5)),
+    enabled: true,
+  };
+  await api("/api/daily/rules", { method: "POST", body: JSON.stringify(payload) });
+  if (hint) hint.textContent = "规则已保存。";
+  await loadDaily();
+}
+
+async function updateDailyRuleEnabled(id, enabled) {
+  await api("/api/daily/rules", { method: "POST", body: JSON.stringify({ id, enabled }) });
+  await loadDaily();
+}
+
+async function deleteDailyRule(id) {
+  if (!confirm("确定删除这条每日练习规则吗？")) return;
+  await api(`/api/daily/rules/${encodeURIComponent(id)}`, { method: "DELETE" });
+  await loadDaily();
+}
+
+function exportBackup() {
+  const hint = $("#migrationHint");
+  if (hint) hint.textContent = "正在准备完整迁移包，数据较大时需要等一会。";
+  window.location.href = "/api/backup/export";
+}
+
+async function waitBackupImport(jobId) {
+  const hint = $("#migrationHint");
+  for (let i = 0; i < 600; i += 1) {
+    const job = await api(`/api/backup/import-status?id=${encodeURIComponent(jobId)}`);
+    if (hint) {
+      const sizeText = job.size ? ` (${Math.round(job.size / 1024 / 1024)} MB)` : "";
+      hint.textContent = `Import ${job.status}${sizeText}: ${job.message || ""}`;
+    }
+    if (job.status === "done") {
+      if (hint) hint.textContent = `Import completed. Backup: ${(job.result && job.result.backup_path) || "migration_backups"}`;
+      await refresh();
+      await loadDaily();
+      return;
+    }
+    if (job.status === "failed") {
+      throw new Error(job.error || job.message || "Import failed.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  throw new Error("Import is still running. Please check again later.");
+}
+
+async function importBackup(file) {
+  if (!file) return;
+  if (!confirm("确定导入这个迁移包吗？当前本地数据会先备份，然后替换为导入数据。")) return;
+  const hint = $("#migrationHint");
+  if (hint) hint.textContent = "正在导入迁移包...";
+  const form = new FormData();
+  form.append("backup", file);
+  const data = await api("/api/backup/import", { method: "POST", body: form });
+  if (data.job_id) {
+    await waitBackupImport(data.job_id);
+    return;
+  }
+  if (hint) hint.textContent = `导入完成，旧数据已备份到：${data.backup_path || "migration_backups"}`;
+  await refresh();
+  await loadDaily();
 }
 
 // ==========================================================================
@@ -1293,13 +2088,15 @@ function setView(view) {
     dashboard: ["学习总览", "按科目、做题本和知识点追踪练习情况。"],
     documents: ["做题本", "上传和维护章节练习、专项题册等做题本资料。"],
     mockPapers: ["模拟卷", "上传和维护整套试卷，模拟卷与做题本同级管理。"],
+    textbook: ["教材精读", "上传教材 PDF，按页/段落让 AI 逐句解释并沉淀记忆。"],
     chapterStats: ["章节统计", "用章节正确率看清每套做题本里的薄弱部分。"],
     library: ["总题库", "按做题本、科目、知识点和状态检索题目。"],
     mistakes: ["错题本", "集中处理做错、半会和需要复习的题目。"],
     reflection: ["总结反思", "按周或月复盘重难点、错题和后续规划。"],
     daily: ["每日练习", "优先从薄弱项和最近错题里安排练习。"],
     coach: ["学习档案", "基于真实做题记录生成统计、薄弱点证据和复习计划。"],
-    remind: ["提醒打卡", "今日打卡、微信提醒设置与定时教程。"],
+    aiChat: ["AI 学习教练", "测试 API、维护老师记忆，并把有效对话沉淀到学习档案。"],
+    remind: ["提醒打卡", "云端/本地打卡、微信提醒设置与定时教程。"],
   };
   $("#viewTitle").textContent = titles[view][0];
   $("#viewSubtitle").textContent = titles[view][1];
@@ -1307,8 +2104,11 @@ function setView(view) {
   if (view === "chapterStats") loadChapterStats();
   if (view === "reflection") { loadReflectionPreview(); loadReflectionHistory(); }
   if (view === "coach") loadCoach();
-  if (view === "remind") loadRemind();
+  if (view === "aiChat") loadAiChatPanel();
+  if (view === "remind") { loadRemind(); loadWeatherSettings(); }
   if (view === "mistakes") loadMistakes();
+  if (view === "textbook") loadTextbooks();
+  if (view === "library" || view === "mockPapers") loadQuestions();
 }
 
 function bindUploadForm(selector, documentKindValue) {
@@ -1327,7 +2127,11 @@ function bindUploadForm(selector, documentKindValue) {
     form.append("document_kind", documentKindValue);
     form.append("start_page", formEl.querySelector('[name="start_page"]').value);
     form.append("end_page", formEl.querySelector('[name="end_page"]').value);
-    status.textContent = `正在导入${documentKindValue}，每页会生成一道题...`;
+    const splitInput = formEl.querySelector('[name="split_questions"]');
+    if (splitInput) form.append("split_questions", splitInput.checked ? "1" : "0");
+    status.textContent = splitInput?.checked
+      ? `正在导入${documentKindValue}，会尝试按题号自动切分...`
+      : `正在导入${documentKindValue}，每页会生成一道题...`;
     try {
       const data = await api("/api/upload", { method: "POST", body: form });
       status.textContent = `已导入「${data.title}」共 ${data.page_count} 道题。`;
@@ -1341,6 +2145,37 @@ function bindUploadForm(selector, documentKindValue) {
 
 bindUploadForm("#bookUploadForm", "做题本");
 bindUploadForm("#mockUploadForm", "模拟卷");
+
+function bindTextbookUploadForm() {
+  const formEl = $("#textbookUploadForm");
+  if (!formEl) return;
+  formEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const fileInput = formEl.querySelector('[name="file"]');
+    const status = formEl.querySelector(".upload-status");
+    const file = fileInput.files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
+    form.append("title", formEl.querySelector('[name="title"]').value);
+    form.append("subject", formEl.querySelector('[name="subject"]').value);
+    status.textContent = "正在导入教材并按页建立索引...";
+    try {
+      const data = await api("/api/textbooks/upload", { method: "POST", body: form });
+      status.textContent = `已导入「${data.title}」共 ${data.page_count} 页。`;
+      formEl.reset();
+      state.textbookId = data.textbook_id;
+      state.textbookPage = 1;
+      state.textbookChat = [];
+      await loadTextbooks();
+      await loadTextbookPage();
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
+}
+
+bindTextbookUploadForm();
 
 $("#documentFilter").addEventListener("change", async (event) => {
   state.documentId = event.target.value;
@@ -1386,6 +2221,70 @@ $("#chapterFilter").addEventListener("change", async (event) => {
   state.chapter = event.target.value;
   await loadQuestions();
 });
+
+if ($("#textbookList")) {
+  $("#textbookList").addEventListener("click", async (event) => {
+    const open = event.target.closest("[data-open-textbook]");
+    if (open) {
+      state.textbookId = open.dataset.openTextbook;
+      state.textbookPage = 1;
+      state.textbookParagraph = 0;
+      state.textbookChat = [];
+      if ($("#textbookPageInput")) $("#textbookPageInput").value = 1;
+      await loadTextbookPage();
+      renderTextbookChat();
+      return;
+    }
+    const del = event.target.closest("[data-delete-textbook]");
+    if (del) await deleteTextbook(del.dataset.deleteTextbook);
+  });
+}
+
+if ($("#loadTextbookPage")) {
+  $("#loadTextbookPage").addEventListener("click", async () => {
+    state.textbookChat = [];
+    await loadTextbookPage();
+    renderTextbookChat();
+  });
+}
+
+if ($("#textbookPageInput")) {
+  $("#textbookPageInput").addEventListener("keydown", async (event) => {
+    if (event.key === "Enter") {
+      state.textbookChat = [];
+      await loadTextbookPage();
+      renderTextbookChat();
+    }
+  });
+}
+
+if ($("#textbookParagraphs")) {
+  $("#textbookParagraphs").addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-textbook-paragraph]");
+    if (!btn) return;
+    state.textbookParagraph = Number(btn.dataset.textbookParagraph) || 0;
+    $$(".textbook-paragraph").forEach((node) => node.classList.toggle("active", node === btn));
+    updateTextbookChatBadge();
+  });
+}
+
+if ($("#askTextbookAi")) $("#askTextbookAi").addEventListener("click", () => askTextbookAi());
+if ($("#explainSelectedParagraph")) {
+  $("#explainSelectedParagraph").addEventListener("click", () => {
+    const msg = state.textbookParagraph
+      ? `请逐句解释第 ${state.textbookPage} 页第 ${state.textbookParagraph} 段，说明关键概念、公式来源和容易误解的地方。`
+      : `请解释第 ${state.textbookPage} 页的核心内容，并指出我应该重点理解什么。`;
+    askTextbookAi(msg);
+  });
+}
+if ($("#saveTextbookMemory")) $("#saveTextbookMemory").addEventListener("click", saveTextbookMemory);
+if ($("#clearTextbookChat")) {
+  $("#clearTextbookChat").addEventListener("click", () => {
+    state.textbookChat = [];
+    renderTextbookChat();
+    if ($("#textbookHint")) $("#textbookHint").textContent = "当前页面对话已清空。";
+  });
+}
 
 $("#mistakeDocumentFilter").addEventListener("change", async (event) => {
   state.mistakeDocumentId = event.target.value;
@@ -1509,12 +2408,60 @@ $("#coachToday").addEventListener("click", (event) => {
 });
 
 // 提醒打卡
-$("#checkinBtn").addEventListener("click", doCheckin);
-$("#testMorningBtn").addEventListener("click", () => testPush("morning"));
-$("#testNightBtn").addEventListener("click", () => testPush("night"));
+if ($("#checkinBtn")) $("#checkinBtn").addEventListener("click", doCheckin);
+if ($("#testMorningBtn")) $("#testMorningBtn").addEventListener("click", () => testPush("morning"));
+if ($("#testNightBtn")) $("#testNightBtn").addEventListener("click", () => testPush("night"));
 ["#remindMorningOn", "#remindMorningTime", "#remindNightOn", "#remindNightTime", "#checkinMode"].forEach((sel) => {
-  $(sel).addEventListener("change", saveRemindSettings);
+  if ($(sel)) $(sel).addEventListener("change", saveRemindSettings);
 });
+if ($("#saveNotifySettings")) $("#saveNotifySettings").addEventListener("click", saveNotificationSettings);
+if ($("#saveWeatherCity")) $("#saveWeatherCity").addEventListener("click", saveWeatherCity);
+if ($("#previewWeather")) $("#previewWeather").addEventListener("click", previewWeather);
+if ($("#sendWeatherPreview")) $("#sendWeatherPreview").addEventListener("click", previewWeatherPush);
+if ($("#testWeatherPush")) $("#testWeatherPush").addEventListener("click", testWeatherPush);
+
+if ($("#sendAiChat")) $("#sendAiChat").addEventListener("click", sendAiChat);
+if ($("#saveLlmSettings")) $("#saveLlmSettings").addEventListener("click", saveLlmSettings);
+if ($("#refreshAiMemory")) $("#refreshAiMemory").addEventListener("click", loadAiChatPanel);
+if ($("#refreshMentorExperience")) $("#refreshMentorExperience").addEventListener("click", loadMentorExperiences);
+if ($("#saveMentorExperience")) $("#saveMentorExperience").addEventListener("click", saveMentorExperience);
+if ($("#saveAiChatMemory")) {
+  $("#saveAiChatMemory").addEventListener("click", async () => {
+    const message = $("#aiChatInput")?.value.trim() || "";
+    const content = lastAiChatAnswer ? `用户问题：${message}\nAI 回答：${lastAiChatAnswer}` : message;
+    await saveAiMemory(content, "chat");
+    if ($("#aiChatOutput")) $("#aiChatOutput").textContent = "已导入老师记忆。";
+  });
+}
+if ($("#saveManualAiMemory")) {
+  $("#saveManualAiMemory").addEventListener("click", async () => {
+    await saveAiMemory($("#manualAiMemory")?.value || "", "manual");
+    if ($("#manualAiMemory")) $("#manualAiMemory").value = "";
+  });
+}
+if ($("#clearAiChat")) {
+  $("#clearAiChat").addEventListener("click", () => {
+    lastAiChatAnswer = "";
+    if ($("#aiChatInput")) $("#aiChatInput").value = "";
+    if ($("#aiChatOutput")) $("#aiChatOutput").textContent = "已清空。";
+  });
+}
+if ($("#teacherMemoryList")) {
+  $("#teacherMemoryList").addEventListener("click", async (event) => {
+    const btn = event.target.closest("[data-delete-ai-memory]");
+    if (!btn) return;
+    await api(`/api/ai-chat/memory/${encodeURIComponent(btn.dataset.deleteAiMemory)}`, { method: "DELETE" });
+    await loadAiChatPanel();
+  });
+}
+if ($("#mentorExperienceList")) {
+  $("#mentorExperienceList").addEventListener("click", async (event) => {
+    const btn = event.target.closest("[data-delete-mentor-experience]");
+    if (!btn) return;
+    await api(`/api/mentor-experience/${encodeURIComponent(btn.dataset.deleteMentorExperience)}`, { method: "DELETE" });
+    await loadMentorExperiences();
+  });
+}
 
 $("#focusReview").addEventListener("click", async () => {
   state.mistakeStatus = state.mistakeStatus === "review" ? "" : "review";
@@ -1620,7 +2567,48 @@ $("#showMockQuestions").addEventListener("click", async () => {
   $("#mockQuestionGrid").scrollIntoView({ behavior: "smooth", block: "start" });
 });
 
-$("#refreshDaily").addEventListener("click", loadDaily);
+if ($("#refreshDaily")) $("#refreshDaily").addEventListener("click", loadDaily);
+if ($("#saveDailyRule")) $("#saveDailyRule").addEventListener("click", saveDailyRule);
+if ($("#resetDailyRule")) $("#resetDailyRule").addEventListener("click", resetDailyRuleForm);
+if ($("#dailyRuleDocument")) {
+  $("#dailyRuleDocument").addEventListener("change", async () => {
+    await populateDailyRuleFilters("document");
+  });
+}
+if ($("#dailyRuleSubject")) {
+  $("#dailyRuleSubject").addEventListener("change", async () => {
+    await populateDailyRuleFilters("subject");
+  });
+}
+if ($("#dailyRuleCategory")) {
+  $("#dailyRuleCategory").addEventListener("change", async () => {
+    await populateDailyRuleFilters("category");
+  });
+}
+if ($("#dailyRuleChapter")) {
+  $("#dailyRuleChapter").addEventListener("change", updateDailyRuleName);
+}
+if ($("#dailyRuleStatus")) $("#dailyRuleStatus").addEventListener("change", updateDailyRuleName);
+if ($("#dailyRuleLimit")) $("#dailyRuleLimit").addEventListener("input", updateDailyRuleName);
+if ($("#dailyRuleList")) {
+  $("#dailyRuleList").addEventListener("change", async (event) => {
+    const input = event.target.closest("[data-daily-rule-enabled]");
+    if (!input) return;
+    await updateDailyRuleEnabled(input.dataset.dailyRuleEnabled, input.checked);
+  });
+  $("#dailyRuleList").addEventListener("click", async (event) => {
+    const btn = event.target.closest("[data-delete-daily-rule]");
+    if (!btn) return;
+    await deleteDailyRule(btn.dataset.deleteDailyRule);
+  });
+}
+if ($("#exportBackup")) $("#exportBackup").addEventListener("click", exportBackup);
+if ($("#importBackupFile")) {
+  $("#importBackupFile").addEventListener("change", async (event) => {
+    await importBackup(event.target.files?.[0]);
+    event.target.value = "";
+  });
+}
 
 document.body.addEventListener("click", async (event) => {
   const nav = event.target.closest(".nav-btn");
@@ -1658,7 +2646,6 @@ document.body.addEventListener("click", async (event) => {
     state.documentId = viewDocBtn.dataset.viewDoc;
     state.status = "";
     setView("library");
-    await loadQuestions();
   }
 
   const statsDocBtn = event.target.closest("[data-stats-doc]");

@@ -26,7 +26,12 @@ import urllib.request
 APP_PUBLIC_URL = os.getenv("APP_PUBLIC_URL", "http://127.0.0.1:8000")
 
 
-ENDPOINTS = {"daily": "/api/push/daily", "morning": "/api/push/morning", "night": "/api/push/night"}
+ENDPOINTS = {
+    "daily": "/api/push/daily",
+    "morning": "/api/push/morning",
+    "night": "/api/push/night",
+    "weather": "/api/push/weather",
+}
 
 
 def via_server(mode: str) -> dict:
@@ -46,10 +51,12 @@ def via_local(mode: str) -> dict:
             payload = app.build_morning_reminder(conn)
         elif mode == "night":
             payload = app.build_night_check(conn)
+        elif mode == "weather":
+            payload = app.build_weather_reminder(conn)
         else:
             payload = app.build_daily_reminder(conn)
-    result = app.send_pushplus(payload["title"], payload["content"])
-    return {"ok": result["ok"], "title": payload["title"], "detail": result.get("resp") or result.get("error")}
+    result = app.send_notification(payload["title"], payload["content"])
+    return {"ok": result["ok"], "title": payload["title"], "detail": result.get("detail") or result.get("resp") or result.get("error")}
 
 
 def main() -> None:
@@ -60,6 +67,8 @@ def main() -> None:
         mode = "morning"
     elif "--night" in args:
         mode = "night"
+    elif "--weather" in args:
+        mode = "weather"
     try:
         result = via_local(mode) if use_local else via_server(mode)
     except Exception as exc:
