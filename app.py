@@ -726,34 +726,26 @@ def synthesize_profile(conn: sqlite3.Connection, want_ai: bool = True, scope: st
 # Coach state and planning settings
 # ==========================================================================
 def get_coach_state(conn: sqlite3.Connection) -> dict:
-    row = conn.execute("SELECT * FROM coach_state WHERE id = ?", (COACH_STATE_ID,)).fetchone()
-    if not row:
-        conn.execute(
-            "INSERT INTO coach_state (id, daily_minutes, exam_date, cadence, focus_subject, plan_json) VALUES (?, ?, ?, ?, ?, '{}')",
-            (COACH_STATE_ID, DEFAULT_DAILY_MINUTES, EXAM_DATE.isoformat(), "immediate", ""),
-        )
-        row = conn.execute("SELECT * FROM coach_state WHERE id = ?", (COACH_STATE_ID,)).fetchone()
-    item = dict(row)
-    if not item.get("exam_date"):
-        item["exam_date"] = EXAM_DATE.isoformat()
-    return item
+    return sakura_coach.get_coach_state(
+        conn,
+        coach_state_id=COACH_STATE_ID,
+        default_daily_minutes=DEFAULT_DAILY_MINUTES,
+        exam_date=EXAM_DATE,
+    )
 
 
 def save_coach_state(conn: sqlite3.Connection, **fields) -> dict:
-    state = get_coach_state(conn)
-    allowed = {"daily_minutes", "exam_date", "cadence", "focus_subject", "last_profile_at", "last_plan_at", "plan_json", "weather_city"}
-    updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
-    if updates:
-        assignments = ", ".join(f"{k} = ?" for k in updates)
-        conn.execute(f"UPDATE coach_state SET {assignments} WHERE id = ?", [*updates.values(), COACH_STATE_ID])
-    return get_coach_state(conn)
+    return sakura_coach.save_coach_state(
+        conn,
+        coach_state_id=COACH_STATE_ID,
+        default_daily_minutes=DEFAULT_DAILY_MINUTES,
+        exam_date=EXAM_DATE,
+        fields=fields,
+    )
 
 
 def parse_exam_date(value: str | None) -> date:
-    try:
-        return date.fromisoformat((value or "").strip())
-    except (TypeError, ValueError):
-        return EXAM_DATE
+    return sakura_coach.parse_exam_date(value, EXAM_DATE)
 
 
 def load_teacher_memories(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:

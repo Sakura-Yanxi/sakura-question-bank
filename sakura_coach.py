@@ -10,6 +10,71 @@ from typing import Callable
 import sakura_profile
 
 
+COACH_STATE_ALLOWED_FIELDS = {
+    "daily_minutes",
+    "exam_date",
+    "cadence",
+    "focus_subject",
+    "last_profile_at",
+    "last_plan_at",
+    "plan_json",
+    "weather_city",
+}
+
+
+def get_coach_state(
+    conn,
+    *,
+    coach_state_id: str,
+    default_daily_minutes: int,
+    exam_date: date,
+) -> dict:
+    row = conn.execute("SELECT * FROM coach_state WHERE id = ?", (coach_state_id,)).fetchone()
+    if not row:
+        conn.execute(
+            "INSERT INTO coach_state (id, daily_minutes, exam_date, cadence, focus_subject, plan_json) VALUES (?, ?, ?, ?, ?, '{}')",
+            (coach_state_id, default_daily_minutes, exam_date.isoformat(), "immediate", ""),
+        )
+        row = conn.execute("SELECT * FROM coach_state WHERE id = ?", (coach_state_id,)).fetchone()
+    item = dict(row)
+    if not item.get("exam_date"):
+        item["exam_date"] = exam_date.isoformat()
+    return item
+
+
+def save_coach_state(
+    conn,
+    *,
+    coach_state_id: str,
+    default_daily_minutes: int,
+    exam_date: date,
+    fields: dict,
+) -> dict:
+    get_coach_state(
+        conn,
+        coach_state_id=coach_state_id,
+        default_daily_minutes=default_daily_minutes,
+        exam_date=exam_date,
+    )
+    updates = {k: v for k, v in fields.items() if k in COACH_STATE_ALLOWED_FIELDS and v is not None}
+    if updates:
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        conn.execute(f"UPDATE coach_state SET {assignments} WHERE id = ?", [*updates.values(), coach_state_id])
+    return get_coach_state(
+        conn,
+        coach_state_id=coach_state_id,
+        default_daily_minutes=default_daily_minutes,
+        exam_date=exam_date,
+    )
+
+
+def parse_exam_date(value: str | None, fallback: date) -> date:
+    try:
+        return date.fromisoformat((value or "").strip())
+    except (TypeError, ValueError):
+        return fallback
+
+
 def compute_review_backlog(conn, today: date) -> dict:
     today_iso = today.isoformat()
     week_iso = (today + timedelta(days=7)).isoformat()
