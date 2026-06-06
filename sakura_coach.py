@@ -1,0 +1,268 @@
+from __future__ import annotations
+
+import json
+import math
+import sys
+import traceback
+from datetime import date, datetime, timedelta
+from typing import Callable
+
+import sakura_profile
+
+
+def compute_review_backlog(conn, today: date) -> dict:
+    today_iso = today.isoformat()
+    week_iso = (today + timedelta(days=7)).isoformat()
+    overdue = conn.execute(
+        "SELECT COUNT(*) c FROM questions WHERE ever_wrong = 1 AND mastered_at IS NULL AND next_review_at IS NOT NULL AND date(next_review_at) < date(?)",
+        (today_iso,),
+    ).fetchone()["c"]
+    due_today = conn.execute(
+        "SELECT COUNT(*) c FROM questions WHERE ever_wrong = 1 AND mastered_at IS NULL AND next_review_at IS NOT NULL AND date(next_review_at) = date(?)",
+        (today_iso,),
+    ).fetchone()["c"]
+    due_week = conn.execute(
+        "SELECT COUNT(*) c FROM questions WHERE ever_wrong = 1 AND mastered_at IS NULL AND next_review_at IS NOT NULL AND date(next_review_at) <= date(?)",
+        (week_iso,),
+    ).fetchone()["c"]
+    active_wrong = conn.execute(
+        "SELECT COUNT(*) c FROM questions WHERE status IN ('做错', '半会', '需复习')",
+    ).fetchone()["c"]
+    return {"overdue": overdue, "due_today": due_today, "due_week": due_week, "active_wrong": active_wrong}
+
+
+def rank_gaps_from_profile(
+    profile: dict,
+    top_n: int = 6,
+    *,
+    root_cause_prescriptions: dict[str, str],
+) -> list[dict]:
+    """Rank weak knowledge points by mastery, evidence volume and prerequisite impact."""
+    state = profile.get("knowledge_state", {})
+    prereq_gaps = set(profile.get("prereq_gaps", []))
+    error_mode = profile.get("error_mode_profile", {})
+    main_cause = max(error_mode, key=error_mode.get) if error_mode and max(error_mode.values(), default=0) > 0 else ""
+
+    ranked = []
+    for name, info in state.items():
+        evidence = info.get("evidence", 0)
+        if evidence == 0:
+            continue
+        mastery = info.get("mastery", 0.5)
+        weakness = 1 - mastery
+        volume = math.log(1 + info.get("total", 0))
+        prereq_boost = 1.35 if name in prereq_gaps else 1.0
+        urgency = 1 + (info.get("wrong", 0) + info.get("review", 0)) * 0.12
+        score = round(weakness * (0.5 + volume) * prereq_boost * urgency, 4)
+
+        reason = f"正确率 {int(mastery * 100)}%（做对 {info.get('correct', 0)}/{evidence}）"
+        if name in prereq_gaps:
+            reason += "，且是其它薄弱点的前置 -> 先补地基"
+        if info.get("trend") == "down":
+            reason += "，近期还在退步"
+        elif info.get("trend") == "up":
+            reason += "，已在回升，值得乘胜追击"
+        prescription = root_cause_prescriptions.get(main_cause, "先精读同类范题，再闭卷重做巩固。")
+        ranked.append({
+            "name": name,
+            "subject": info.get("subject", ""),
+            "mastery": mastery,
+            "band": info.get("band", ""),
+            "evidence": evidence,
+            "trend": info.get("trend", "flat"),
+            "score": score,
+            "reason": reason,
+            "prescription": prescription,
+            "note": info.get("note", ""),
+        })
+    ranked.sort(key=lambda x: x["score"], reverse=True)
+    return ranked[:top_n]
+
+
+def build_today_actions(
+    conn,
+    gaps: list[dict],
+    backlog: dict,
+    daily_minutes: int,
+    in_sprint: bool,
+    focus_subject: str,
+    *,
+    minutes_per_question: int,
+    knowledge_dependencies: dict[str, list[str]],
+    find_foundation_questions: Callable,
+    mock_paper_kind: str,
+) -> list[dict]:
+    capacity = max(2, round(daily_minutes / minutes_per_question))
+    actions = []
+    used = 0
+
+    review_n = min(backlog["due_today"] + backlog["overdue"], max(1, capacity // 2))
+    if review_n > 0:
+        actions.append({
+            "kind": "review",
+            "label": f"复习 {review_n} 道到期错题",
+            "detail": f"含 {backlog['overdue']} 道逾期 + {backlog['due_today']} 道今日到期，先还复习账。",
+            "count": review_n,
+            "filter": {"status": "需复习"},
+        })
+        used += review_n
+
+    for gap in gaps[:2]:
+        if used >= capacity:
+            break
+        n = min(3, capacity - used)
+        actions.append({
+            "kind": "attack",
+            "label": f"攻坚《{gap['name']}》{n} 道",
+            "detail": gap["reason"],
+            "count": n,
+            "filter": {"category": gap["name"], "subject": gap.get("subject", "")},
+        })
+        used += n
+
+    if used < capacity and gaps:
+        subject = focus_subject or gaps[0].get("subject", "")
+        dep_categories = []
+        for gap in gaps:
+            dep_categories.extend(knowledge_dependencies.get(gap["name"], []))
+        foundations = find_foundation_questions(conn, subject, list(dict.fromkeys(dep_categories)), set())
+        if foundations:
+            n = min(len(foundations), capacity - used)
+            actions.append({
+                "kind": "foundation",
+                "label": f"补 {n} 道前置基础题",
+                "detail": "针对薄弱点的前置知识，先把地基补上再啃难题。",
+                "count": n,
+                "filter": {"subject": subject},
+            })
+            used += n
+
+    if in_sprint:
+        actions.append({
+            "kind": "mock",
+            "label": "限时做 1 套模拟卷",
+            "detail": "整卷计时，做完按错因归档，模拟真实考场节奏。",
+            "count": 1,
+            "filter": {"kind": mock_paper_kind},
+        })
+
+    return actions
+
+
+def coach_narrative_ai(
+    profile: dict,
+    gaps: list[dict],
+    backlog: dict,
+    phases: list[dict],
+    predictions: dict,
+    *,
+    llm_enabled: bool,
+    call_llm: Callable,
+    local_narrative: Callable[[dict, list[dict], dict, list[dict], dict], str],
+) -> str:
+    local = local_narrative(profile, gaps, backlog, phases, predictions)
+    if not llm_enabled:
+        return local
+    try:
+        compact = {
+            "headline": profile.get("headline", ""),
+            "velocity": profile.get("velocity", ""),
+            "pattern_summary": profile.get("pattern_summary", ""),
+            "top_gaps": [{"name": g["name"], "reason": g["reason"], "prescription": g["prescription"]} for g in gaps[:5]],
+            "backlog": backlog,
+            "phases": [{"name": p["name"], "span": p["span"], "focus": p["focus"]} for p in phases],
+            "predictions": predictions,
+        }
+        prompt = f"""
+你是一位学习规划助手。下面是一名学生的学情档案与备考数据（数字均来自真实做题记录，请勿改动数字）：
+{json.dumps(compact, ensure_ascii=False)}
+
+请用中文写一段 250-400 字的个性化学习档案解读，要求：
+1. 先点明这名学生当前的核心问题（结合 pattern_summary 与 top_gaps）。
+2. 给出本阶段最该做的 2-3 件事，落到具体知识点和动作。
+3. 结合剩余天数给一句务实的节奏建议与鼓励。
+语气务实、可执行、不空泛、不堆砌套话；不要承诺提分或预测成绩。
+"""
+        return call_llm(prompt, temperature=0.5) or local
+    except Exception:
+        print("LLM coach narrative failed; falling back", file=sys.stderr)
+        traceback.print_exc()
+        return local
+
+
+def build_coach_plan(
+    conn,
+    settings: dict,
+    *,
+    want_ai: bool = False,
+    load_latest_profile: Callable,
+    parse_exam_date: Callable[[str | None], date],
+    default_daily_minutes: int,
+    minutes_per_question: int,
+    root_cause_prescriptions: dict[str, str],
+    knowledge_dependencies: dict[str, list[str]],
+    find_foundation_questions: Callable,
+    mock_paper_kind: str,
+    llm_enabled: bool,
+    call_llm: Callable,
+) -> dict:
+    """Assemble the full AI-coach plan from profile, backlog and exam settings."""
+    profile_row = load_latest_profile(conn)
+    profile = profile_row["profile"] if profile_row else {}
+    today = date.today()
+    exam = parse_exam_date(settings.get("exam_date"))
+    days_left = (exam - today).days
+    daily_minutes = int(settings.get("daily_minutes") or default_daily_minutes)
+
+    gaps = rank_gaps_from_profile(profile, top_n=6, root_cause_prescriptions=root_cause_prescriptions)
+    backlog = compute_review_backlog(conn, today)
+    phases = sakura_profile.build_study_phases(days_left, daily_minutes, minutes_per_question)
+    in_sprint = days_left < 14
+    today_actions = build_today_actions(
+        conn,
+        gaps,
+        backlog,
+        daily_minutes,
+        in_sprint,
+        settings.get("focus_subject", ""),
+        minutes_per_question=minutes_per_question,
+        knowledge_dependencies=knowledge_dependencies,
+        find_foundation_questions=find_foundation_questions,
+        mock_paper_kind=mock_paper_kind,
+    )
+    predictions = sakura_profile.compute_predictions(profile, gaps, days_left, daily_minutes, minutes_per_question)
+    narrative = coach_narrative_ai(
+        profile,
+        gaps,
+        backlog,
+        phases,
+        predictions,
+        llm_enabled=llm_enabled,
+        call_llm=call_llm,
+        local_narrative=sakura_profile.coach_narrative_local,
+    ) if want_ai else sakura_profile.coach_narrative_local(profile, gaps, backlog, phases, predictions)
+
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "has_profile": bool(profile_row),
+        "profile_version": profile_row["version"] if profile_row else 0,
+        "evidence_count": profile.get("evidence_count", 0),
+        "exam_date": exam.isoformat(),
+        "days_left": days_left,
+        "daily_minutes": daily_minutes,
+        "diagnosis": {
+            "headline": profile.get("headline", ""),
+            "velocity": profile.get("velocity", ""),
+            "pattern_summary": profile.get("pattern_summary", ""),
+            "error_mode_profile": profile.get("error_mode_profile", {}),
+            "recurring_misconceptions": profile.get("recurring_misconceptions", []),
+            "knowledge_state": profile.get("knowledge_state", {}),
+        },
+        "gaps": gaps,
+        "backlog": backlog,
+        "phases": phases,
+        "today": today_actions,
+        "predictions": predictions,
+        "narrative": narrative,
+        "narrative_source": "ai" if (want_ai and llm_enabled) else "local",
+    }

@@ -36,6 +36,7 @@ import sakura_reminders
 import sakura_config
 import sakura_ai
 import sakura_profile
+import sakura_coach
 import sakura_export
 import sakura_backup
 import sakura_reflection
@@ -873,199 +874,73 @@ def build_ai_teacher_context(conn: sqlite3.Connection, message: str = "") -> dic
 # ==========================================================================
 # L3 决策层：基于学习档案产出诊断 / 查缺排序 / 复习节奏 / 今日任务 / 容量估算
 # ==========================================================================
+# AI coach planning
+# ==========================================================================
 def compute_review_backlog(conn: sqlite3.Connection, today: date) -> dict:
-    today_iso = today.isoformat()
-    week_iso = (today + timedelta(days=7)).isoformat()
-    overdue = conn.execute(
-        "SELECT COUNT(*) c FROM questions WHERE ever_wrong = 1 AND mastered_at IS NULL AND next_review_at IS NOT NULL AND date(next_review_at) < date(?)",
-        (today_iso,),
-    ).fetchone()["c"]
-    due_today = conn.execute(
-        "SELECT COUNT(*) c FROM questions WHERE ever_wrong = 1 AND mastered_at IS NULL AND next_review_at IS NOT NULL AND date(next_review_at) = date(?)",
-        (today_iso,),
-    ).fetchone()["c"]
-    due_week = conn.execute(
-        "SELECT COUNT(*) c FROM questions WHERE ever_wrong = 1 AND mastered_at IS NULL AND next_review_at IS NOT NULL AND date(next_review_at) <= date(?)",
-        (week_iso,),
-    ).fetchone()["c"]
-    active_wrong = conn.execute(
-        "SELECT COUNT(*) c FROM questions WHERE status IN ('做错', '半会', '需复习')",
-    ).fetchone()["c"]
-    return {"overdue": overdue, "due_today": due_today, "due_week": due_week, "active_wrong": active_wrong}
+    return sakura_coach.compute_review_backlog(conn, today)
 
 
 def rank_gaps_from_profile(profile: dict, top_n: int = 6) -> list[dict]:
-    """从档案的 knowledge_state 排出查缺补漏优先级，每条附可核对的证据与处方。"""
-    import math
-
-    state = profile.get("knowledge_state", {})
-    prereq_gaps = set(profile.get("prereq_gaps", []))
-    error_mode = profile.get("error_mode_profile", {})
-    main_cause = max(error_mode, key=error_mode.get) if error_mode and max(error_mode.values(), default=0) > 0 else ""
-
-    ranked = []
-    for name, info in state.items():
-        evidence = info.get("evidence", 0)
-        if evidence == 0:
-            continue  # 未触及单独处理，这里只排已暴露薄弱的
-        mastery = info.get("mastery", 0.5)
-        weakness = 1 - mastery
-        volume = math.log(1 + info.get("total", 0))
-        prereq_boost = 1.35 if name in prereq_gaps else 1.0
-        urgency = 1 + (info.get("wrong", 0) + info.get("review", 0)) * 0.12
-        score = round(weakness * (0.5 + volume) * prereq_boost * urgency, 4)
-
-        reason = f"正确率 {int(mastery * 100)}%（做对 {info.get('correct', 0)}/{evidence}）"
-        if name in prereq_gaps:
-            reason += "，且是其它薄弱点的前置 → 先补地基"
-        if info.get("trend") == "down":
-            reason += "，近期还在退步"
-        elif info.get("trend") == "up":
-            reason += "，已在回升、值得乘胜追击"
-        prescription = ROOT_CAUSE_PRESCRIPTIONS.get(main_cause, "先精读同类范题，再闭卷重做巩固。")
-        ranked.append({
-            "name": name,
-            "subject": info.get("subject", ""),
-            "mastery": mastery,
-            "band": info.get("band", ""),
-            "evidence": evidence,
-            "trend": info.get("trend", "flat"),
-            "score": score,
-            "reason": reason,
-            "prescription": prescription,
-            "note": info.get("note", ""),
-        })
-    ranked.sort(key=lambda x: x["score"], reverse=True)
-    return ranked[:top_n]
+    return sakura_coach.rank_gaps_from_profile(
+        profile,
+        top_n,
+        root_cause_prescriptions=ROOT_CAUSE_PRESCRIPTIONS,
+    )
 
 
-def build_today_actions(conn: sqlite3.Connection, gaps: list[dict], backlog: dict, daily_minutes: int, in_sprint: bool, focus_subject: str) -> list[dict]:
-    capacity = max(2, round(daily_minutes / STUDY_MINUTES_PER_QUESTION))
-    actions = []
-    used = 0
-
-    review_n = min(backlog["due_today"] + backlog["overdue"], max(1, capacity // 2))
-    if review_n > 0:
-        actions.append({
-            "kind": "review", "label": f"复习 {review_n} 道到期错题",
-            "detail": f"含 {backlog['overdue']} 道逾期 + {backlog['due_today']} 道今日到期，先还复习账。",
-            "count": review_n, "filter": {"status": "需复习"},
-        })
-        used += review_n
-
-    for gap in gaps[:2]:
-        if used >= capacity:
-            break
-        n = min(3, capacity - used)
-        actions.append({
-            "kind": "attack", "label": f"攻坚「{gap['name']}」{n} 道",
-            "detail": gap["reason"], "count": n,
-            "filter": {"category": gap["name"], "subject": gap.get("subject", "")},
-        })
-        used += n
-
-    # 前置基础题（复用现有 foundation 逻辑）
-    if used < capacity and gaps:
-        subject = focus_subject or gaps[0].get("subject", "")
-        dep_categories = []
-        for gap in gaps:
-            dep_categories.extend(KNOWLEDGE_DEPENDENCIES.get(gap["name"], []))
-        foundations = find_foundation_questions(conn, subject, list(dict.fromkeys(dep_categories)), set())
-        if foundations:
-            n = min(len(foundations), capacity - used)
-            actions.append({
-                "kind": "foundation", "label": f"补 {n} 道前置基础题",
-                "detail": "针对薄弱点的前置知识，先把地基补上再啃难题。",
-                "count": n, "filter": {"subject": subject},
-            })
-            used += n
-
-    if in_sprint:
-        actions.append({
-            "kind": "mock", "label": "限时做 1 套模拟卷",
-            "detail": "整卷计时，做完按错因归档，模拟真实考场节奏。",
-            "count": 1, "filter": {"kind": "模拟卷"},
-        })
-
-    return actions
+def build_today_actions(
+    conn: sqlite3.Connection,
+    gaps: list[dict],
+    backlog: dict,
+    daily_minutes: int,
+    in_sprint: bool,
+    focus_subject: str,
+) -> list[dict]:
+    return sakura_coach.build_today_actions(
+        conn,
+        gaps,
+        backlog,
+        daily_minutes,
+        in_sprint,
+        focus_subject,
+        minutes_per_question=STUDY_MINUTES_PER_QUESTION,
+        knowledge_dependencies=KNOWLEDGE_DEPENDENCIES,
+        find_foundation_questions=find_foundation_questions,
+        mock_paper_kind=MOCK_PAPER_KIND,
+    )
 
 
 def coach_narrative_ai(profile: dict, gaps: list[dict], backlog: dict, phases: list[dict], predictions: dict) -> str:
-    local = sakura_profile.coach_narrative_local(profile, gaps, backlog, phases, predictions)
-    if not llm_enabled():
-        return local
-    try:
-        compact = {
-            "headline": profile.get("headline", ""),
-            "velocity": profile.get("velocity", ""),
-            "pattern_summary": profile.get("pattern_summary", ""),
-            "top_gaps": [{"name": g["name"], "reason": g["reason"], "prescription": g["prescription"]} for g in gaps[:5]],
-            "backlog": backlog,
-            "phases": [{"name": p["name"], "span": p["span"], "focus": p["focus"]} for p in phases],
-            "predictions": predictions,
-        }
-        prompt = f"""
-你是一位学习规划助手。下面是一名学生的学情档案与备考数据（数字均来自真实做题记录，请勿改动数字）：
-{json.dumps(compact, ensure_ascii=False)}
-
-请用中文写一段 250-400 字的个性化学习档案解读，要求：
-1. 先点明这名学生当前的核心问题（结合 pattern_summary 与 top_gaps）。
-2. 给出本阶段最该做的 2-3 件事，落到具体知识点和动作。
-3. 结合剩余天数给一句务实的节奏建议与鼓励。
-语气务实、可执行、不空泛、不堆砌套话；不要承诺提分或预测成绩。
-"""
-        return call_llm(prompt, temperature=0.5) or local
-    except Exception:
-        print("LLM coach narrative failed; falling back", file=sys.stderr)
-        traceback.print_exc()
-        return local
+    return sakura_coach.coach_narrative_ai(
+        profile,
+        gaps,
+        backlog,
+        phases,
+        predictions,
+        llm_enabled=llm_enabled(),
+        call_llm=call_llm,
+        local_narrative=sakura_profile.coach_narrative_local,
+    )
 
 
 def build_coach_plan(conn: sqlite3.Connection, settings: dict, want_ai: bool = False) -> dict:
-    """组装完整学习档案计划：诊断 + 查缺 + 阶段 + 今日 + 容量估算 + 摘要。"""
-    profile_row = load_latest_profile(conn)
-    profile = profile_row["profile"] if profile_row else {}
-    today = date.today()
-    exam = parse_exam_date(settings.get("exam_date"))
-    days_left = (exam - today).days
-    daily_minutes = int(settings.get("daily_minutes") or DEFAULT_DAILY_MINUTES)
-
-    gaps = rank_gaps_from_profile(profile, top_n=6)
-    backlog = compute_review_backlog(conn, today)
-    phases = sakura_profile.build_study_phases(days_left, daily_minutes, STUDY_MINUTES_PER_QUESTION)
-    in_sprint = days_left < 14
-    today_actions = build_today_actions(conn, gaps, backlog, daily_minutes, in_sprint, settings.get("focus_subject", ""))
-    predictions = sakura_profile.compute_predictions(profile, gaps, days_left, daily_minutes, STUDY_MINUTES_PER_QUESTION)
-    narrative = coach_narrative_ai(profile, gaps, backlog, phases, predictions) if want_ai else sakura_profile.coach_narrative_local(profile, gaps, backlog, phases, predictions)
-
-    return {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "has_profile": bool(profile_row),
-        "profile_version": profile_row["version"] if profile_row else 0,
-        "evidence_count": profile.get("evidence_count", 0),
-        "exam_date": exam.isoformat(),
-        "days_left": days_left,
-        "daily_minutes": daily_minutes,
-        "diagnosis": {
-            "headline": profile.get("headline", ""),
-            "velocity": profile.get("velocity", ""),
-            "pattern_summary": profile.get("pattern_summary", ""),
-            "error_mode_profile": profile.get("error_mode_profile", {}),
-            "recurring_misconceptions": profile.get("recurring_misconceptions", []),
-            "knowledge_state": profile.get("knowledge_state", {}),
-        },
-        "gaps": gaps,
-        "backlog": backlog,
-        "phases": phases,
-        "today": today_actions,
-        "predictions": predictions,
-        "narrative": narrative,
-        "narrative_source": "ai" if (want_ai and llm_enabled()) else "local",
-    }
+    return sakura_coach.build_coach_plan(
+        conn,
+        settings,
+        want_ai=want_ai,
+        load_latest_profile=load_latest_profile,
+        parse_exam_date=parse_exam_date,
+        default_daily_minutes=DEFAULT_DAILY_MINUTES,
+        minutes_per_question=STUDY_MINUTES_PER_QUESTION,
+        root_cause_prescriptions=ROOT_CAUSE_PRESCRIPTIONS,
+        knowledge_dependencies=KNOWLEDGE_DEPENDENCIES,
+        find_foundation_questions=find_foundation_questions,
+        mock_paper_kind=MOCK_PAPER_KIND,
+        llm_enabled=llm_enabled(),
+        call_llm=call_llm,
+    )
 
 
-# ==========================================================================
-# 微信每日提醒（PushPlus）
 # ==========================================================================
 def build_daily_reminder(conn: sqlite3.Connection) -> dict:
     """汇总今日待复习错题，生成 PushPlus markdown 推送内容。"""

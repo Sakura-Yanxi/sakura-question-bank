@@ -16,6 +16,8 @@ This project is intentionally local-first and lightweight, but new features shou
 - `sakura_profile.py`
   - Learner-profile statistics, local profile synthesis and optional AI profile polishing.
   - Pure study-phase, capacity-estimation and local-plan narrative calculations.
+- `sakura_coach.py`
+  - AI-coach review backlog, weak-point ranking, daily action planning and optional AI narrative.
 - `sakura_export.py`
   - Printable mistake-PDF rendering, cover generation, image compression and CJK title rasterization.
 - `sakura_backup.py`
@@ -84,7 +86,7 @@ This project is intentionally local-first and lightweight, but new features shou
 
 ## Next Good Splits
 
-- `sakura_profile.py`: gap ranking and coach-plan orchestration still have wrappers in `app.py`.
+- `sakura_notifications.py`: daily reminder content assembly still lives in `app.py`.
 - `static/reminders.js`: reminder-specific UI state and bindings.
 
 Do these incrementally. Each split should include syntax checks and a server smoke test.
