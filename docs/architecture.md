@@ -23,6 +23,9 @@ This project is intentionally local-first and lightweight, but new features shou
   - Weekly/monthly reflection statistics, local narrative, AI prompt assembly and persistence.
 - `sakura_daily.py`
   - Daily-practice rules, due-review grouping, practice batches and quick feedback updates.
+- `sakura_textbook.py`
+  - Textbook PDF import, page-image rendering orchestration and paragraph indexing.
+  - Textbook page context assembly and AI explanation prompt construction.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.
