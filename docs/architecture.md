@@ -40,6 +40,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - Local keyword classification, chapter cleanup, duplicate chapter normalization and PDF-page chapter extraction.
 - `sakura_insights.py`
   - Wrong-question insight fallback, AI insight normalization, analysis prompt assembly and insight persistence.
+- `sakura_hints.py`
+  - Scaffolding hints, full-solution prompt assembly and progressive variant generation.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.
