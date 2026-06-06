@@ -14,6 +14,7 @@ This project is intentionally local-first and lightweight, but new features shou
   - OpenAI-compatible chat client and JSON response extraction.
   - AI teacher protocol, intent routing, strategy selection and memory compression.
 - `sakura_profile.py`
+  - Learner-profile statistics, local profile synthesis and optional AI profile polishing.
   - Pure study-phase, capacity-estimation and local-plan narrative calculations.
 - `sakura_export.py`
   - Printable mistake-PDF rendering, cover generation, image compression and CJK title rasterization.
@@ -83,7 +84,7 @@ This project is intentionally local-first and lightweight, but new features shou
 
 ## Next Good Splits
 
-- `sakura_profile.py`: learner-profile synthesis and gap ranking still in `app.py`.
+- `sakura_profile.py`: gap ranking and coach-plan orchestration still have wrappers in `app.py`.
 - `static/reminders.js`: reminder-specific UI state and bindings.
 
 Do these incrementally. Each split should include syntax checks and a server smoke test.
