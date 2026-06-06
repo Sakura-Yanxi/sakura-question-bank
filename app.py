@@ -46,6 +46,7 @@ import sakura_reflection
 import sakura_daily
 import sakura_textbook
 import sakura_filters
+import sakura_retention
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -91,9 +92,9 @@ DEFAULT_DOCUMENT_KIND = "做题本"
 MOCK_PAPER_KIND = "模拟卷"
 DOCUMENT_KINDS = [DEFAULT_DOCUMENT_KIND, MOCK_PAPER_KIND]
 MOCK_PAPER_CHAPTER = "整卷"
-REVIEW_INTERVAL_DAYS = [1, 3, 7, 14, 30]
-META_TAGS = ["计算失误", "公式遗忘", "逻辑死角", "题意理解偏差"]
-WRONGISH_STATUSES = {"做错", "半会", "需复习"}
+REVIEW_INTERVAL_DAYS = sakura_retention.REVIEW_INTERVAL_DAYS
+META_TAGS = sakura_retention.META_TAGS
+WRONGISH_STATUSES = sakura_retention.WRONGISH_STATUSES
 EXAM_DATE = date(2026, 12, 20)
 
 # === 学习档案 / 复习规划模型 ===
@@ -518,40 +519,7 @@ def normalize_document_kind(value: str | None) -> str:
 
 
 def schedule_for_status(current: sqlite3.Row | dict | None, status: str, now: datetime | None = None) -> dict:
-    now = now or datetime.now()
-    if status in WRONGISH_STATUSES:
-        return {
-            "ever_wrong": 1,
-            "review_stage": 0,
-            "retention_stage": 1,
-            "next_review_at": (now + timedelta(days=1)).date().isoformat(),
-            "mastered_at": None,
-        }
-    if status != "做对" or not current:
-        return {}
-
-    current_dict = dict(current)
-    was_in_review = bool(current_dict.get("ever_wrong")) or current_dict.get("status") in {"做错", "半会", "需复习"}
-    if not was_in_review:
-        return {}
-
-    next_stage = int(current_dict.get("review_stage") or 0) + 1
-    if next_stage > len(REVIEW_INTERVAL_DAYS):
-        return {
-            "ever_wrong": 1,
-            "review_stage": next_stage,
-            "retention_stage": REVIEW_INTERVAL_DAYS[-1],
-            "next_review_at": None,
-            "mastered_at": now.isoformat(timespec="seconds"),
-        }
-    interval = REVIEW_INTERVAL_DAYS[next_stage - 1]
-    return {
-        "ever_wrong": 1,
-        "review_stage": next_stage,
-        "retention_stage": interval,
-        "next_review_at": (now + timedelta(days=interval)).date().isoformat(),
-        "mastered_at": None,
-    }
+    return sakura_retention.schedule_for_status(dict(current) if current else None, status, now)
 
 
 def get_filter_options(conn: sqlite3.Connection) -> dict:
@@ -1251,14 +1219,7 @@ def generate_variations_with_ai(question: dict) -> str:
 
 
 def normalize_meta_tags(value) -> list[str]:
-    if isinstance(value, list):
-        raw = value
-    else:
-        try:
-            raw = json.loads(value or "[]")
-        except (TypeError, json.JSONDecodeError):
-            raw = []
-    return [tag for tag in raw if tag in META_TAGS]
+    return sakura_retention.normalize_meta_tags(value)
 
 
 def question_payload(row: sqlite3.Row) -> dict:
