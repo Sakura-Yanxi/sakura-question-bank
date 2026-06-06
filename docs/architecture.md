@@ -38,6 +38,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - Data directory setup, SQLite connection creation, schema bootstrap and additive migrations.
 - `sakura_classify.py`
   - Local keyword classification, chapter cleanup, duplicate chapter normalization and PDF-page chapter extraction.
+- `sakura_insights.py`
+  - Wrong-question insight fallback, AI insight normalization, analysis prompt assembly and insight persistence.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.

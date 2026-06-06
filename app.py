@@ -47,6 +47,7 @@ import sakura_models
 import sakura_auth
 import sakura_db
 import sakura_classify
+import sakura_insights
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -509,166 +510,55 @@ def classify_question_locally(text: str, subject_hint: str = "", chapter_hint: s
 # L1 洞察层：分析错题时抽取结构化证据，沉淀进学习者记忆
 # ==========================================================================
 def guess_root_cause(question: dict) -> str:
-    for tag in normalize_meta_tags(question.get("meta_tags")):
-        mapped = META_TAG_TO_ROOT_CAUSE.get(tag)
-        if mapped:
-            return mapped
-    return "方法不会"
+    return sakura_insights.guess_root_cause(
+        question,
+        normalize_meta_tags=normalize_meta_tags,
+        meta_tag_to_root_cause=META_TAG_TO_ROOT_CAUSE,
+    )
 
 
 def local_insight(question: dict) -> dict:
-    """无 DeepSeek 时，用 meta_tags + 本地分类规则拼出一条洞察。"""
-    category = question.get("category") or DEFAULT_CATEGORY
-    chapter = question.get("chapter") or ""
-    knowledge_points = [kp for kp in (category, chapter) if kp and kp != DEFAULT_CATEGORY and kp != DEFAULT_CHAPTER]
-    knowledge_points = knowledge_points or [category]
-    root_cause = guess_root_cause(question)
-    tags = normalize_meta_tags(question.get("meta_tags"))
-    misconception = (question.get("mistake_reason") or "、".join(tags) or "暂无具体误区记录").strip()[:200]
-    prereq = []
-    for key in (category, chapter):
-        prereq.extend(KNOWLEDGE_DEPENDENCIES.get(key, []))
-    seen: list[str] = []
-    for item in prereq:
-        if item not in seen:
-            seen.append(item)
-    return {
-        "knowledge_points": knowledge_points[:5],
-        "root_cause": root_cause,
-        "misconception": misconception,
-        "missing_prereq": seen[:5],
-        "user_difficulty": {"简单": 2, "中等": 3, "困难": 4}.get(question.get("difficulty", "中等"), 3),
-        "confidence": 0.4,
-        "source": "local",
-    }
+    return sakura_insights.local_insight(
+        question,
+        default_category=DEFAULT_CATEGORY,
+        default_chapter=DEFAULT_CHAPTER,
+        knowledge_dependencies=KNOWLEDGE_DEPENDENCIES,
+        normalize_meta_tags=normalize_meta_tags,
+        meta_tag_to_root_cause=META_TAG_TO_ROOT_CAUSE,
+    )
 
 
 def normalize_insight(raw: dict, question: dict) -> dict:
-    """把 AI 返回的洞察 JSON 收敛到固定 schema、做夹断与枚举校验。"""
-    base = local_insight(question)
-    if not isinstance(raw, dict):
-        return base
-
-    kps = raw.get("knowledge_points")
-    if isinstance(kps, str):
-        kps = [kps]
-    kps = [str(k).strip() for k in (kps or []) if str(k).strip()][:5]
-
-    root_cause = str(raw.get("root_cause", "")).strip()
-    if root_cause not in ROOT_CAUSES:
-        root_cause = base["root_cause"]
-
-    prereq = raw.get("missing_prereq")
-    if isinstance(prereq, str):
-        prereq = [prereq]
-    prereq = [str(p).strip() for p in (prereq or []) if str(p).strip()][:5]
-
-    try:
-        difficulty = int(raw.get("user_difficulty", base["user_difficulty"]))
-    except (TypeError, ValueError):
-        difficulty = base["user_difficulty"]
-    try:
-        confidence = float(raw.get("confidence", 0.7))
-    except (TypeError, ValueError):
-        confidence = 0.7
-
-    return {
-        "knowledge_points": kps or base["knowledge_points"],
-        "root_cause": root_cause,
-        "misconception": str(raw.get("misconception", "")).strip()[:200] or base["misconception"],
-        "missing_prereq": prereq or base["missing_prereq"],
-        "user_difficulty": max(1, min(5, difficulty)),
-        "confidence": max(0.0, min(1.0, confidence)),
-        "source": "ai",
-    }
+    return sakura_insights.normalize_insight(
+        raw,
+        question,
+        root_causes=ROOT_CAUSES,
+        default_category=DEFAULT_CATEGORY,
+        default_chapter=DEFAULT_CHAPTER,
+        knowledge_dependencies=KNOWLEDGE_DEPENDENCIES,
+        normalize_meta_tags=normalize_meta_tags,
+        meta_tag_to_root_cause=META_TAG_TO_ROOT_CAUSE,
+    )
 
 
 def analyze_and_extract_with_ai(question: dict) -> tuple[str, dict]:
-    """一次 DeepSeek 调用同时拿到：给人看的解析散文 + 给记忆用的结构化洞察。"""
-    local = local_insight(question)
-    fallback_prose = (
-        f"知识点：{question.get('category', DEFAULT_CATEGORY)}。\n"
-        "建议先复盘这道题的核心定义、常见公式和第一步切入方法。"
-        "如果是计算错误，把关键变形逐行写出；如果是方法不会，先找同类基础题练 2-3 道。"
+    return sakura_insights.analyze_and_extract(
+        question,
+        llm_enabled=llm_enabled(),
+        call_llm=call_llm,
+        extract_json_block=sakura_ai.extract_json_block,
+        default_subject=DEFAULT_SUBJECT,
+        default_category=DEFAULT_CATEGORY,
+        default_chapter=DEFAULT_CHAPTER,
+        root_causes=ROOT_CAUSES,
+        knowledge_dependencies=KNOWLEDGE_DEPENDENCIES,
+        normalize_meta_tags=normalize_meta_tags,
+        meta_tag_to_root_cause=META_TAG_TO_ROOT_CAUSE,
     )
-    if not llm_enabled():
-        return fallback_prose + "\n\n当前未配置 AI 接口密钥，使用本地简版分析与洞察。", local
-
-    try:
-        prompt = f"""
-你是严谨的错题教练。请完成两件事并严格按格式输出。
-
-科目：{question.get('subject', DEFAULT_SUBJECT)}
-章节：{question.get('chapter', DEFAULT_CHAPTER)}
-题目分类：{question.get('category', DEFAULT_CATEGORY)} / {question.get('subcategory', '')}
-难度：{question.get('difficulty', '中等')}
-做题状态：{question.get('status', '')}
-学生勾选的错因标签：{', '.join(normalize_meta_tags(question.get('meta_tags'))) or '无'}
-学生备注：{question.get('user_note') or '无'}
-题目文字：
-{(question.get('ocr_text') or '')[:3500]}
-
-第一部分：用中文给出简洁可执行的错题分析，分四点——1.本题考察点 2.可能错因 3.解题切入 4.下次练习建议。
-
-第二部分：另起一行，输出一个 ```json 代码块，字段固定如下（不要多余字段）：
-{{
-  "knowledge_points": ["真实考察的知识点，1-3个"],
-  "root_cause": "必须是其中之一：概念缺失 / 计算失误 / 方法不会 / 审题偏差",
-  "misconception": "一句话点明这名学生最可能的具体误区",
-  "missing_prereq": ["为掌握本题需要补的前置知识点，可为空数组"],
-  "user_difficulty": 1到5的整数（这道题对该学生的难度）,
-  "confidence": 0到1之间的小数（你对以上判断的置信度）
-}}
-"""
-        content = call_llm(prompt, temperature=0.3)
-        try:
-            insight = normalize_insight(sakura_ai.extract_json_block(content), question)
-        except (ValueError, json.JSONDecodeError):
-            insight = local
-        prose = re.sub(r"```(?:json)?\s*\{.*?\}\s*```", "", content, flags=re.S).strip() or fallback_prose
-        return prose, insight
-    except Exception:
-        print("LLM analyze+extract failed; falling back", file=sys.stderr)
-        traceback.print_exc()
-        return fallback_prose, local
 
 
 def upsert_insight(conn: sqlite3.Connection, question: dict, insight: dict) -> None:
-    now = datetime.now().isoformat(timespec="seconds")
-    conn.execute(
-        """
-        INSERT INTO insights (
-            id, question_id, document_id, subject, knowledge_points, root_cause,
-            misconception, missing_prereq, user_difficulty, confidence, source, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(question_id) DO UPDATE SET
-            document_id = excluded.document_id,
-            subject = excluded.subject,
-            knowledge_points = excluded.knowledge_points,
-            root_cause = excluded.root_cause,
-            misconception = excluded.misconception,
-            missing_prereq = excluded.missing_prereq,
-            user_difficulty = excluded.user_difficulty,
-            confidence = excluded.confidence,
-            source = excluded.source,
-            updated_at = excluded.updated_at
-        """,
-        (
-            uuid.uuid4().hex,
-            question.get("id"),
-            question.get("document_id", ""),
-            question.get("subject") or DEFAULT_SUBJECT,
-            json.dumps(insight["knowledge_points"], ensure_ascii=False),
-            insight["root_cause"],
-            insight["misconception"],
-            json.dumps(insight["missing_prereq"], ensure_ascii=False),
-            insight["user_difficulty"],
-            insight["confidence"],
-            insight["source"],
-            now,
-            now,
-        ),
-    )
+    sakura_insights.upsert_insight(conn, question, insight, default_subject=DEFAULT_SUBJECT)
 
 
 def infer_concept_hint(question: dict) -> str:
