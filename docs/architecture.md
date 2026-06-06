@@ -21,6 +21,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - Migration ZIP export/restore filesystem operations and archive safety checks.
 - `sakura_reflection.py`
   - Weekly/monthly reflection statistics, local narrative, AI prompt assembly and persistence.
+- `sakura_daily.py`
+  - Daily-practice rules, due-review grouping, practice batches and quick feedback updates.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.
