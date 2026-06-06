@@ -15,7 +15,6 @@ import time
 import traceback
 import uuid
 import warnings
-import zipfile
 from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,6 +41,7 @@ import sakura_config
 import sakura_ai
 import sakura_profile
 import sakura_export
+import sakura_backup
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -3158,72 +3158,6 @@ def prune_empty_documents(conn: sqlite3.Connection) -> int:
     return len(rows)
 
 
-def build_backup_zip_file(target: Path) -> Path:
-    manifest = {
-        "app": "Sakura做题集",
-        "version": 1,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "includes": ["database", "uploads", "pages", "textbooks"],
-    }
-    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
-        zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
-        if DB_PATH.exists():
-            zf.write(DB_PATH, "data/gaoshu_demo.sqlite3")
-        for folder_name, folder in (("uploads", UPLOAD_DIR), ("pages", PAGE_DIR)):
-            if not folder.exists():
-                continue
-            for file in folder.rglob("*"):
-                if file.is_file():
-                    zf.write(file, f"data/{folder_name}/{file.relative_to(folder).as_posix()}")
-    return target
-
-
-def restore_backup_zip(zip_bytes: bytes) -> dict:
-    print(f"[migration] restore start: {len(zip_bytes)} bytes", flush=True)
-    backup_root = ROOT / "migration_backups"
-    backup_root.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    current_backup = backup_root / f"before_restore_{stamp}"
-    current_backup.mkdir(parents=True, exist_ok=True)
-    if DB_PATH.exists():
-        shutil.copy2(DB_PATH, current_backup / DB_PATH.name)
-    for folder in (UPLOAD_DIR, PAGE_DIR):
-        if folder.exists():
-            shutil.copytree(folder, current_backup / folder.name, dirs_exist_ok=True)
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        archive_path = tmp_path / "backup.zip"
-        archive_path.write_bytes(zip_bytes)
-        with zipfile.ZipFile(archive_path) as zf:
-            names = set(zf.namelist())
-            print(f"[migration] archive entries: {len(names)}", flush=True)
-            if "manifest.json" not in names or "data/gaoshu_demo.sqlite3" not in names:
-                raise ValueError("这不是 Sakura 做题集完整迁移包：缺少 manifest 或数据库。")
-            for member in zf.infolist():
-                target = (tmp_path / "extract" / member.filename).resolve()
-                if not str(target).startswith(str((tmp_path / "extract").resolve())):
-                    raise ValueError("迁移包路径不安全，已拒绝导入。")
-            zf.extractall(tmp_path / "extract")
-            print("[migration] archive extracted", flush=True)
-
-        extracted = tmp_path / "extract" / "data"
-        ensure_dirs()
-        shutil.copy2(extracted / "gaoshu_demo.sqlite3", DB_PATH)
-        print("[migration] database restored", flush=True)
-        for name, target in (("uploads", UPLOAD_DIR), ("pages", PAGE_DIR)):
-            source = extracted / name
-            if target.exists():
-                shutil.rmtree(target)
-            target.mkdir(parents=True, exist_ok=True)
-            if source.exists():
-                shutil.copytree(source, target, dirs_exist_ok=True)
-            print(f"[migration] folder restored: {name}", flush=True)
-    init_db()
-    print("[migration] restore done", flush=True)
-    return {"ok": True, "backup_path": str(current_backup)}
-
-
 MIGRATION_JOBS: dict[str, dict] = {}
 MIGRATION_LOCK = threading.Lock()
 
@@ -3244,7 +3178,14 @@ def get_migration_job(job_id: str) -> dict | None:
 def run_migration_import_job(job_id: str, upload_path: Path) -> None:
     set_migration_job(job_id, status="running", message="Restoring backup...")
     try:
-        result = restore_backup_zip(upload_path.read_bytes())
+        result = sakura_backup.restore_backup_zip(
+            upload_path.read_bytes(),
+            root=ROOT,
+            db_path=DB_PATH,
+            folders={"uploads": UPLOAD_DIR, "pages": PAGE_DIR},
+            ensure_dirs=ensure_dirs,
+            init_db=init_db,
+        )
         set_migration_job(job_id, status="done", message="Import completed.", result=result)
     except Exception as exc:
         traceback.print_exc()
@@ -4653,7 +4594,11 @@ class DemoHandler(BaseHTTPRequestHandler):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
             tmp_path = Path(tmp.name)
         try:
-            build_backup_zip_file(tmp_path)
+            sakura_backup.build_backup_zip_file(
+                tmp_path,
+                DB_PATH,
+                {"uploads": UPLOAD_DIR, "pages": PAGE_DIR},
+            )
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
