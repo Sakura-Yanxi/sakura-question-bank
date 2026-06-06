@@ -37,6 +37,7 @@ from sakura_pdf import (
     render_page_clip_image,
     render_page_image,
 )
+import sakura_notifications
 import sakura_reminders
 
 ROOT = Path(__file__).resolve().parent
@@ -104,7 +105,6 @@ LLM_MODEL = os.getenv("LLM_MODEL") or os.getenv("DEEPSEEK_MODEL") or "mimo-v2.5-
 # === 微信推送（PushPlus）===
 # 在 https://www.pushplus.plus 用微信扫码登录，复制 token 后设环境变量 PUSHPLUS_TOKEN。
 PUSHPLUS_TOKEN = os.getenv("PUSHPLUS_TOKEN", "")
-PUSHPLUS_URL = "https://www.pushplus.plus/send"
 WEWORK_BOT_WEBHOOK = os.getenv("WEWORK_BOT_WEBHOOK", "")
 # 推送正文里的“打开做题集”链接（部署到公网后改成你的域名/IP）
 APP_PUBLIC_URL = os.getenv("APP_PUBLIC_URL", "http://127.0.0.1:8000")
@@ -2813,61 +2813,13 @@ def build_weather_reminder(conn: sqlite3.Connection, city: str | None = None) ->
     return {"title": title, "content": "\n".join(lines), "weather": info}
 
 
-def send_pushplus(title: str, content: str, template: str = "markdown") -> dict:
-    if not PUSHPLUS_TOKEN:
-        return {"ok": False, "error": "未配置 PUSHPLUS_TOKEN，无法推送到微信。"}
-    payload = json.dumps(
-        {"token": PUSHPLUS_TOKEN, "title": title, "content": content, "template": template}
-    ).encode("utf-8")
-    req = urllib.request.Request(PUSHPLUS_URL, data=payload, headers={"Content-Type": "application/json"})
-    try:
-        resp = json.loads(urllib.request.urlopen(req, timeout=15).read().decode("utf-8"))
-        return {"ok": resp.get("code") == 200, "resp": resp}
-    except Exception as exc:
-        traceback.print_exc()
-        return {"ok": False, "error": str(exc)}
-
-
-def send_wework_bot(title: str, content: str) -> dict:
-    if not WEWORK_BOT_WEBHOOK:
-        return {"ok": False, "channel": "wework", "error": "WEWORK_BOT_WEBHOOK is not configured."}
-    markdown = f"### {title}\n\n{content}".strip()
-    payload = json.dumps(
-        {"msgtype": "markdown", "markdown": {"content": markdown}},
-        ensure_ascii=False,
-    ).encode("utf-8")
-    req = urllib.request.Request(
-        WEWORK_BOT_WEBHOOK,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        resp = json.loads(urllib.request.urlopen(req, timeout=15).read().decode("utf-8"))
-        return {"ok": resp.get("errcode") == 0, "channel": "wework", "resp": resp}
-    except Exception as exc:
-        traceback.print_exc()
-        return {"ok": False, "channel": "wework", "error": str(exc)}
-
-
 def send_notification(title: str, content: str) -> dict:
-    results = []
-    if WEWORK_BOT_WEBHOOK:
-        results.append(send_wework_bot(title, content))
-    if PUSHPLUS_TOKEN:
-        results.append(send_pushplus(title, content))
-    if not results:
-        return {
-            "ok": False,
-            "configured": False,
-            "detail": "No notification channel configured. Set WEWORK_BOT_WEBHOOK or PUSHPLUS_TOKEN.",
-            "results": [],
-        }
-    return {
-        "ok": any(item.get("ok") for item in results),
-        "configured": True,
-        "detail": results,
-        "results": results,
-    }
+    return sakura_notifications.send_notification(
+        title,
+        content,
+        wework_webhook=WEWORK_BOT_WEBHOOK,
+        pushplus_token=PUSHPLUS_TOKEN,
+    )
 
 
 def today_quote() -> str:
