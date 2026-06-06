@@ -11,6 +11,10 @@ This project is intentionally local-first and lightweight, but new features shou
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.
+- `sakura_pdf.py`
+  - PDF page rendering.
+  - Simulated-exam question-number slicing.
+  - Cross-page question continuation stitching.
 - `notify_daily.py`
   - CLI entry point for scheduled reminder jobs.
 - `static/index.html`
@@ -37,7 +41,6 @@ This project is intentionally local-first and lightweight, but new features shou
 
 ## Next Good Splits
 
-- `sakura_pdf.py`: PDF rendering, question slicing, cross-page question stitching.
 - `sakura_weather.py`: geocoding and weather reminder generation.
 - `sakura_notifications.py`: PushPlus and WeCom sending.
 - `sakura_ai.py`: LLM settings, prompts and response parsing.
