@@ -36,6 +36,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - Password-gated login page rendering and signed browser session tokens.
 - `sakura_db.py`
   - Data directory setup, SQLite connection creation, schema bootstrap and additive migrations.
+- `sakura_classify.py`
+  - Local keyword classification, chapter cleanup, duplicate chapter normalization and PDF-page chapter extraction.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.
