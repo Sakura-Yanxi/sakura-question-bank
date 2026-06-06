@@ -15,6 +15,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - AI teacher protocol, intent routing, strategy selection and memory compression.
 - `sakura_profile.py`
   - Pure study-phase, capacity-estimation and local-plan narrative calculations.
+- `sakura_export.py`
+  - Printable mistake-PDF rendering, cover generation, image compression and CJK title rasterization.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.
