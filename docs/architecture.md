@@ -30,6 +30,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - Question/document filter SQL assembly and scoped dropdown option queries.
 - `sakura_retention.py`
   - Review interval constants, wrong-status detection and meta-tag normalization.
+- `sakura_models.py`
+  - Question/document JSON shaping, document-kind normalization and meta-tag statistics.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.

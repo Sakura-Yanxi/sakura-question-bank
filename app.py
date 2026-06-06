@@ -47,6 +47,7 @@ import sakura_daily
 import sakura_textbook
 import sakura_filters
 import sakura_retention
+import sakura_models
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -475,47 +476,30 @@ def to_public_path(path: str | Path) -> str:
 
 
 def extract_question_no(text: str) -> str:
-    """从题目文字里尽力识别印刷题号（如 03. / 345），用于快速定位。"""
-    if not text:
-        return ""
-    for line in text.splitlines()[:8]:
-        s = line.strip()
-        if not s or "公众号" in s or "微信" in s:
-            continue
-        if re.match(r"^\d+\.\d+", s):  # 跳过章节号，例如 1.1 / 2.3
-            continue
-        m = re.match(r"^(\d{1,3})\s*[.、．。)）:：]?\s*\S", s)
-        if m:
-            return str(int(m.group(1)))
-    return ""
+    return sakura_models.extract_question_no(text)
 
 
 def row_to_dict(row: sqlite3.Row) -> dict:
-    item = dict(row)
-    item["image_url"] = to_public_path(item["image_path"])
-    try:
-        item["meta_tags"] = json.loads(item.get("meta_tags") or "[]")
-    except (TypeError, json.JSONDecodeError):
-        item["meta_tags"] = []
-    if "document_kind" in item:
-        item["document_kind"] = normalize_document_kind(item.get("document_kind"))
-    item["question_no"] = (item.get("question_no") or "").strip() or extract_question_no(item.get("ocr_text", ""))
-    return item
+    return sakura_models.row_to_dict(
+        row,
+        to_public_path=to_public_path,
+        normalize_document_kind=normalize_document_kind,
+        normalize_meta_tags=normalize_meta_tags,
+    )
 
 
 def document_to_dict(row: sqlite3.Row) -> dict:
-    item = dict(row)
-    item["document_kind"] = normalize_document_kind(item.get("document_kind"))
-    return item
+    return sakura_models.document_to_dict(row, normalize_document_kind)
 
 
 def normalize_document_kind(value: str | None) -> str:
-    clean = normalize_label(value or "", DEFAULT_DOCUMENT_KIND)
-    if clean.lower() in {"mock", "mock_paper", "paper", "exam"}:
-        return MOCK_PAPER_KIND
-    if clean.lower() in {"book", "workbook"}:
-        return DEFAULT_DOCUMENT_KIND
-    return clean if clean in DOCUMENT_KINDS else DEFAULT_DOCUMENT_KIND
+    return sakura_models.normalize_document_kind(
+        value,
+        normalize_label=normalize_label,
+        default_document_kind=DEFAULT_DOCUMENT_KIND,
+        mock_paper_kind=MOCK_PAPER_KIND,
+        document_kinds=DOCUMENT_KINDS,
+    )
 
 
 def schedule_for_status(current: sqlite3.Row | dict | None, status: str, now: datetime | None = None) -> dict:
@@ -1223,26 +1207,20 @@ def normalize_meta_tags(value) -> list[str]:
 
 
 def question_payload(row: sqlite3.Row) -> dict:
-    item = dict(row)
-    item["meta_tags"] = normalize_meta_tags(item.get("meta_tags"))
-    if "document_kind" in item:
-        item["document_kind"] = normalize_document_kind(item.get("document_kind"))
-    return item
+    return sakura_models.question_payload(
+        row,
+        normalize_document_kind=normalize_document_kind,
+        normalize_meta_tags=normalize_meta_tags,
+    )
 
 
 def get_meta_tag_stats(conn: sqlite3.Connection, doc_id: str | None = None) -> list[dict]:
-    params = []
-    where = "WHERE q.status IN ('做错', '半会', '需复习')"
-    if doc_id:
-        where += " AND q.document_id = ?"
-        params.append(doc_id)
-    rows = conn.execute(f"SELECT q.meta_tags FROM questions q {where}", params).fetchall()
-    counts = {tag: 0 for tag in META_TAGS}
-    for row in rows:
-        for tag in normalize_meta_tags(row["meta_tags"]):
-            counts[tag] += 1
-    max_count = max(counts.values(), default=0) or 1
-    return [{"tag": tag, "count": count, "ratio": round(count / max_count, 3)} for tag, count in counts.items()]
+    return sakura_models.get_meta_tag_stats(
+        conn,
+        meta_tags=META_TAGS,
+        normalize_meta_tags=normalize_meta_tags,
+        doc_id=doc_id,
+    )
 
 
 def weak_chapter_dependencies(conn: sqlite3.Connection) -> dict[str, list[str]]:
