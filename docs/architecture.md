@@ -34,6 +34,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - Question/document JSON shaping, document-kind normalization and meta-tag statistics.
 - `sakura_auth.py`
   - Password-gated login page rendering and signed browser session tokens.
+- `sakura_db.py`
+  - Data directory setup, SQLite connection creation, schema bootstrap and additive migrations.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.
