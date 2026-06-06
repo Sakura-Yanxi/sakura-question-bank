@@ -781,86 +781,26 @@ def select_relevant_mentor_experiences(conn: sqlite3.Connection, message: str = 
 
 
 def recent_learning_evidence(conn: sqlite3.Connection, limit: int = 8) -> list[dict]:
-    rows = conn.execute(
-        """
-        SELECT q.id, q.status, q.category, q.chapter, q.difficulty,
-               q.mistake_reason, q.meta_tags, q.review_stage, q.retention_stage,
-               q.next_review_at, q.created_at,
-               d.subject, d.title document_title
-        FROM questions q
-        JOIN documents d ON d.id = q.document_id
-        WHERE q.status IN ('做错', '半会', '需复习') OR q.ever_wrong = 1
-        ORDER BY COALESCE(q.last_reviewed_at, q.created_at) DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
-    evidence = []
-    for row in rows:
-        item = dict(row)
-        try:
-            item["meta_tags"] = json.loads(item.get("meta_tags") or "[]")
-        except (TypeError, json.JSONDecodeError):
-            item["meta_tags"] = []
-        evidence.append(item)
-    return evidence
+    return sakura_coach.recent_learning_evidence(conn, limit)
 
 
 def build_ai_teacher_context(conn: sqlite3.Connection, message: str = "") -> dict:
-    state = get_coach_state(conn)
-    latest = load_latest_profile(conn)
-    profile = latest["profile"] if latest else {}
-    gaps = rank_gaps_from_profile(profile, top_n=5) if profile else []
-    backlog = compute_review_backlog(conn, date.today())
-    exam = parse_exam_date(state.get("exam_date"))
-    days_left = (exam - date.today()).days
-    daily_minutes = int(state.get("daily_minutes") or DEFAULT_DAILY_MINUTES)
-    today_actions = build_today_actions(
+    return sakura_coach.build_ai_teacher_context(
         conn,
-        gaps,
-        backlog,
-        daily_minutes,
-        days_left < 14,
-        state.get("focus_subject", ""),
-    ) if profile else []
-    recent_evidence = recent_learning_evidence(conn, limit=8)
-    stats = gather_knowledge_stats(conn)[:10]
-    subject_hint = state.get("focus_subject", "")
-    mentor_experiences = select_relevant_mentor_experiences(conn, message, subject_hint, limit=5)
-    return {
-        "teacher_memories": teacher_memory_prompt(conn),
-        "mentor_experiences": mentor_experiences,
-        "mentor_experience_policy": "这些是外部经验参考，不是用户个人做题证据；只能辅助生成策略，不能替代本地错题统计。",
-        "settings": {
-            "daily_minutes": daily_minutes,
-            "exam_date": exam.isoformat(),
-            "days_left": days_left,
-            "cadence": state.get("cadence", "immediate"),
-            "focus_subject": subject_hint,
-        },
-        "profile": {
-            "version": latest["version"] if latest else 0,
-            "has_profile": bool(latest),
-            "headline": profile.get("headline", ""),
-            "pattern_summary": profile.get("pattern_summary", ""),
-            "avg_mastery": profile.get("avg_mastery", 0),
-            "evidence_count": profile.get("evidence_count", 0),
-            "error_mode_profile": profile.get("error_mode_profile", {}),
-            "recurring_misconceptions": profile.get("recurring_misconceptions", [])[:6],
-            "prereq_gaps": profile.get("prereq_gaps", [])[:8],
-        },
-        "top_gaps": gaps,
-        "review_backlog": backlog,
-        "today_actions": today_actions,
-        "recent_wrong_or_review_questions": recent_evidence,
-        "knowledge_stats_sample": stats,
-        "response_contract": {
-            "must_use_evidence": True,
-            "avoid_fabrication": True,
-            "default_scaffolding": "概念提示 -> 关键一步 -> 完整说明",
-            "must_end_with_actions": True,
-        },
-    }
+        message,
+        get_coach_state=get_coach_state,
+        load_latest_profile=load_latest_profile,
+        parse_exam_date=parse_exam_date,
+        gather_knowledge_stats=gather_knowledge_stats,
+        teacher_memory_prompt=teacher_memory_prompt,
+        select_relevant_mentor_experiences=select_relevant_mentor_experiences,
+        default_daily_minutes=DEFAULT_DAILY_MINUTES,
+        minutes_per_question=STUDY_MINUTES_PER_QUESTION,
+        root_cause_prescriptions=ROOT_CAUSE_PRESCRIPTIONS,
+        knowledge_dependencies=KNOWLEDGE_DEPENDENCIES,
+        find_foundation_questions=find_foundation_questions,
+        mock_paper_kind=MOCK_PAPER_KIND,
+    )
 
 
 # ==========================================================================

@@ -18,6 +18,7 @@ This project is intentionally local-first and lightweight, but new features shou
   - Pure study-phase, capacity-estimation and local-plan narrative calculations.
 - `sakura_coach.py`
   - AI-coach settings state, review backlog, weak-point ranking, daily action planning and optional AI narrative.
+  - AI-teacher context assembly and recent wrong/review evidence queries.
 - `sakura_export.py`
   - Printable mistake-PDF rendering, cover generation, image compression and CJK title rasterization.
 - `sakura_backup.py`
@@ -87,7 +88,7 @@ This project is intentionally local-first and lightweight, but new features shou
 
 ## Next Good Splits
 
-- `app.py`: AI-teacher context assembly and recent-evidence query can move into a service module.
+- `sakura_export.py`: mistake-PDF filtering and row selection still live in `app.py`.
 - `static/reminders.js`: reminder-specific UI state and bindings.
 
 Do these incrementally. Each split should include syntax checks and a server smoke test.

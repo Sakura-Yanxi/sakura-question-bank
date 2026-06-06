@@ -75,6 +75,109 @@ def parse_exam_date(value: str | None, fallback: date) -> date:
         return fallback
 
 
+def recent_learning_evidence(conn, limit: int = 8) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT q.id, q.status, q.category, q.chapter, q.difficulty,
+               q.mistake_reason, q.meta_tags, q.review_stage, q.retention_stage,
+               q.next_review_at, q.created_at,
+               d.subject, d.title document_title
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        WHERE q.status IN ('做错', '半会', '需复习') OR q.ever_wrong = 1
+        ORDER BY COALESCE(q.last_reviewed_at, q.created_at) DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    evidence = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["meta_tags"] = json.loads(item.get("meta_tags") or "[]")
+        except (TypeError, json.JSONDecodeError):
+            item["meta_tags"] = []
+        evidence.append(item)
+    return evidence
+
+
+def build_ai_teacher_context(
+    conn,
+    message: str = "",
+    *,
+    get_coach_state: Callable,
+    load_latest_profile: Callable,
+    parse_exam_date: Callable[[str | None], date],
+    gather_knowledge_stats: Callable,
+    teacher_memory_prompt: Callable,
+    select_relevant_mentor_experiences: Callable,
+    default_daily_minutes: int,
+    minutes_per_question: int,
+    root_cause_prescriptions: dict[str, str],
+    knowledge_dependencies: dict[str, list[str]],
+    find_foundation_questions: Callable,
+    mock_paper_kind: str,
+    today: date | None = None,
+) -> dict:
+    today = today or date.today()
+    state = get_coach_state(conn)
+    latest = load_latest_profile(conn)
+    profile = latest["profile"] if latest else {}
+    gaps = rank_gaps_from_profile(profile, top_n=5, root_cause_prescriptions=root_cause_prescriptions) if profile else []
+    backlog = compute_review_backlog(conn, today)
+    exam = parse_exam_date(state.get("exam_date"))
+    days_left = (exam - today).days
+    daily_minutes = int(state.get("daily_minutes") or default_daily_minutes)
+    today_actions = build_today_actions(
+        conn,
+        gaps,
+        backlog,
+        daily_minutes,
+        days_left < 14,
+        state.get("focus_subject", ""),
+        minutes_per_question=minutes_per_question,
+        knowledge_dependencies=knowledge_dependencies,
+        find_foundation_questions=find_foundation_questions,
+        mock_paper_kind=mock_paper_kind,
+    ) if profile else []
+    subject_hint = state.get("focus_subject", "")
+    mentor_experiences = select_relevant_mentor_experiences(conn, message, subject_hint, limit=5)
+    return {
+        "teacher_memories": teacher_memory_prompt(conn),
+        "mentor_experiences": mentor_experiences,
+        "mentor_experience_policy": "这些是外部经验参考，不是用户个人做题证据；只能辅助生成策略，不能替代本地错题统计。",
+        "settings": {
+            "daily_minutes": daily_minutes,
+            "exam_date": exam.isoformat(),
+            "days_left": days_left,
+            "cadence": state.get("cadence", "immediate"),
+            "focus_subject": subject_hint,
+        },
+        "profile": {
+            "version": latest["version"] if latest else 0,
+            "has_profile": bool(latest),
+            "headline": profile.get("headline", ""),
+            "pattern_summary": profile.get("pattern_summary", ""),
+            "avg_mastery": profile.get("avg_mastery", 0),
+            "evidence_count": profile.get("evidence_count", 0),
+            "error_mode_profile": profile.get("error_mode_profile", {}),
+            "recurring_misconceptions": profile.get("recurring_misconceptions", [])[:6],
+            "prereq_gaps": profile.get("prereq_gaps", [])[:8],
+        },
+        "top_gaps": gaps,
+        "review_backlog": backlog,
+        "today_actions": today_actions,
+        "recent_wrong_or_review_questions": recent_learning_evidence(conn, limit=8),
+        "knowledge_stats_sample": gather_knowledge_stats(conn)[:10],
+        "response_contract": {
+            "must_use_evidence": True,
+            "avoid_fabrication": True,
+            "default_scaffolding": "概念提示 -> 关键一步 -> 完整说明",
+            "must_end_with_actions": True,
+        },
+    }
+
+
 def compute_review_backlog(conn, today: date) -> dict:
     today_iso = today.isoformat()
     week_iso = (today + timedelta(days=7)).isoformat()
