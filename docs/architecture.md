@@ -10,6 +10,9 @@ This project is intentionally local-first and lightweight, but new features shou
   - AI coach, question import, daily practice, reminders, textbooks and exports.
 - `sakura_config.py`
   - Local `.env` loading and in-place secret/config updates.
+- `sakura_ai.py`
+  - OpenAI-compatible chat client and JSON response extraction.
+  - AI teacher protocol, intent routing, strategy selection and memory compression.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.
@@ -49,7 +52,7 @@ This project is intentionally local-first and lightweight, but new features shou
 
 ## Next Good Splits
 
-- `sakura_ai.py`: LLM settings, prompts and response parsing.
+- `sakura_profile.py`: learner profile synthesis and study-plan calculations.
 - `static/reminders.js`: reminder-specific UI state and bindings.
 
 Do these incrementally. Each split should include syntax checks and a server smoke test.

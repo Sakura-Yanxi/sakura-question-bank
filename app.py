@@ -40,6 +40,7 @@ import sakura_notifications
 import sakura_weather
 import sakura_reminders
 import sakura_config
+import sakura_ai
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -886,13 +887,6 @@ def extract_chapter_from_page(page: fitz.Page, text: str) -> str:
     return DEFAULT_CHAPTER
 
 
-def parse_ai_json(raw: str) -> dict:
-    match = re.search(r"\{.*\}", raw, flags=re.S)
-    if not match:
-        raise ValueError("AI 返回内容不是 JSON")
-    return json.loads(match.group(0))
-
-
 def llm_enabled() -> bool:
     """是否已配置 AI 接口密钥。"""
     return bool(LLM_API_KEY)
@@ -1036,28 +1030,18 @@ def update_reminder_runtime_settings(payload: dict) -> dict:
 
 def call_llm(prompt: str, temperature: float = 0.3) -> str:
     """统一的 OpenAI 兼容调用入口（默认小米 MiMo）。失败时抛异常，由调用方决定 fallback。"""
-    from openai import OpenAI
-
-    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-    result = client.chat.completions.create(
-        model=LLM_MODEL,
+    return sakura_ai.call_llm(
+        LLM_API_KEY,
+        LLM_BASE_URL,
+        LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=temperature,
     )
-    return result.choices[0].message.content or ""
 
 
 def call_llm_messages(messages: list[dict], temperature: float = 0.3) -> str:
     """OpenAI-compatible chat call used by the API test panel."""
-    from openai import OpenAI
-
-    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-    result = client.chat.completions.create(
-        model=LLM_MODEL,
-        messages=messages,
-        temperature=temperature,
-    )
-    return result.choices[0].message.content or ""
+    return sakura_ai.call_llm(LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, messages, temperature)
 
 
 def classify_question_locally(text: str, subject_hint: str = "", chapter_hint: str = "", document_kind: str = DEFAULT_DOCUMENT_KIND) -> dict:
@@ -1154,14 +1138,6 @@ def normalize_insight(raw: dict, question: dict) -> dict:
     }
 
 
-def extract_json_block(raw: str) -> dict:
-    """优先取 ```json ... ``` 代码块，退化到 parse_ai_json。"""
-    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.S)
-    if fence:
-        return json.loads(fence.group(1))
-    return parse_ai_json(raw)
-
-
 def analyze_and_extract_with_ai(question: dict) -> tuple[str, dict]:
     """一次 DeepSeek 调用同时拿到：给人看的解析散文 + 给记忆用的结构化洞察。"""
     local = local_insight(question)
@@ -1201,7 +1177,7 @@ def analyze_and_extract_with_ai(question: dict) -> tuple[str, dict]:
 """
         content = call_llm(prompt, temperature=0.3)
         try:
-            insight = normalize_insight(extract_json_block(content), question)
+            insight = normalize_insight(sakura_ai.extract_json_block(content), question)
         except (ValueError, json.JSONDecodeError):
             insight = local
         prose = re.sub(r"```(?:json)?\s*\{.*?\}\s*```", "", content, flags=re.S).strip() or fallback_prose
@@ -1790,7 +1766,7 @@ def polish_profile_with_ai(base_profile: dict, insights: list[dict]) -> dict:
 }}
 knowledge_notes 只需覆盖上面 weak_points 里的知识点。
 """
-        extra = extract_json_block(call_llm(prompt, temperature=0.3))
+        extra = sakura_ai.extract_json_block(call_llm(prompt, temperature=0.3))
         base_profile = {**base_profile, "source": "ai"}
         base_profile["headline"] = str(extra.get("headline", "")).strip()
         base_profile["pattern_summary"] = str(extra.get("pattern_summary", "")).strip()
@@ -1981,124 +1957,6 @@ def select_relevant_mentor_experiences(conn: sqlite3.Connection, message: str = 
             ranked.append((score, item))
     ranked.sort(key=lambda pair: pair[0], reverse=True)
     return [item for _, item in ranked[:limit]]
-
-
-AI_TEACHER_PROTOCOL = """
-你是 Sakura 做题集的 AI 学习教练，不是聊天陪练，也不是只给答案的解析器。
-你的回答必须遵守这个教学协议：
-1. 先判断用户意图：API 测试、知识讲解、错题复盘、计划制定、情绪/节奏调整。
-2. 若涉及学习建议，必须优先使用“本地上下文”里的真实证据；没有证据时明确说“当前证据不足”，不要编造做题记录。
-3. 默认采用启发式教学：先给概念抓手，再给关键一步，最后才给完整解法；用户明确要求完整答案时可以直接完整展开。
-4. 每次回答至少落到一个可执行动作：今天做什么、做几道、看哪个知识点、如何检查是否掌握。
-5. 遇到错题原因，要区分：计算失误、公式遗忘、逻辑死角、题意理解偏差，并给对应纠偏动作。
-6. “外部经验库”只能作为参考，不等同于用户自己的证据；如果引用，必须说清楚“这是经验参考，需结合你的错题验证”。
-7. 不要长篇鸡汤；语言要像认真负责的老师，清楚、具体、能执行。
-推荐输出结构：
-- 判断：你现在的问题属于什么类型
-- 依据：引用本地上下文中的薄弱点/错题/记忆；没有就说明证据不足
-- 教学：概念提示 → 关键步骤 → 必要时完整说明
-- 行动：下一步 1-3 个任务
-""".strip()
-
-
-TEACHER_INTENTS = {
-    "api_test": "API 测试",
-    "concept_explain": "知识讲解",
-    "wrong_review": "错题复盘",
-    "plan": "计划制定",
-    "motivation": "节奏调整",
-    "memory_update": "记忆更新",
-}
-
-
-TEACHER_STRATEGIES = {
-    "scaffold": {
-        "name": "启发式引导",
-        "rule": "先给概念抓手，再给关键一步，最后询问是否展开完整解法。",
-    },
-    "diagnose": {
-        "name": "证据诊断",
-        "rule": "先引用本地证据，再指出主要矛盾和一个优先级最高的纠偏动作。",
-    },
-    "drill": {
-        "name": "变式训练",
-        "rule": "给 Base / Advanced / Pro 三层变式，但每层只保留一个训练目标。",
-    },
-    "schedule": {
-        "name": "复习调度",
-        "rule": "把建议转成今日任务、到期复习和薄弱点攻坚，不写空泛计划。",
-    },
-    "memory": {
-        "name": "记忆压缩",
-        "rule": "把用户偏好、长期误区和学习策略压缩成可复用老师记忆。",
-    },
-}
-
-
-def infer_teacher_intent(message: str) -> str:
-    text = (message or "").lower()
-    if any(k in text for k in ["今天", "明天", "每日", "复习", "计划", "安排", "进度", "考试", "时间", "任务"]):
-        return "plan"
-    if any(k in text for k in ["api", "key", "密钥", "能用", "测试", "deepseek"]):
-        return "api_test"
-    if any(k in text for k in ["错题", "错因", "为什么错", "复盘", "不会", "半会"]):
-        return "wrong_review"
-    if any(k in text for k in ["记住", "记忆", "偏好", "以后", "导入"]):
-        return "memory_update"
-    if any(k in text for k in ["烦", "焦虑", "不想", "坚持", "动力", "累", "崩"]):
-        return "motivation"
-    return "concept_explain"
-
-
-def choose_teacher_strategy(intent: str, context: dict) -> dict:
-    if intent == "wrong_review":
-        key = "diagnose"
-    elif intent == "plan":
-        key = "schedule"
-    elif intent == "memory_update":
-        key = "memory"
-    elif intent == "api_test":
-        key = "diagnose"
-    else:
-        key = "scaffold"
-    strategy = dict(TEACHER_STRATEGIES[key])
-    strategy["key"] = key
-    if context.get("top_gaps") and intent in {"concept_explain", "wrong_review"}:
-        strategy["must_reference_gap"] = context["top_gaps"][0].get("name", "")
-    return strategy
-
-
-def build_teacher_turn_instruction(intent: str, strategy: dict) -> str:
-    return f"""
-本轮意图：{TEACHER_INTENTS.get(intent, intent)}
-本轮教学策略：{strategy.get('name')}。
-策略规则：{strategy.get('rule')}
-执行要求：
-1. 开头用一句话说明你判断到的意图。
-2. 如果本地上下文里有相关证据，必须引用 1-3 条；如果没有，明确说证据不足。
-3. 对知识问题默认不要一上来全解，先用启发式引导；用户要求 full solution 时再完整展开。
-4. 对计划问题必须给出具体题量、筛选条件或复习对象。
-5. 结尾必须给“下一步动作”，最多 3 条。
-""".strip()
-
-
-def build_memory_candidate(user_message: str, answer: str, intent: str, strategy: dict, context: dict) -> str:
-    if intent not in {"wrong_review", "plan", "memory_update", "motivation"}:
-        return ""
-    profile = context.get("profile", {})
-    parts = [
-        f"意图：{TEACHER_INTENTS.get(intent, intent)}",
-        f"策略：{strategy.get('name', '')}",
-    ]
-    if profile.get("headline"):
-        parts.append(f"档案判断：{profile.get('headline')}")
-    if context.get("top_gaps"):
-        parts.append("当前优先薄弱点：" + "、".join(g.get("name", "") for g in context["top_gaps"][:3] if g.get("name")))
-    concise_user = re.sub(r"\s+", " ", user_message).strip()[:120]
-    concise_answer = re.sub(r"\s+", " ", answer).strip()[:180]
-    parts.append(f"用户本轮问题：{concise_user}")
-    parts.append(f"老师本轮建议：{concise_answer}")
-    return "；".join(parts)[:900]
 
 
 def recent_learning_evidence(conn: sqlite3.Connection, limit: int = 8) -> list[dict]:
@@ -4643,13 +4501,13 @@ class DemoHandler(BaseHTTPRequestHandler):
             }, 400)
         with connect() as conn:
             context = build_ai_teacher_context(conn, message)
-        intent = infer_teacher_intent(message)
-        strategy = choose_teacher_strategy(intent, context)
-        turn_instruction = build_teacher_turn_instruction(intent, strategy)
+        intent = sakura_ai.infer_teacher_intent(message)
+        strategy = sakura_ai.choose_teacher_strategy(intent, context)
+        turn_instruction = sakura_ai.build_teacher_turn_instruction(intent, strategy)
         try:
             answer = call_llm_messages(
                 [
-                    {"role": "system", "content": AI_TEACHER_PROTOCOL},
+                    {"role": "system", "content": sakura_ai.AI_TEACHER_PROTOCOL},
                     {"role": "system", "content": turn_instruction},
                     {"role": "system", "content": "本地上下文：\n" + json.dumps(context, ensure_ascii=False)},
                     {"role": "user", "content": message},
@@ -4659,7 +4517,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             traceback.print_exc()
             return json_response(self, {"error": f"AI 调用失败：{exc}", "has_key": True}, 500)
-        memory_candidate = build_memory_candidate(message, answer, intent, strategy, context)
+        memory_candidate = sakura_ai.build_memory_candidate(message, answer, intent, strategy, context)
         with connect() as conn:
             conn.execute(
                 """
