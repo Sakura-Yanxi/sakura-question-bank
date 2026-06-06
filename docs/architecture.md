@@ -42,6 +42,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - Wrong-question insight fallback, AI insight normalization, analysis prompt assembly and insight persistence.
 - `sakura_hints.py`
   - Scaffolding hints, full-solution prompt assembly and progressive variant generation.
+- `sakura_teacher_memory.py`
+  - AI teacher memory CRUD, mentor-experience parsing and relevance ranking.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.
