@@ -945,38 +945,13 @@ def build_night_check(conn: sqlite3.Connection) -> dict:
 
 
 def build_mistakes_pdf(conn: sqlite3.Connection, query: dict, mistakes_only: bool = True) -> tuple[bytes, int]:
-    """把筛选后的题目导出为 PDF。优先复制原始 PDF 对应页，原文件缺失时再退回题图。"""
-    where, params = build_question_filters(
-        query, ("category", "status", "document_id", "chapter", "subject", "search")
+    return sakura_export.build_filtered_mistakes_pdf(
+        conn,
+        query,
+        mistakes_only=mistakes_only,
+        build_question_filters=build_question_filters,
+        normalize_meta_tags=normalize_meta_tags,
     )
-    raw_ids = query.get("ids", [""])[0].strip()
-    if raw_ids:
-        selected_ids = [item for item in raw_ids.split(",") if re.fullmatch(r"[0-9a-fA-F]{32}", item)]
-        if selected_ids:
-            placeholders = ",".join("?" for _ in selected_ids)
-            where = f"{where} AND q.id IN ({placeholders})" if where else f"WHERE q.id IN ({placeholders})"
-            params.extend(selected_ids)
-        else:
-            where = f"{where} AND 1 = 0" if where else "WHERE 1 = 0"
-    status_group = query.get("status_group", [""])[0]
-    if status_group == "review" and not raw_ids:
-        cond = "(q.status IN ('半会', '需复习') OR (q.ever_wrong = 1 AND q.mastered_at IS NULL AND q.status <> '做错'))"
-        where = f"{where} AND {cond}" if where else f"WHERE {cond}"
-    if mistakes_only:
-        cond = "(q.status IN ('做错', '半会', '需复习') OR (q.ever_wrong = 1 AND q.mastered_at IS NULL))"
-        where = f"{where} AND {cond}" if where else f"WHERE {cond}"
-    rows = conn.execute(
-        f"""
-        SELECT q.*, COALESCE(NULLIF(d.title, ''), d.filename) document_title, d.subject, d.stored_path
-        FROM questions q
-        JOIN documents d ON d.id = q.document_id
-        {where}
-        ORDER BY d.subject ASC, document_title ASC, q.seq_no ASC, q.page_number ASC
-        """,
-        params,
-    ).fetchall()
-
-    return sakura_export.build_mistakes_pdf(rows, normalize_meta_tags)
 
 
 def load_daily_rules(conn: sqlite3.Connection, enabled_only: bool = False) -> list[dict]:

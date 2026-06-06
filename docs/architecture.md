@@ -20,7 +20,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - AI-coach settings state, review backlog, weak-point ranking, daily action planning and optional AI narrative.
   - AI-teacher context assembly and recent wrong/review evidence queries.
 - `sakura_export.py`
-  - Printable mistake-PDF rendering, cover generation, image compression and CJK title rasterization.
+  - Mistake-export filter SQL, selected-row loading and printable PDF rendering.
+  - Cover generation, image compression and CJK title rasterization.
 - `sakura_backup.py`
   - Migration ZIP export/restore filesystem operations and archive safety checks.
 - `sakura_reflection.py`
@@ -88,7 +89,7 @@ This project is intentionally local-first and lightweight, but new features shou
 
 ## Next Good Splits
 
-- `sakura_export.py`: mistake-PDF filtering and row selection still live in `app.py`.
+- `app.py`: PDF import orchestration and document CRUD remain the largest backend areas.
 - `static/reminders.js`: reminder-specific UI state and bindings.
 
 Do these incrementally. Each split should include syntax checks and a server smoke test.

@@ -4,8 +4,69 @@ from datetime import date
 from io import BytesIO
 from pathlib import Path
 from typing import Callable, Iterable
+import re
 
 import fitz
+
+
+def select_mistake_rows(
+    conn,
+    query: dict,
+    *,
+    mistakes_only: bool,
+    build_question_filters: Callable[[dict, tuple[str, ...]], tuple[str, list]],
+) -> list:
+    """Apply mistake-export filters and return rows ready for PDF rendering."""
+    where, params = build_question_filters(
+        query,
+        ("category", "status", "document_id", "chapter", "subject", "search"),
+    )
+    raw_ids = query.get("ids", [""])[0].strip()
+    if raw_ids:
+        selected_ids = [item for item in raw_ids.split(",") if re.fullmatch(r"[0-9a-fA-F]{32}", item)]
+        if selected_ids:
+            placeholders = ",".join("?" for _ in selected_ids)
+            where = f"{where} AND q.id IN ({placeholders})" if where else f"WHERE q.id IN ({placeholders})"
+            params.extend(selected_ids)
+        else:
+            where = f"{where} AND 1 = 0" if where else "WHERE 1 = 0"
+
+    status_group = query.get("status_group", [""])[0]
+    if status_group == "review" and not raw_ids:
+        cond = "(q.status IN ('半会', '需复习') OR (q.ever_wrong = 1 AND q.mastered_at IS NULL AND q.status <> '做错'))"
+        where = f"{where} AND {cond}" if where else f"WHERE {cond}"
+
+    if mistakes_only:
+        cond = "(q.status IN ('做错', '半会', '需复习') OR (q.ever_wrong = 1 AND q.mastered_at IS NULL))"
+        where = f"{where} AND {cond}" if where else f"WHERE {cond}"
+
+    return conn.execute(
+        f"""
+        SELECT q.*, COALESCE(NULLIF(d.title, ''), d.filename) document_title, d.subject, d.stored_path
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        {where}
+        ORDER BY d.subject ASC, document_title ASC, q.seq_no ASC, q.page_number ASC
+        """,
+        params,
+    ).fetchall()
+
+
+def build_filtered_mistakes_pdf(
+    conn,
+    query: dict,
+    *,
+    mistakes_only: bool,
+    build_question_filters: Callable[[dict, tuple[str, ...]], tuple[str, list]],
+    normalize_meta_tags: Callable[[object], list[str]],
+) -> tuple[bytes, int]:
+    rows = select_mistake_rows(
+        conn,
+        query,
+        mistakes_only=mistakes_only,
+        build_question_filters=build_question_filters,
+    )
+    return build_mistakes_pdf(rows, normalize_meta_tags)
 
 
 def image_to_print_jpeg(image_path: Path, max_width: int = 1500, max_height: int = 2100) -> bytes:
