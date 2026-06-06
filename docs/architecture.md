@@ -32,6 +32,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - Review interval constants, wrong-status detection and meta-tag normalization.
 - `sakura_models.py`
   - Question/document JSON shaping, document-kind normalization and meta-tag statistics.
+- `sakura_auth.py`
+  - Password-gated login page rendering and signed browser session tokens.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.

@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import hmac
 import os
 import re
-import secrets
 import sqlite3
 import shutil
 import sys
 import tempfile
 import threading
-import time
 import traceback
 import uuid
 import warnings
@@ -21,7 +18,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import urllib.parse
-from html import escape as html_escape
 
 warnings.filterwarnings("ignore", message="'cgi' is deprecated.*", category=DeprecationWarning)
 import cgi
@@ -48,6 +44,7 @@ import sakura_textbook
 import sakura_filters
 import sakura_retention
 import sakura_models
+import sakura_auth
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -543,78 +540,31 @@ def redirect_response(handler: BaseHTTPRequestHandler, location: str, status: in
 
 
 def auth_enabled() -> bool:
-    return bool(ADMIN_PASSWORD)
+    return sakura_auth.auth_enabled(ADMIN_PASSWORD)
 
 
 def auth_secret() -> str:
-    return AUTH_SECRET or ADMIN_PASSWORD or "sakura-local-dev"
+    return sakura_auth.auth_secret(ADMIN_PASSWORD, AUTH_SECRET)
 
 
 def sign_session(payload: str) -> str:
-    return hmac.new(auth_secret().encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return sakura_auth.sign_session(payload, admin_password=ADMIN_PASSWORD, auth_secret_value=AUTH_SECRET)
 
 
 def make_session_token() -> str:
-    expires = int(time.time()) + AUTH_MAX_AGE_SECONDS
-    nonce = secrets.token_urlsafe(18)
-    payload = f"{expires}:{nonce}"
-    return f"{payload}:{sign_session(payload)}"
+    return sakura_auth.make_session_token(
+        admin_password=ADMIN_PASSWORD,
+        auth_secret_value=AUTH_SECRET,
+        max_age_seconds=AUTH_MAX_AGE_SECONDS,
+    )
 
 
 def verify_session_token(token: str) -> bool:
-    parts = (token or "").split(":")
-    if len(parts) != 3:
-        return False
-    expires, nonce, signature = parts
-    payload = f"{expires}:{nonce}"
-    if not hmac.compare_digest(signature, sign_session(payload)):
-        return False
-    try:
-        return int(expires) >= int(time.time())
-    except ValueError:
-        return False
+    return sakura_auth.verify_session_token(token, admin_password=ADMIN_PASSWORD, auth_secret_value=AUTH_SECRET)
 
 
 def login_page(error: str = "") -> str:
-    error_html = f"<div class='error'>{html_escape(error)}</div>" if error else ""
-    return f"""<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sakura 做题集 · 登录</title>
-  <style>
-    :root {{ color-scheme: light; --pink:#ec4899; --ink:#14213d; --muted:#718096; --line:#eadfea; }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin:0; min-height:100vh; display:grid; place-items:center; font-family: Inter, "Microsoft YaHei", system-ui, sans-serif; background: radial-gradient(circle at 20% 10%, #fff0f7 0, transparent 28%), linear-gradient(135deg,#f8fbff,#fff7fb 48%,#f5fffb); color:var(--ink); }}
-    .card {{ width:min(420px, calc(100vw - 32px)); background:rgba(255,255,255,.92); border:1px solid var(--line); border-radius:26px; padding:34px; box-shadow:0 28px 80px rgba(236,72,153,.16); }}
-    .logo {{ width:58px; height:58px; border-radius:18px; display:grid; place-items:center; background:#fff0f7; color:var(--pink); font-size:28px; font-weight:900; margin-bottom:18px; }}
-    h1 {{ margin:0 0 8px; font-size:28px; letter-spacing:0; }}
-    p {{ margin:0 0 24px; color:var(--muted); line-height:1.7; }}
-    label {{ display:grid; gap:8px; font-weight:800; color:#4a5568; }}
-    input {{ width:100%; height:52px; border:1px solid #e6d8e6; border-radius:16px; padding:0 16px; font-size:16px; outline:none; }}
-    input:focus {{ border-color:var(--pink); box-shadow:0 0 0 4px rgba(236,72,153,.12); }}
-    button {{ width:100%; height:52px; margin-top:18px; border:0; border-radius:16px; color:white; background:linear-gradient(135deg,#ec4899,#f472b6); font-size:16px; font-weight:900; cursor:pointer; box-shadow:0 18px 34px rgba(236,72,153,.25); }}
-    .error {{ margin-bottom:16px; padding:10px 12px; border-radius:14px; background:#fff5f5; color:#dc2626; font-weight:700; }}
-    small {{ display:block; margin-top:16px; color:#94a3b8; line-height:1.6; }}
-  </style>
-</head>
-<body>
-  <main class="card">
-    <div class="logo">S</div>
-    <h1>Sakura 做题集</h1>
-    <p>请输入管理员密码后进入学习面板。这样别人知道域名，也不能随意修改题库、API 和推送配置。</p>
-    {error_html}
-    <form method="post" action="/login">
-      <label>管理员密码
-        <input name="password" type="password" autocomplete="current-password" autofocus required />
-      </label>
-      <button type="submit">进入 Sakura</button>
-    </form>
-    <small>登录状态会在当前浏览器保留 14 天。忘记密码时可在服务器 .env 修改 SAKURA_ADMIN_PASSWORD。</small>
-  </main>
-</body>
-</html>"""
+    return sakura_auth.login_page(error)
 
 
 def classify_by_rules(text: str) -> tuple[str, str, str]:
