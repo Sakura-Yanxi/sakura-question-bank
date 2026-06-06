@@ -942,81 +942,34 @@ def build_coach_plan(conn: sqlite3.Connection, settings: dict, want_ai: bool = F
 
 
 # ==========================================================================
+# Notification payloads and check-in state
+# ==========================================================================
 def build_daily_reminder(conn: sqlite3.Connection) -> dict:
-    """汇总今日待复习错题，生成 PushPlus markdown 推送内容。"""
     today = date.today()
-    backlog = compute_review_backlog(conn, today)
-    state = get_coach_state(conn)
-    exam = parse_exam_date(state.get("exam_date"))
-    days_left = (exam - today).days
-    due_total = backlog["overdue"] + backlog["due_today"]
-    batch = create_practice_batch(conn, "daily_push")
-    practice_url = f"{APP_PUBLIC_URL.rstrip('/')}/practice/{batch['id']}"
-
-    rows = conn.execute(
-        """
-        SELECT d.subject, COALESCE(NULLIF(d.title, ''), d.filename) book, COUNT(*) n
-        FROM questions q
-        JOIN documents d ON d.id = q.document_id
-        WHERE q.status IN ('做错', '需复习', '半会')
-           OR (q.ever_wrong = 1 AND q.mastered_at IS NULL
-               AND q.next_review_at IS NOT NULL AND date(q.next_review_at) <= date(?))
-        GROUP BY d.subject, book
-        ORDER BY n DESC
-        LIMIT 8
-        """,
-        (today.isoformat(),),
-    ).fetchall()
-
-    title = f"📚 今日错题复习 · 待复习 {due_total} 道 · 距考试 {days_left} 天"
-    lines = [
-        f"### 📚 今日错题复习提醒",
-        f"- 🗓 今天：{today.month}月{today.day}日，距考试还有 **{days_left}** 天",
-        f"- 🔴 到期待复习：**{due_total}** 道（逾期 {backlog['overdue']} + 今日 {backlog['due_today']}）",
-        f"- 📒 在练错题总数：{backlog['active_wrong']} 道",
-        "",
-    ]
-    if rows:
-        lines.append("**按做题本分布：**")
-        for r in rows:
-            lines.append(f"- {r['subject'] or '未分类'} / {r['book']}：{r['n']} 道")
-    else:
-        lines.append("🎉 今天没有到期的错题，保持节奏，可以预习新内容！")
-    lines.append("")
-    lines.append(f"👉 [手机快速回填本批次 {batch['question_count']} 道题]({practice_url})")
-    lines.append(f"💻 [打开完整做题集]({APP_PUBLIC_URL})")
-    return {
-        "title": title,
-        "content": "\n".join(lines),
-        "due_total": due_total,
-        "days_left": days_left,
-        "batch_id": batch["id"],
-        "practice_url": practice_url,
-    }
+    return sakura_notifications.build_daily_reminder(
+        conn,
+        today=today,
+        backlog=compute_review_backlog(conn, today),
+        state=get_coach_state(conn),
+        parse_exam_date=parse_exam_date,
+        create_practice_batch=create_practice_batch,
+        app_public_url=APP_PUBLIC_URL,
+    )
 
 
 def weather_city_from_state(conn: sqlite3.Connection) -> str:
-    state = get_coach_state(conn)
-    return (state.get("weather_city") or WEATHER_CITY or "北京").strip()
+    return sakura_notifications.weather_city_from_state(
+        get_coach_state(conn),
+        WEATHER_CITY,
+    )
 
 
 def build_weather_reminder(conn: sqlite3.Connection, city: str | None = None) -> dict:
-    city = (city or weather_city_from_state(conn)).strip()
-    info = sakura_weather.fetch_tomorrow_weather(city)
-    display_city = info["resolved_city"] or city
-    title = f"明天天气提醒 · {display_city}"
-    lines = [
-        f"### 明天天气提醒：{display_city}",
-        f"- 日期：**{info['date']}**",
-        f"- 天气：**{info['weather_text']}**",
-        f"- 温度：**{info['temp_min']}°C ~ {info['temp_max']}°C**",
-        f"- 降水概率：**{info['rain_probability']}%**",
-        f"- 最大风速：**{info['wind_max']} km/h**",
-        "",
-        "晚上提前看一下天气，第二天出门少一点临时慌张。",
-        f"👉 [打开 Sakura 做题集]({APP_PUBLIC_URL.rstrip('/')})",
-    ]
-    return {"title": title, "content": "\n".join(lines), "weather": info}
+    return sakura_notifications.build_weather_reminder(
+        (city or weather_city_from_state(conn)).strip(),
+        fetch_weather=sakura_weather.fetch_tomorrow_weather,
+        app_public_url=APP_PUBLIC_URL,
+    )
 
 
 def send_notification(title: str, content: str) -> dict:
@@ -1029,62 +982,34 @@ def send_notification(title: str, content: str) -> dict:
 
 
 def today_quote() -> str:
-    return MOTIVATIONAL_QUOTES[date.today().toordinal() % len(MOTIVATIONAL_QUOTES)]
+    return sakura_notifications.today_quote(MOTIVATIONAL_QUOTES)
 
 
 def is_checked_in(conn: sqlite3.Connection, day: date | None = None) -> bool:
-    day = day or date.today()
-    row = conn.execute("SELECT 1 FROM checkins WHERE day = ?", (day.isoformat(),)).fetchone()
-    return row is not None
+    return sakura_notifications.is_checked_in(conn, day)
 
 
 def mark_checkin(conn: sqlite3.Connection, day: date | None = None) -> None:
-    day = day or date.today()
-    conn.execute(
-        "INSERT OR IGNORE INTO checkins (day, created_at) VALUES (?, ?)",
-        (day.isoformat(), datetime.now().isoformat(timespec="seconds")),
-    )
+    sakura_notifications.mark_checkin(conn, day)
 
 
 def build_morning_reminder(conn: sqlite3.Connection) -> dict:
-    """早安推送：励志金句 + 今日待复习 + 打卡链接。"""
-    base = build_daily_reminder(conn)
-    checkin_url = f"{APP_PUBLIC_URL.rstrip('/')}/api/today/done"
-    content = (
-        f"> 「{today_quote()}」\n\n"
-        f"{base['content']}\n\n"
-        f"---\n"
-        f"做完今天的复习了吗？点这里打卡：\n"
-        f"✅ [我已完成]({checkin_url})\n\n"
-        f"（晚上 8 点会检查；没打卡的话，某人会来念你 👀）"
+    return sakura_notifications.build_morning_reminder(
+        build_daily_reminder(conn),
+        quote=today_quote(),
+        app_public_url=APP_PUBLIC_URL,
     )
-    return {
-        "title": f"🌅 早安 · {base['title']}",
-        "content": content,
-        "due_total": base["due_total"],
-        "batch_id": base.get("batch_id", ""),
-        "practice_url": base.get("practice_url", ""),
-    }
 
 
 def build_night_check(conn: sqlite3.Connection) -> dict:
-    """晚间检测：已打卡则鼓励，未打卡则狠话。返回 dict，skip=True 表示无需发送。"""
-    if is_checked_in(conn):
-        return {
-            "skip": False,
-            "title": "🌙 今日已完成 · 干得漂亮",
-            "content": f"> 「{today_quote()}」\n\n今天的复习已打卡完成 ✅ 早点休息，明天继续保持节奏。",
-        }
-    nag = NAG_MESSAGES[date.today().toordinal() % len(NAG_MESSAGES)]
-    backlog = compute_review_backlog(conn, date.today())
-    due_total = backlog["overdue"] + backlog["due_today"]
-    content = (
-        f"### ⏰ 今日未打卡\n\n"
-        f"{nag}\n\n"
-        f"- 还有 **{due_total}** 道到期错题等着你\n"
-        f"👉 [现在去做]({APP_PUBLIC_URL.rstrip('/')}) · 做完点 [✅ 我已完成]({APP_PUBLIC_URL.rstrip('/')}/api/today/done)"
+    today = date.today()
+    return sakura_notifications.build_night_check(
+        checked_in=is_checked_in(conn, today),
+        quote=today_quote(),
+        nag=NAG_MESSAGES[today.toordinal() % len(NAG_MESSAGES)],
+        backlog=compute_review_backlog(conn, today),
+        app_public_url=APP_PUBLIC_URL,
     )
-    return {"skip": False, "title": "⏰ 今天还没打卡，别装看不见", "content": content}
 
 
 def build_mistakes_pdf(conn: sqlite3.Connection, query: dict, mistakes_only: bool = True) -> tuple[bytes, int]:

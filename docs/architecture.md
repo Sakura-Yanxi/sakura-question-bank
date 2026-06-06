@@ -57,6 +57,7 @@ This project is intentionally local-first and lightweight, but new features shou
 - `sakura_notifications.py`
   - PushPlus and WeCom robot HTTP senders.
   - Notification channel fan-out and normalized send result.
+  - Daily, weather, morning and night-check reminder payload builders.
 - `sakura_weather.py`
   - Weather location normalization and geocoding.
   - Tomorrow forecast retrieval with Open-Meteo and wttr.in fallback.
@@ -86,7 +87,7 @@ This project is intentionally local-first and lightweight, but new features shou
 
 ## Next Good Splits
 
-- `sakura_notifications.py`: daily reminder content assembly still lives in `app.py`.
+- `sakura_coach.py`: coach-state settings helpers still have wrappers in `app.py`.
 - `static/reminders.js`: reminder-specific UI state and bindings.
 
 Do these incrementally. Each split should include syntax checks and a server smoke test.
