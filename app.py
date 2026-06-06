@@ -41,6 +41,7 @@ import sakura_weather
 import sakura_reminders
 import sakura_config
 import sakura_ai
+import sakura_profile
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -2111,44 +2112,6 @@ def rank_gaps_from_profile(profile: dict, top_n: int = 6) -> list[dict]:
     return ranked[:top_n]
 
 
-def build_study_phases(days_left: int, daily_minutes: int) -> list[dict]:
-    """按剩余天数切分阶段；<14 天压缩为纯冲刺。"""
-    per_day_questions = max(1, round(daily_minutes / STUDY_MINUTES_PER_QUESTION))
-    today = date.today()
-
-    def span(start_offset: int, length: int) -> str:
-        s = today + timedelta(days=start_offset)
-        e = today + timedelta(days=max(start_offset, start_offset + length - 1))
-        return f"{s.month}/{s.day} – {e.month}/{e.day}"
-
-    if days_left <= 0:
-        return [{
-            "name": "考试在即", "span": "今天", "days": 0,
-            "focus": "回顾错题集与公式卡，保持手感，别碰新题。",
-            "daily_questions": per_day_questions,
-        }]
-    if days_left < 14:
-        return [{
-            "name": "冲刺模考", "span": span(0, days_left), "days": days_left,
-            "focus": "整套模拟卷限时训练 + 错题三轮回炉，主攻最薄弱的 2-3 个知识点。",
-            "daily_questions": per_day_questions,
-        }]
-    base_days = round(days_left * 0.5)
-    boost_days = round(days_left * 0.3)
-    sprint_days = days_left - base_days - boost_days
-    return [
-        {"name": "基础攻坚", "span": span(0, base_days), "days": base_days,
-         "focus": "补前置缺口 + 主攻薄弱知识点，先把地基打牢。",
-         "daily_questions": per_day_questions},
-        {"name": "强化提升", "span": span(base_days, boost_days), "days": boost_days,
-         "focus": "不稳知识点做专项突破，错题回炉，提升综合题正确率。",
-         "daily_questions": per_day_questions},
-        {"name": "冲刺模考", "span": span(base_days + boost_days, sprint_days), "days": sprint_days,
-         "focus": "整套模拟卷限时模考，按错因复盘，稳住已掌握内容。",
-         "daily_questions": per_day_questions},
-    ]
-
-
 def build_today_actions(conn: sqlite3.Connection, gaps: list[dict], backlog: dict, daily_minutes: int, in_sprint: bool, focus_subject: str) -> list[dict]:
     capacity = max(2, round(daily_minutes / STUDY_MINUTES_PER_QUESTION))
     actions = []
@@ -2200,60 +2163,8 @@ def build_today_actions(conn: sqlite3.Connection, gaps: list[dict], backlog: dic
     return actions
 
 
-def compute_predictions(profile: dict, gaps: list[dict], days_left: int, daily_minutes: int) -> dict:
-    avg = profile.get("avg_mastery", 0.0)
-    capacity_total = max(1, round(days_left * daily_minutes / STUDY_MINUTES_PER_QUESTION))
-    weak_total = sum(g.get("total", g.get("evidence", 0)) for g in gaps) or 1
-    # 粗估：剩余练习容量能覆盖多少薄弱题量
-    coverage = min(1.0, capacity_total / (weak_total * 2.5))
-    # 掌握度外推：按容量给薄弱点一个可达增益（带上限，避免过度乐观）
-    projected = round(min(0.92, avg + coverage * (1 - avg) * 0.6), 3)
-    readiness = round(projected * (0.7 + 0.3 * coverage), 3)
-    if days_left <= 0:
-        outlook = "考试当天：以稳为主，回顾错题与公式卡即可。"
-    elif coverage >= 0.8:
-        outlook = "时间相对充裕，按计划推进可把薄弱点系统补齐。"
-    elif coverage >= 0.5:
-        outlook = "时间偏紧，建议聚焦最高优先级的 3-4 个薄弱点，别铺太开。"
-    else:
-        outlook = "时间紧张，只攻最高频考点与前置地基，放弃边角难题保性价比。"
-    return {
-        "days_left": days_left,
-        "current_avg_mastery": round(avg, 3),
-        "projected_avg_mastery": projected,
-        "exam_readiness": readiness,
-        "coverage": round(coverage, 3),
-        "capacity_total": capacity_total,
-        "outlook": outlook,
-        "note": "这是基于剩余时间和薄弱点题量的容量估算，不代表成绩预测。",
-    }
-
-
-def coach_narrative_local(profile: dict, gaps: list[dict], backlog: dict, phases: list[dict], predictions: dict) -> str:
-    lines = ["【本地复习计划摘要】", ""]
-    headline = profile.get("headline")
-    if headline:
-        lines.append(headline)
-    lines.append(profile.get("velocity", ""))
-    lines.append("")
-    if gaps:
-        lines.append("当前最该补的薄弱点（按性价比排序）：")
-        for i, g in enumerate(gaps[:4], 1):
-            lines.append(f"  {i}. {g['name']}：{g['reason']}")
-            lines.append(f"     → {g['prescription']}")
-    if backlog["overdue"] or backlog["due_today"]:
-        lines.append("")
-        lines.append(f"复习账：{backlog['overdue']} 道逾期 + {backlog['due_today']} 道今日到期，先还清再上新题。")
-    lines.append("")
-    lines.append(f"时间预算：距考试 {predictions['days_left']} 天，按 {phases[0]['daily_questions']} 题/天推进。")
-    lines.append(f"容量估算：当前平均掌握度 {int(predictions['current_avg_mastery']*100)}%，剩余时间约可安排 {predictions['capacity_total']} 道练习。")
-    lines.append(f"薄弱点覆盖率估算：{int(predictions['coverage']*100)}%。")
-    lines.append(predictions["outlook"])
-    return "\n".join(line for line in lines if line is not None)
-
-
 def coach_narrative_ai(profile: dict, gaps: list[dict], backlog: dict, phases: list[dict], predictions: dict) -> str:
-    local = coach_narrative_local(profile, gaps, backlog, phases, predictions)
+    local = sakura_profile.coach_narrative_local(profile, gaps, backlog, phases, predictions)
     if not llm_enabled():
         return local
     try:
@@ -2294,11 +2205,11 @@ def build_coach_plan(conn: sqlite3.Connection, settings: dict, want_ai: bool = F
 
     gaps = rank_gaps_from_profile(profile, top_n=6)
     backlog = compute_review_backlog(conn, today)
-    phases = build_study_phases(days_left, daily_minutes)
+    phases = sakura_profile.build_study_phases(days_left, daily_minutes, STUDY_MINUTES_PER_QUESTION)
     in_sprint = days_left < 14
     today_actions = build_today_actions(conn, gaps, backlog, daily_minutes, in_sprint, settings.get("focus_subject", ""))
-    predictions = compute_predictions(profile, gaps, days_left, daily_minutes)
-    narrative = coach_narrative_ai(profile, gaps, backlog, phases, predictions) if want_ai else coach_narrative_local(profile, gaps, backlog, phases, predictions)
+    predictions = sakura_profile.compute_predictions(profile, gaps, days_left, daily_minutes, STUDY_MINUTES_PER_QUESTION)
+    narrative = coach_narrative_ai(profile, gaps, backlog, phases, predictions) if want_ai else sakura_profile.coach_narrative_local(profile, gaps, backlog, phases, predictions)
 
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
