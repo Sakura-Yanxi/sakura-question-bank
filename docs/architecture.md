@@ -26,6 +26,8 @@ This project is intentionally local-first and lightweight, but new features shou
 - `sakura_textbook.py`
   - Textbook PDF import, page-image rendering orchestration and paragraph indexing.
   - Textbook page context assembly and AI explanation prompt construction.
+- `sakura_filters.py`
+  - Question/document filter SQL assembly and scoped dropdown option queries.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.
