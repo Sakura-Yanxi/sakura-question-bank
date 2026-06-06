@@ -1047,23 +1047,13 @@ def explain_textbook_with_ai(book: dict, page: dict, message: str, history: list
 
 
 def extract_text_and_chapters(pdf_path: Path, document_kind: str = DEFAULT_DOCUMENT_KIND) -> list[dict]:
-    pages = []
-    last_chapter = DEFAULT_CHAPTER
-    pdf = fitz.open(pdf_path)
-    try:
-        for index, page in enumerate(pdf, start=1):
-            text = page.get_text("text", sort=True).strip()
-            if document_kind == MOCK_PAPER_KIND:
-                pages.append({"page_number": index, "text": text, "chapter": MOCK_PAPER_CHAPTER})
-                continue
-            extracted = extract_chapter_from_page(page, text)
-            if extracted != DEFAULT_CHAPTER:
-                last_chapter = extracted
-            chapter = last_chapter if last_chapter != DEFAULT_CHAPTER else extracted
-            pages.append({"page_number": index, "text": text, "chapter": normalize_chapter(chapter)})
-    finally:
-        pdf.close()
-    return pages
+    return sakura_classify.extract_text_and_chapters(
+        pdf_path,
+        document_kind,
+        default_chapter=DEFAULT_CHAPTER,
+        mock_paper_kind=MOCK_PAPER_KIND,
+        mock_paper_chapter=MOCK_PAPER_CHAPTER,
+    )
 
 
 def parse_positive_int(value: str, fallback: int | None = None) -> int | None:

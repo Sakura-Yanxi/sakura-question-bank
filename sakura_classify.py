@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+import fitz
+
 
 def classify_by_rules(text: str, keyword_rules: list[tuple[str, list[str]]], default_category: str) -> tuple[str, str, str]:
     haystack = text.lower()
@@ -138,6 +140,34 @@ def extract_chapter_from_page(page, text: str, default_chapter: str) -> str:
         if match:
             return normalize_chapter(match.group(1), default_chapter)
     return default_chapter
+
+
+def extract_text_and_chapters(
+    pdf_path,
+    document_kind: str,
+    *,
+    default_chapter: str,
+    mock_paper_kind: str,
+    mock_paper_chapter: str,
+) -> list[dict]:
+    """Extract page text and chapter hints from a PDF without importing questions."""
+    pages = []
+    last_chapter = default_chapter
+    pdf = fitz.open(pdf_path)
+    try:
+        for index, page in enumerate(pdf, start=1):
+            text = page.get_text("text", sort=True).strip()
+            if document_kind == mock_paper_kind:
+                pages.append({"page_number": index, "text": text, "chapter": mock_paper_chapter})
+                continue
+            extracted = extract_chapter_from_page(page, text, default_chapter)
+            if extracted != default_chapter:
+                last_chapter = extracted
+            chapter = last_chapter if last_chapter != default_chapter else extracted
+            pages.append({"page_number": index, "text": text, "chapter": normalize_chapter(chapter, default_chapter)})
+    finally:
+        pdf.close()
+    return pages
 
 
 def classify_question_locally(
