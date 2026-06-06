@@ -39,6 +39,7 @@ from sakura_pdf import (
 import sakura_notifications
 import sakura_weather
 import sakura_reminders
+import sakura_config
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -47,46 +48,7 @@ PAGE_DIR = DATA_DIR / "pages"
 STATIC_DIR = ROOT / "static"
 DB_PATH = DATA_DIR / "gaoshu_demo.sqlite3"
 
-def load_local_env() -> None:
-    """Load simple KEY=VALUE pairs from .env without adding a runtime dependency."""
-    env_path = ROOT / ".env"
-    if not env_path.exists():
-        return
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip().lstrip("\ufeff")
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-
-load_local_env()
-
-
-def write_local_env(updates: dict[str, str]) -> None:
-    """Update .env in place for local-only settings such as API keys."""
-    env_path = ROOT / ".env"
-    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
-    seen = set()
-    out = []
-    for raw in lines:
-        if "=" not in raw or raw.strip().startswith("#"):
-            out.append(raw)
-            continue
-        key, _ = raw.split("=", 1)
-        key = key.strip().lstrip("\ufeff")
-        if key in updates:
-            out.append(f"{key}={updates[key]}")
-            seen.add(key)
-        else:
-            out.append(raw)
-    for key, value in updates.items():
-        if key not in seen:
-            out.append(f"{key}={value}")
-    env_path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+sakura_config.load_local_env(ROOT)
 
 PORT = int(os.getenv("PORT", "8000"))
 ADMIN_PASSWORD = os.getenv("SAKURA_ADMIN_PASSWORD") or os.getenv("APP_PASSWORD") or ""
@@ -996,7 +958,7 @@ def update_llm_runtime_settings(api_key: str | None = None, base_url: str | None
         os.environ["LLM_MODEL"] = LLM_MODEL
         updates["LLM_MODEL"] = LLM_MODEL
     if updates:
-        write_local_env(updates)
+        sakura_config.write_local_env(ROOT, updates)
     return llm_settings_view()
 
 
@@ -1020,7 +982,7 @@ def update_notification_runtime_settings(
         os.environ["APP_PUBLIC_URL"] = APP_PUBLIC_URL
         updates["APP_PUBLIC_URL"] = APP_PUBLIC_URL
     if updates:
-        write_local_env(updates)
+        sakura_config.write_local_env(ROOT, updates)
     return notification_settings_view()
 
 
@@ -1067,7 +1029,7 @@ def update_reminder_runtime_settings(payload: dict) -> dict:
     updates = settings.as_env()
     for key, value in updates.items():
         os.environ[key] = value
-    write_local_env(updates)
+    sakura_config.write_local_env(ROOT, updates)
     cron_status = sakura_reminders.install_crontab(settings, ROOT, DATA_DIR)
     return settings.as_payload(cron_status)
 

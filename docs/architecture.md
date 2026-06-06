@@ -8,6 +8,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - HTTP routes and legacy orchestration.
   - Database migrations and query helpers.
   - AI coach, question import, daily practice, reminders, textbooks and exports.
+- `sakura_config.py`
+  - Local `.env` loading and in-place secret/config updates.
 - `sakura_reminders.py`
   - Reminder settings normalization.
   - Sakura-managed crontab block generation and installation.
