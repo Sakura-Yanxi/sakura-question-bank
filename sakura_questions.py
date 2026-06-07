@@ -97,6 +97,10 @@ def import_question_text(slice_text: str, page_text: str) -> str:
     return slice_text or page_text
 
 
+def import_question_no(item: dict) -> str:
+    return str(item.get("question_no") or "")
+
+
 def insert_imported_question(
     conn,
     *,

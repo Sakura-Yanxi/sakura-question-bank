@@ -1114,7 +1114,7 @@ def import_pdf(
                             doc_id=doc_id,
                             page_number=index,
                             seq_no=seq_no,
-                            question_no=str(item.get("question_no") or ""),
+                            question_no=sakura_questions.import_question_no(item),
                             image_path=image_path,
                             question_text=imported_text,
                             classification=classification,

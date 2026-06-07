@@ -169,6 +169,8 @@ def test_import_insert_and_ocr_helpers() -> None:
     assert metadata == {"title": "demo import", "subject": "Math", "document_kind": "mock paper"}
     assert sakura_questions.import_question_text("slice", "page") == "slice"
     assert sakura_questions.import_question_text("", "page") == "page"
+    assert sakura_questions.import_question_no({"question_no": 7}) == "7"
+    assert sakura_questions.import_question_no({}) == ""
 
     conn = make_import_conn()
     sakura_documents.insert_document(
