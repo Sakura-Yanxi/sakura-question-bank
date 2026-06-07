@@ -1414,24 +1414,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
     def serve_file(self, path: Path) -> None:
-        resolved = path.resolve()
-        if not str(resolved).startswith(str(ROOT)) or not resolved.exists() or resolved.is_dir():
-            return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
-        content_types = {
-            ".html": "text/html; charset=utf-8",
-            ".css": "text/css; charset=utf-8",
-            ".js": "application/javascript; charset=utf-8",
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".pdf": "application/pdf",
-        }
-        body = resolved.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", content_types.get(resolved.suffix.lower(), "application/octet-stream"))
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        return sakura_http.serve_file(self, path, ROOT)
 
     def handle_upload(self) -> None:
         form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})

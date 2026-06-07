@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import gc
+import io
 import sqlite3
 import sys
 import tempfile
@@ -17,6 +18,7 @@ if str(ROOT) not in sys.path:
 import sakura_backup
 import sakura_classify
 import sakura_documents
+import sakura_http
 import sakura_import
 import sakura_pdf
 import sakura_questions
@@ -24,6 +26,39 @@ import sakura_teacher_memory
 import sakura_textbook
 
 import app
+
+
+class FakeHttpHandler:
+    def __init__(self) -> None:
+        self.status = None
+        self.headers = []
+        self.wfile = io.BytesIO()
+
+    def send_response(self, status: int) -> None:
+        self.status = status
+
+    def send_header(self, key: str, value: str) -> None:
+        self.headers.append((key, value))
+
+    def end_headers(self) -> None:
+        pass
+
+
+def test_http_file_serving() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        page = root / "index.html"
+        page.write_bytes(b"<html>Sakura</html>")
+        handler = FakeHttpHandler()
+        sakura_http.serve_file(handler, page, root)
+        assert handler.status == 200
+        assert ("Content-Type", "text/html; charset=utf-8") in handler.headers
+        assert handler.wfile.getvalue() == b"<html>Sakura</html>"
+
+        missing = FakeHttpHandler()
+        sakura_http.serve_file(missing, root / "missing.html", root)
+        assert missing.status == 404
+        assert b"Not found" in missing.wfile.getvalue()
 
 
 def test_pdf_helpers() -> None:
@@ -651,6 +686,7 @@ def test_real_import_pdf_smoke() -> None:
 
 
 def main() -> None:
+    test_http_file_serving()
     test_pdf_helpers()
     test_chapter_carry_state()
     test_import_insert_and_ocr_helpers()
