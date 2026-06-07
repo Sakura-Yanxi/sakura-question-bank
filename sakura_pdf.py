@@ -205,6 +205,21 @@ def append_page_clip_to_question_image(page: fitz.Page, clip: fitz.Rect, image_p
         temp_path.unlink(missing_ok=True)
 
 
+def append_import_continuation(
+    page: fitz.Page,
+    starts: list[dict],
+    previous_question: PreviousQuestionState,
+    *,
+    append_image=None,
+) -> str:
+    clip = continuation_clip_for_starts(page, starts, previous_question.value)
+    if not clip or not previous_question.question_id or not previous_question.image_path:
+        return ""
+    image_appender = append_image or append_page_clip_to_question_image
+    image_appender(page, clip, previous_question.image_path)
+    return page.get_text("text", sort=True, clip=clip).strip()
+
+
 def crop_image_by_ratio(image_path: Path, crop: dict) -> None:
     """Crop an existing rendered question image with browser-provided ratio coordinates."""
     from PIL import Image

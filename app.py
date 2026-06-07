@@ -25,8 +25,7 @@ import cgi
 import fitz
 from sakura_pdf import (
     PreviousQuestionState,
-    append_page_clip_to_question_image,
-    continuation_clip_for_starts,
+    append_import_continuation,
     crop_image_by_ratio,
     page_range,
     prepare_import_page,
@@ -1084,10 +1083,8 @@ def import_pdf(
                     mock_paper_kind=MOCK_PAPER_KIND,
                     mock_paper_chapter=MOCK_PAPER_CHAPTER,
                 )
-                continuation_clip = continuation_clip_for_starts(page, starts, previous_question.value)
-                if continuation_clip and previous_question.question_id and previous_question.image_path:
-                    append_page_clip_to_question_image(page, continuation_clip, previous_question.image_path)
-                    continuation_text = page.get_text("text", sort=True, clip=continuation_clip).strip()
+                continuation_text = append_import_continuation(page, starts, previous_question)
+                if continuation_text:
                     sakura_questions.append_question_ocr_text(conn, previous_question.question_id, continuation_text)
                 for slice_index, item in enumerate(slices, start=1):
                     seq_no += 1

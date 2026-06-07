@@ -71,6 +71,23 @@ def test_pdf_helpers() -> None:
     assert "Page text for import" in text
     assert starts == []
     assert slices == [{"question_no": "", "clip": None}]
+
+    continuation_state = sakura_pdf.PreviousQuestionState(
+        question_id="q4",
+        image_path=Path("data/pages/q4.png"),
+        value=4,
+    )
+    appended = []
+    continuation_text = sakura_pdf.append_import_continuation(
+        page,
+        [{"value": 5, "y": 200}],
+        continuation_state,
+        append_image=lambda _page, clip, path: appended.append((clip, path)),
+    )
+    assert "Page text for import" in continuation_text
+    assert len(appended) == 1
+    assert appended[0][1] == Path("data/pages/q4.png")
+    assert sakura_pdf.append_import_continuation(page, [], continuation_state, append_image=lambda *_args: None) == ""
     doc.close()
 
     state = sakura_pdf.PreviousQuestionState()
