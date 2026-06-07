@@ -1074,11 +1074,7 @@ def import_pdf(
                 if continuation_clip and previous_question.question_id and previous_question.image_path:
                     append_page_clip_to_question_image(page, continuation_clip, previous_question.image_path)
                     continuation_text = page.get_text("text", sort=True, clip=continuation_clip).strip()
-                    if continuation_text:
-                        conn.execute(
-                            "UPDATE questions SET ocr_text = trim(coalesce(ocr_text, '') || char(10) || ?) WHERE id = ?",
-                            (continuation_text, previous_question.question_id),
-                        )
+                    sakura_questions.append_question_ocr_text(conn, previous_question.question_id, continuation_text)
                 slices = detect_question_slices(page, starts) if document_kind == MOCK_PAPER_KIND and split_questions else []
                 if not slices:
                     slices = [{"question_no": "", "clip": None}]

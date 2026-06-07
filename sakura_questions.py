@@ -139,6 +139,15 @@ def insert_imported_question(
     }
 
 
+def append_question_ocr_text(conn, q_id: str, text: str) -> None:
+    if not text:
+        return
+    conn.execute(
+        "UPDATE questions SET ocr_text = trim(coalesce(ocr_text, '') || char(10) || ?) WHERE id = ?",
+        (text, q_id),
+    )
+
+
 def load_chapter_stats(conn, doc_id: str) -> tuple[object | None, list[dict]]:
     doc = conn.execute("SELECT id, title, filename FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc:
