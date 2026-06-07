@@ -102,6 +102,58 @@ def save_reflection(conn, period: str, summary: dict, reflection: str) -> str:
     return ref_id
 
 
+def list_reflections(conn, limit: int = 30) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT id, period, period_start, period_end, summary_json, reflection_text, created_at
+        FROM reflections
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["summary"] = json.loads(item.pop("summary_json"))
+        except (json.JSONDecodeError, TypeError):
+            item["summary"] = {}
+        item["delete_url"] = f"/api/reflections/{item['id']}"
+        items.append(item)
+    return items
+
+
+def delete_reflection(conn, ref_id: str) -> bool:
+    row = conn.execute("SELECT id FROM reflections WHERE id = ?", (ref_id,)).fetchone()
+    if not row:
+        return False
+    conn.execute("DELETE FROM reflections WHERE id = ?", (ref_id,))
+    return True
+
+
+def build_reflection_download(conn, ref_id: str) -> tuple[str, str] | None:
+    row = conn.execute(
+        "SELECT id, period, period_start, period_end, reflection_text, created_at FROM reflections WHERE id = ?",
+        (ref_id,),
+    ).fetchone()
+    if not row:
+        return None
+    lines_out = [
+        "# 历史知识归档",
+        "",
+        f"周期：{row['period']}（{row['period_start']} ~ {row['period_end']}）",
+        f"生成时间：{row['created_at']}",
+        "",
+        "---",
+        "",
+        row["reflection_text"],
+    ]
+    text = "\n".join(lines_out)
+    filename = f"reflection_{row['period_start']}_{row['period_end']}.txt"
+    return filename, text
+
+
 def local_reflection(payload: dict) -> str:
     weak = payload["chapters"][:5]
     subject_lines = "\n".join(

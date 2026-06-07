@@ -1659,10 +1659,9 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_delete_reflection(self, ref_id: str) -> None:
         with connect() as conn:
-            row = conn.execute("SELECT id FROM reflections WHERE id = ?", (ref_id,)).fetchone()
-            if not row:
+            deleted = sakura_reflection.delete_reflection(conn, ref_id)
+            if not deleted:
                 return json_response(self, {"error": "历史知识归档不存在。"}, 404)
-            conn.execute("DELETE FROM reflections WHERE id = ?", (ref_id,))
         return json_response(self, {"ok": True, "id": ref_id})
 
     def handle_clear_coach_plan(self) -> None:
@@ -2516,40 +2515,15 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_reflection_history(self) -> None:
         with connect() as conn:
-            rows = conn.execute(
-                "SELECT id, period, period_start, period_end, summary_json, reflection_text, created_at FROM reflections ORDER BY created_at DESC LIMIT 30"
-            ).fetchall()
-        items = []
-        for row in rows:
-            item = dict(row)
-            try:
-                item["summary"] = json.loads(item.pop("summary_json"))
-            except (json.JSONDecodeError, TypeError):
-                item["summary"] = {}
-            item["delete_url"] = f"/api/reflections/{item['id']}"
-            items.append(item)
+            items = sakura_reflection.list_reflections(conn)
         return json_response(self, {"title": "历史知识归档", "reflections": items})
 
     def handle_reflection_download(self, ref_id: str) -> None:
         with connect() as conn:
-            row = conn.execute(
-                "SELECT id, period, period_start, period_end, reflection_text, created_at FROM reflections WHERE id = ?",
-                (ref_id,),
-            ).fetchone()
-        if not row:
+            download = sakura_reflection.build_reflection_download(conn, ref_id)
+        if not download:
             return json_response(self, {"error": "反思记录不存在"}, 404)
-        lines_out = [
-            "# 历史知识归档",
-            "",
-            f"周期：{row['period']}（{row['period_start']} ~ {row['period_end']}）",
-            f"生成时间：{row['created_at']}",
-            "",
-            "---",
-            "",
-            row['reflection_text'],
-        ]
-        text = "\n".join(lines_out)
-        filename = f"reflection_{row['period_start']}_{row['period_end']}.txt"
+        filename, text = download
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
