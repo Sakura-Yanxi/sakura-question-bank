@@ -2380,21 +2380,10 @@ class DemoHandler(BaseHTTPRequestHandler):
         return json_response(self, {"ok": True})
 
     def handle_backup_export(self, query: dict) -> None:
-        mode = (query.get("mode") or ["full"])[0]
-        if mode not in {"full", "light", "range"}:
-            return json_response(self, {"error": "导出模式必须是 full、light 或 range"}, 400)
-        start_date = (query.get("start_date") or [""])[0].strip()
-        end_date = (query.get("end_date") or [""])[0].strip()
-        include_assets = (query.get("include_assets") or ["1" if mode == "full" else "0"])[0] == "1"
-        if mode == "light":
-            include_assets = False
-            start_date = ""
-            end_date = ""
-        if mode == "range" and (not start_date or not end_date):
-            return json_response(self, {"error": "范围导出必须填写开始日期和结束日期"}, 400)
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        suffix = mode if mode != "range" else f"range_{start_date}_to_{end_date}"
-        filename = f"sakura_backup_{suffix}_{stamp}.zip"
+        try:
+            export_options = sakura_backup.export_options_from_query(query)
+        except ValueError as exc:
+            return json_response(self, {"error": str(exc)}, 400)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
             tmp_path = Path(tmp.name)
         try:
@@ -2403,12 +2392,13 @@ class DemoHandler(BaseHTTPRequestHandler):
                     tmp_path,
                     DB_PATH,
                     {"uploads": UPLOAD_DIR, "pages": PAGE_DIR},
-                    include_assets=include_assets,
-                    start_date=start_date,
-                    end_date=end_date,
+                    include_assets=export_options["include_assets"],
+                    start_date=export_options["start_date"],
+                    end_date=export_options["end_date"],
                 )
             except ValueError as exc:
                 return json_response(self, {"error": str(exc)}, 400)
+            filename = export_options["filename"]
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')

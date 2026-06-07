@@ -9,6 +9,35 @@ from datetime import datetime
 from pathlib import Path
 
 
+def _query_first(query: dict, key: str, default: str = "") -> str:
+    values = query.get(key) or [default]
+    return str(values[0] if values else default)
+
+
+def export_options_from_query(query: dict, now: datetime | None = None) -> dict:
+    mode = _query_first(query, "mode", "full")
+    if mode not in {"full", "light", "range"}:
+        raise ValueError("导出模式必须是 full、light 或 range")
+    start_date = _query_first(query, "start_date").strip()
+    end_date = _query_first(query, "end_date").strip()
+    include_assets = _query_first(query, "include_assets", "1" if mode == "full" else "0") == "1"
+    if mode == "light":
+        include_assets = False
+        start_date = ""
+        end_date = ""
+    if mode == "range" and (not start_date or not end_date):
+        raise ValueError("范围导出必须填写开始日期和结束日期")
+    stamp = (now or datetime.now()).strftime("%Y%m%d_%H%M%S")
+    suffix = mode if mode != "range" else f"range_{start_date}_to_{end_date}"
+    return {
+        "mode": mode,
+        "start_date": start_date,
+        "end_date": end_date,
+        "include_assets": include_assets,
+        "filename": f"sakura_backup_{suffix}_{stamp}.zip",
+    }
+
+
 def _safe_date(value: str | None) -> str:
     text = (value or "").strip()
     if not text:
