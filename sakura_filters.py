@@ -49,8 +49,21 @@ def build_question_filters(query: dict, keys: tuple[str, ...]) -> tuple[str, lis
         params.append(subject)
     search = query.get("search", [""])[0].strip()
     if search and "search" in keys:
-        clauses.append("(q.ocr_text LIKE ? OR q.subcategory LIKE ? OR q.user_note LIKE ?)")
-        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+        clauses.append(
+            """
+            (
+                q.question_no LIKE ?
+                OR q.ocr_text LIKE ?
+                OR q.category LIKE ?
+                OR q.subcategory LIKE ?
+                OR q.chapter LIKE ?
+                OR q.mistake_reason LIKE ?
+                OR q.meta_tags LIKE ?
+                OR q.user_note LIKE ?
+            )
+            """
+        )
+        params.extend([f"%{search}%"] * 8)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     return where, params
 

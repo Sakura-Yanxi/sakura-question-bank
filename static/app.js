@@ -197,6 +197,15 @@ async function loadDocuments() {
 }
 
 async function loadQuestions() {
+  if (state.view === "library" && !hasActiveLibraryFilter()) {
+    state.questions = [];
+    state.stats = {};
+    state.subjectStats = {};
+    state.categories = [];
+    state.chapters = [];
+    renderAll();
+    return;
+  }
   const params = new URLSearchParams();
   if (state.category) params.set("category", state.category);
   if (state.status) params.set("status", state.status);
@@ -215,6 +224,16 @@ async function loadQuestions() {
 }
 
 async function loadMistakes() {
+  if (!hasActiveMistakeFilter()) {
+    state.mistakeQuestions = [];
+    state.mistakeCategories = [];
+    state.mistakeChapters = [];
+    state.mistakeSubjects = [];
+    state.selectedMistakes.clear();
+    renderMistakeFilters();
+    renderMistakeGrid();
+    return;
+  }
   const params = new URLSearchParams();
   if (state.mistakeCategory) params.set("category", state.mistakeCategory);
   if (state.mistakeDocumentId) params.set("document_id", state.mistakeDocumentId);
@@ -244,6 +263,18 @@ async function refresh() {
   if (state.view === "mistakes") await loadMistakes();
 }
 
+function hasActiveLibraryFilter() {
+  return Boolean(state.category || state.status || state.documentId || state.subject || state.chapter || (canSearchLibrary() && state.search));
+}
+
+function canSearchLibrary() {
+  return Boolean(state.documentId || state.subject || state.status);
+}
+
+function hasActiveMistakeFilter() {
+  return Boolean(state.mistakeDocumentId || state.mistakeSubject || state.mistakeCategory || state.mistakeChapter);
+}
+
 async function loadDashboardData() {
   const docs = dashboardDocuments().filter((doc) => !state.dashboardSubject || doc.subject === state.dashboardSubject);
   if (state.dashboardDocumentId && !docs.some((doc) => doc.id === state.dashboardDocumentId)) {
@@ -267,7 +298,10 @@ function renderAll() {
   const mockQuestions = state.questions.filter((q) => questionKind(q) === "模拟卷");
   $("#questionCountBadge").textContent = `${regularQuestions.length} 题`;
   $("#mockCountBadge").textContent = `${mockQuestions.length} 题`;
-  renderQuestionGrid("#questionGrid", regularQuestions, "还没有题目。先从左侧上传 PDF，或清空筛选条件。");
+  const libraryEmptyText = hasActiveLibraryFilter()
+    ? "当前筛选下没有题目。可以换一个科目、资料或清空筛选条件。"
+    : "请先选择科目、资料或掌握状态后查看题目。";
+  renderQuestionGrid("#questionGrid", regularQuestions, libraryEmptyText);
   renderQuestionGrid("#mockQuestionGrid", mockQuestions, "还没有模拟卷题目。先上传整卷 PDF。");
   if (state.view === "mistakes") renderMistakeGrid();
 }
@@ -307,19 +341,131 @@ function renderDashboardFilters() {
 
 function renderQuestionFilters() {
   const docs = state.documents.filter((doc) => !state.subject || doc.subject === state.subject);
-  $("#documentFilter").innerHTML = `<option value="">全部资料</option>${docs
+  const scopedReady = Boolean(state.subject || state.documentId);
+  updateSearchBoxState();
+  $("#documentFilter").innerHTML = `<option value="">请选择资料</option>${docs
     .map((doc) => `<option value="${doc.id}" ${doc.id === state.documentId ? "selected" : ""}>${documentLabel(doc)}</option>`)
     .join("")}`;
-  $("#subjectFilter").innerHTML = `<option value="">全部科目</option>${state.subjects
+  $("#subjectFilter").innerHTML = `<option value="">请选择科目</option>${state.subjects
     .map((subject) => `<option ${subject === state.subject ? "selected" : ""}>${subject}</option>`)
     .join("")}`;
-  $("#categoryFilter").innerHTML = `<option value="">全部知识点</option>${state.categories
-    .map((category) => `<option ${category === state.category ? "selected" : ""}>${category}</option>`)
-    .join("")}`;
-  $("#chapterFilter").innerHTML = `<option value="">全部章节</option>${state.chapters
-    .map((chapter) => `<option ${chapter === state.chapter ? "selected" : ""}>${chapter}</option>`)
-    .join("")}`;
+  if (scopedReady) {
+    unlockSelect("#categoryFilter");
+    unlockSelect("#chapterFilter");
+    $("#categoryFilter").innerHTML = `<option value="">全部知识点</option>${state.categories
+      .map((category) => `<option ${category === state.category ? "selected" : ""}>${category}</option>`)
+      .join("")}`;
+    $("#chapterFilter").innerHTML = `<option value="">全部章节</option>${state.chapters
+      .map((chapter) => `<option ${chapter === state.chapter ? "selected" : ""}>${chapter}</option>`)
+      .join("")}`;
+  } else {
+    state.category = "";
+    state.chapter = "";
+    setSelectLocked("#categoryFilter", "请先选择科目或资料");
+    setSelectLocked("#chapterFilter", "请先选择科目或资料");
+  }
+  const statusEmptyOption = $("#statusFilter option[value='']");
+  if (statusEmptyOption) statusEmptyOption.textContent = "请选择掌握状态";
   $("#statusFilter").value = state.status;
+}
+
+function updateSearchBoxState() {
+  const input = $("#searchInput");
+  if (!input) return;
+  const enabled = state.view === "library" && canSearchLibrary();
+  input.disabled = !enabled;
+  input.placeholder = enabled ? "在当前范围内搜题号、章节、错因或备注..." : "先选科目或资料后，在当前范围内搜索...";
+  if (!enabled && state.search) {
+    state.search = "";
+    input.value = "";
+  }
+}
+
+function setCoachMemoryBadge(version = 0, evidenceCount = 0) {
+  const badge = $("#coachMemoryBadge");
+  if (!badge) return;
+  badge.textContent = evidenceCount ? `已建档 · ${evidenceCount} 条证据` : "未建档";
+  badge.title = version ? `内部档案版本：v${version}` : "";
+}
+
+function openSimpleDialog(title, subtitle, bodyHtml) {
+  const dialog = $("#detailDialog");
+  dialog.classList.add("archive-mode");
+  $("#detailContent").innerHTML = `
+    <div class="archive-dialog">
+      <div class="archive-dialog-head">
+        <div>
+          <h2>${escapeHtml(title)}</h2>
+          <p>${escapeHtml(subtitle || "")}</p>
+        </div>
+      </div>
+      ${bodyHtml}
+    </div>`;
+  if (!dialog.open) dialog.showModal();
+  if (window.lucide) lucide.createIcons();
+}
+
+async function openProfileArchive() {
+  openSimpleDialog("学习档案存档", "正在读取历史档案快照...", `<p class="empty-note">请稍等。</p>`);
+  try {
+    const data = await api("/api/profile/history");
+    const profiles = data.profiles || [];
+    const body = profiles.length
+      ? `<div class="archive-list">${profiles.map((profile) => {
+          const mastery = Math.round(Number(profile.avg_mastery || 0) * 100);
+          const source = profile.source === "ai" ? "AI润色" : "本地统计";
+          return `
+            <article class="archive-item">
+              <div class="archive-item-head">
+                <strong>v${profile.version} · ${source}</strong>
+                <span>${escapeHtml(profile.created_at || "")}</span>
+              </div>
+              <p>${escapeHtml(profile.headline || "本地统计档案")}</p>
+              ${profile.pattern_summary ? `<small>${escapeHtml(profile.pattern_summary)}</small>` : ""}
+              <div class="archive-meta">
+                <span>${profile.evidence_count || 0} 条证据</span>
+                <span>${profile.knowledge_count || 0} 个知识点</span>
+                <span>平均掌握 ${mastery}%</span>
+              </div>
+            </article>`;
+        }).join("")}</div>`
+      : `<p class="empty-note">还没有历史档案。先点击「更新学习档案」。</p>`;
+    openSimpleDialog("学习档案存档", "每次更新学习档案都会生成一个可追溯快照。", body);
+  } catch (error) {
+    openSimpleDialog("学习档案存档", "读取失败", `<p class="empty-note">${escapeHtml(error.message)}</p>`);
+  }
+}
+
+async function openTeacherMemoryArchive() {
+  openSimpleDialog("老师记忆", "正在读取主动导入的长期记忆...", `<p class="empty-note">请稍等。</p>`);
+  try {
+    const data = await api("/api/ai-chat/memory");
+    const memories = data.memories || [];
+    const body = `
+      ${memories.length
+        ? `<div class="archive-list memory-archive-list">${memories.map((memory) => `
+            <article class="archive-item">
+              <div class="archive-item-head">
+                <strong>${escapeHtml(memory.source || "memory")}</strong>
+                <span>${escapeHtml(memory.created_at || "")}</span>
+              </div>
+              <p>${escapeHtml(memory.content || "")}</p>
+            </article>`).join("")}</div>`
+        : `<p class="empty-note">还没有主动导入的老师记忆。可以在 AI 学习教练或教材精读里导入。</p>`}
+      <div class="archive-actions">
+        <button id="goAiMemoryPanel" class="ghost"><i data-lucide="messages-square"></i>去维护记忆</button>
+      </div>`;
+    openSimpleDialog("老师记忆", "这些内容会作为 AI 老师了解你的长期上下文。", body);
+    const go = $("#goAiMemoryPanel");
+    if (go) {
+      go.onclick = () => {
+        $("#detailDialog").close();
+        setView("aiChat");
+      };
+    }
+  } catch (error) {
+    openSimpleDialog("老师记忆", "读取失败", `<p class="empty-note">${escapeHtml(error.message)}</p>`);
+  }
 }
 
 function renderMistakeFilters() {
@@ -327,11 +473,12 @@ function renderMistakeFilters() {
   const doc = docs.find((item) => item.id === state.mistakeDocumentId);
   if (state.mistakeDocumentId && !doc) state.mistakeDocumentId = "";
   if (doc?.subject && !state.mistakeSubject) state.mistakeSubject = doc.subject;
+  const subjects = state.mistakeSubjects.length ? state.mistakeSubjects : state.subjects;
   const scopedReady = Boolean(state.mistakeSubject && state.mistakeDocumentId);
-  $("#mistakeDocumentFilter").innerHTML = `<option value="">全部资料</option>${docs
+  $("#mistakeDocumentFilter").innerHTML = `<option value="">请选择资料</option>${docs
     .map((doc) => `<option value="${doc.id}" ${doc.id === state.mistakeDocumentId ? "selected" : ""}>${documentLabel(doc)}</option>`)
     .join("")}`;
-  $("#mistakeSubjectFilter").innerHTML = `<option value="">全部科目</option>${state.mistakeSubjects
+  $("#mistakeSubjectFilter").innerHTML = `<option value="">请选择科目</option>${subjects
     .map((subject) => `<option ${subject === state.mistakeSubject ? "selected" : ""}>${subject}</option>`)
     .join("")}`;
   if (scopedReady) {
@@ -353,7 +500,10 @@ function renderMistakeFilters() {
 
 function renderMistakeGrid() {
   $("#mistakeCountBadge").textContent = `${state.mistakeQuestions.length} 题`;
-  renderQuestionGrid("#mistakeGrid", state.mistakeQuestions, "当前筛选范围没有错题。", { selectable: true });
+  const emptyText = hasActiveMistakeFilter()
+    ? "当前筛选范围没有错题。"
+    : "请先选择科目或资料，再按知识点、章节或错题状态导出。";
+  renderQuestionGrid("#mistakeGrid", state.mistakeQuestions, emptyText, { selectable: true });
   renderMistakeSelectionHint();
 }
 
@@ -362,6 +512,10 @@ function renderMistakeSelectionHint() {
   const total = state.mistakeQuestions.length;
   $("#focusWrong").classList.toggle("filter-active", state.mistakeStatus === "做错");
   $("#focusReview").classList.toggle("filter-active", state.mistakeStatus === "review");
+  if (!hasActiveMistakeFilter()) {
+    $("#mistakeSelectHint").textContent = "先选择科目或资料后再导出";
+    return;
+  }
   $("#mistakeSelectHint").textContent = selected ? `已选择 ${selected}/${total} 题` : `未勾选时导出当前 ${total} 道错题`;
 }
 
@@ -499,13 +653,14 @@ function renderTextbookPage(book, page) {
   $("#textbookPageMeta").textContent = `${book.title} · 第 ${page.page_number}/${book.page_count} 页 · ${page.paragraphs.length} 段`;
   $("#textbookPageImage").src = `${page.image_url}?t=${Date.now()}`;
   $("#textbookPageImage").classList.toggle("hidden", !page.image_url);
+  $("#textbookPageImage").dataset.caption = `${book.title} · 第 ${page.page_number}/${book.page_count} 页`;
   $("#textbookParagraphs").innerHTML =
     (page.paragraphs || [])
       .map(
         (paragraph, index) => `
         <button class="textbook-paragraph ${state.textbookParagraph === index + 1 ? "active" : ""}" data-textbook-paragraph="${index + 1}">
-          <span>第 ${index + 1} 段</span>
-          <p>${escapeHtml(paragraph)}</p>
+          <span class="textbook-paragraph-index">第 ${index + 1} 段</span>
+          <span class="textbook-paragraph-preview">${escapeHtml(paragraph)}</span>
         </button>`
       )
       .join("") || `<p class="empty-note">这一页没有可提取文字。可以直接根据页图向 AI 提问，但效果取决于文本层质量。</p>`;
@@ -2043,7 +2198,7 @@ async function loadCoach() {
     state.coach = data;
     applyCoachSettings(data.settings);
     const v = data.profile_summary?.version || 0;
-    $("#coachMemoryBadge").textContent = `档案 v${v} · ${data.insight_count} 条证据`;
+    setCoachMemoryBadge(v, data.insight_count || 0);
     if (!data.has_key) hint.textContent = "未配置 AI 接口密钥，将只使用本地统计与规则计划。";
     else if (data.needs_refresh) hint.textContent = "有新的错题证据尚未并入档案，建议先「更新学习档案」。";
     else hint.textContent = "";
@@ -2103,7 +2258,7 @@ async function refreshCoachBadge() {
     const data = await api("/api/coach");
     state.coach = data;
     const v = data.profile_summary?.version || 0;
-    $("#coachMemoryBadge").textContent = `档案 v${v} · ${data.insight_count} 条证据`;
+    setCoachMemoryBadge(v, data.insight_count || 0);
   } catch (_) {}
 }
 
@@ -2263,6 +2418,7 @@ function setView(view) {
   if (view === "mistakes") loadMistakes();
   if (view === "textbook") loadTextbooks();
   if (view === "library" || view === "mockPapers") loadQuestions();
+  updateSearchBoxState();
 }
 
 function bindUploadForm(selector, documentKindValue) {
@@ -2422,6 +2578,14 @@ if ($("#textbookParagraphs")) {
   });
 }
 
+if ($("#textbookPageImage")) {
+  $("#textbookPageImage").addEventListener("dblclick", () => {
+    const img = $("#textbookPageImage");
+    if (!img || img.classList.contains("hidden") || !img.src) return;
+    openLightbox(img.src, img.dataset.caption || "教材页截图");
+  });
+}
+
 if ($("#askTextbookAi")) $("#askTextbookAi").addEventListener("click", () => askTextbookAi());
 if ($("#explainSelectedParagraph")) {
   $("#explainSelectedParagraph").addEventListener("click", () => {
@@ -2484,6 +2648,7 @@ $("#statusFilter").addEventListener("change", async (event) => {
 });
 
 $("#searchInput").addEventListener("input", async (event) => {
+  if (event.target.disabled) return;
   state.search = event.target.value.trim();
   clearTimeout(window.searchTimer);
   window.searchTimer = setTimeout(loadQuestions, 250);
@@ -2544,6 +2709,14 @@ $("#refreshProfileBtn").addEventListener("click", refreshProfile);
 $("#generatePlanBtn").addEventListener("click", () => generatePlan(false));
 $("#coachNarrativeBtn").addEventListener("click", () => generatePlan(true));
 $("#clearProfileBtn").addEventListener("click", clearProfile);
+$("#coachMemoryBadge").addEventListener("click", openProfileArchive);
+$("#coachMemoryBadge").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    openProfileArchive();
+  }
+});
+$("#viewTeacherMemoryBtn").addEventListener("click", openTeacherMemoryArchive);
 ["#coachDailyMinutes", "#coachExamDate", "#coachCadence", "#coachFocusSubject"].forEach((sel) => {
   $(sel).addEventListener("change", saveCoachSettings);
 });
@@ -2565,7 +2738,10 @@ $("#coachToday").addEventListener("click", (event) => {
 on("#checkinBtn", "click", doCheckin);
 on("#testMorningBtn", "click", () => testPush("morning"));
 on("#testNightBtn", "click", () => testPush("night"));
-onEach(["#remindMorningOn", "#remindMorningTime", "#remindNightTime", "#remindWeatherOn", "#remindWeatherTime", "#checkinMode"], "change", saveRemindSettings);
+on("#saveRemindSettings", "click", saveRemindSettings);
+onEach(["#remindMorningOn", "#remindMorningTime", "#remindNightTime", "#remindWeatherOn", "#remindWeatherTime", "#checkinMode"], "change", () => {
+  renderRemindGuide(readRemindForm(), "设置已修改，点击保存提醒设置后生效。");
+});
 on("#saveNotifySettings", "click", saveNotificationSettings);
 on("#saveWeatherCity", "click", saveWeatherCity);
 on("#previewWeather", "click", previewWeather);
@@ -2613,6 +2789,10 @@ $("#focusReview").addEventListener("click", async () => {
 async function exportMistakesPDF({ useFilters = false } = {}) {
   const selectedIds = state.view === "mistakes" ? [...state.selectedMistakes] : [];
   if (state.view === "mistakes") {
+    if (!selectedIds.length && !hasActiveMistakeFilter()) {
+      alert("请先选择科目或资料，再导出对应错题。");
+      return;
+    }
     if (!selectedIds.length && state.mistakeQuestions.length > 120 && !confirm(`将导出当前筛选下 ${state.mistakeQuestions.length} 道错题，PDF 可能较大。确定继续吗？`)) return;
   } else if (useFilters) {
     const total = (state.questions || []).filter((q) => questionKind(q) !== "模拟卷").length;
@@ -2809,6 +2989,11 @@ loadCountdown();
 loadQuote();
 refresh();
 setupLightbox();
+if ($("#detailDialog")) {
+  $("#detailDialog").addEventListener("close", () => {
+    $("#detailDialog").classList.remove("archive-mode");
+  });
+}
 
 async function loadCountdown() {
   try {

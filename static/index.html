@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260606-backup-modes" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260607-profile-memory-archive" />
     <script>
       window.MathJax = {
         tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] },
@@ -62,7 +62,7 @@
             </div>
             <div class="search-box">
               <i data-lucide="search"></i>
-              <input id="searchInput" type="search" placeholder="输入公式、知识点、错因或备注..." />
+              <input id="searchInput" type="search" placeholder="先选科目或资料后，在当前范围内搜索..." disabled />
             </div>
           </header>
 
@@ -264,8 +264,8 @@
                 <span id="mistakeCountBadge" class="section-count">0 题</span>
               </div>
               <div class="toolbar mistake-filter-toolbar">
-                <select id="mistakeDocumentFilter"><option value="">全部资料</option></select>
-                <select id="mistakeSubjectFilter"><option value="">全部科目</option></select>
+                <select id="mistakeDocumentFilter"><option value="">请选择资料</option></select>
+                <select id="mistakeSubjectFilter"><option value="">请选择科目</option></select>
                 <select id="mistakeCategoryFilter"><option value="">全部知识点</option></select>
                 <select id="mistakeChapterFilter"><option value="">全部章节</option></select>
               </div>
@@ -357,7 +357,10 @@
             <div class="panel coach-settings-panel">
               <div class="panel-head">
                 <div class="panel-title"><span class="panel-icon"><i data-lucide="compass"></i></span><div><h2>学习档案设置</h2><p>设定时间预算；本地统计负责排计划，AI 只做可选解读。</p></div></div>
-                <span id="coachMemoryBadge" class="section-count">档案 v0</span>
+                <div class="coach-head-actions">
+                  <span id="coachMemoryBadge" class="section-count clickable-badge" role="button" tabindex="0">未建档</span>
+                  <button id="viewTeacherMemoryBtn" class="ghost coach-mini-action"><i data-lucide="brain-circuit"></i>查看记忆</button>
+                </div>
               </div>
               <div class="coach-settings-grid">
                 <label class="coach-field"><span>每日可投入（分钟）</span><input id="coachDailyMinutes" type="number" min="10" step="10" value="60" /></label>
@@ -462,6 +465,7 @@
                 <label class="coach-field"><span>打卡方式</span><select id="checkinMode"><option value="cloud">云端打卡（公网/微信链接）</option><option value="local">本地打卡（当前浏览器按钮）</option></select></label>
               </div>
               <div class="remind-actions">
+                <button id="saveRemindSettings"><i data-lucide="save"></i>保存提醒设置</button>
                 <button id="testMorningBtn" class="ghost"><i data-lucide="send"></i>测试早安推送</button>
                 <button id="testNightBtn" class="ghost"><i data-lucide="send"></i>测试晚间推送</button>
                 <span id="pushTestHint" class="coach-hint"></span>
@@ -643,7 +647,7 @@
       <p class="lightbox-tip">滚轮缩放 · 拖拽移动 · 双击复位 · Esc 关闭</p>
     </dialog>
 
-    <script src="/static/app.js?v=20260606-backup-modes"></script>
+    <script src="/static/app.js?v=20260607-profile-memory-archive"></script>
     
     <script>
       lucide.createIcons();

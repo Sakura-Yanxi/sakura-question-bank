@@ -24,6 +24,7 @@ GET_ROUTES: dict[str, RouteTarget] = {
     "/api/quote": RouteTarget("handle_quote"),
     "/api/coach": RouteTarget("handle_coach_get"),
     "/api/coach/settings": RouteTarget("handle_coach_settings_get"),
+    "/api/profile/history": RouteTarget("handle_profile_history"),
     "/api/weather/settings": RouteTarget("handle_weather_settings_get"),
     "/api/weather/preview": RouteTarget("handle_weather_preview", with_query=True),
     "/api/ai-chat/memory": RouteTarget("handle_ai_memory_get"),

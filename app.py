@@ -1901,6 +1901,38 @@ class DemoHandler(BaseHTTPRequestHandler):
             "created_at": result["created_at"],
         })
 
+    def handle_profile_history(self) -> None:
+        with connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, version, scope, profile_json, evidence_count, source, created_at
+                FROM learner_profile
+                ORDER BY version DESC
+                LIMIT 30
+                """
+            ).fetchall()
+        profiles = []
+        for row in rows:
+            item = dict(row)
+            try:
+                profile = json.loads(item.get("profile_json") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                profile = {}
+            profiles.append({
+                "id": item["id"],
+                "version": item["version"],
+                "scope": item["scope"],
+                "evidence_count": item["evidence_count"],
+                "source": item["source"],
+                "created_at": item["created_at"],
+                "headline": profile.get("headline") or profile.get("velocity") or "本地统计档案",
+                "velocity": profile.get("velocity", ""),
+                "pattern_summary": profile.get("pattern_summary", ""),
+                "knowledge_count": profile.get("knowledge_count", 0),
+                "avg_mastery": profile.get("avg_mastery", 0),
+            })
+        return json_response(self, {"profiles": profiles})
+
     def handle_coach_post(self) -> None:
         payload = self.read_json()
         want_ai = bool(payload.get("want_ai", False))
