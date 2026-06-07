@@ -51,6 +51,7 @@ import sakura_models
 import sakura_auth
 import sakura_db
 import sakura_classify
+import sakura_http
 import sakura_insights
 import sakura_hints
 import sakura_teacher_memory
@@ -261,27 +262,15 @@ def get_scoped_filter_options(conn: sqlite3.Connection, query: dict) -> dict:
 
 
 def json_response(handler: BaseHTTPRequestHandler, payload: dict | list, status: int = 200) -> None:
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
+    sakura_http.json_response(handler, payload, status)
 
 
 def text_response(handler: BaseHTTPRequestHandler, text: str, status: int = 200, content_type: str = "text/plain") -> None:
-    body = text.encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", f"{content_type}; charset=utf-8")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
+    sakura_http.text_response(handler, text, status, content_type)
 
 
 def redirect_response(handler: BaseHTTPRequestHandler, location: str, status: int = HTTPStatus.FOUND) -> None:
-    handler.send_response(status)
-    handler.send_header("Location", location)
-    handler.end_headers()
+    sakura_http.redirect_response(handler, location, status)
 
 
 def auth_enabled() -> bool:
