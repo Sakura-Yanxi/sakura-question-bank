@@ -30,8 +30,8 @@ from sakura_pdf import (
     detect_question_slices,
     detect_question_starts,
     page_range,
-    render_page_clip_image,
     render_page_image,
+    render_question_slice,
     safe_pdf_filename,
 )
 import sakura_notifications
@@ -1084,15 +1084,15 @@ def import_pdf(
                 for slice_index, item in enumerate(slices, start=1):
                     seq_no += 1
                     q_id = uuid.uuid4().hex
-                    clip = item.get("clip")
-                    if clip:
-                        image_path = PAGE_DIR / f"{doc_id}_page_{index:03d}_q{slice_index:02d}.png"
-                        render_page_clip_image(page, clip, image_path)
-                        question_text = page.get_text("text", sort=True, clip=clip).strip()
-                    else:
-                        image_path = PAGE_DIR / f"{doc_id}_page_{index:03d}.png"
-                        render_page_image(page, image_path)
-                        question_text = text
+                    image_path, question_text = render_question_slice(
+                        page,
+                        page_dir=PAGE_DIR,
+                        doc_id=doc_id,
+                        page_number=index,
+                        slice_index=slice_index,
+                        item=item,
+                        page_text=text,
+                    )
                     classification = classify_question_locally(question_text or text, subject, chapter_hint, document_kind)
                     inserted.append(
                         sakura_questions.insert_imported_question(

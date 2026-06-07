@@ -102,6 +102,20 @@ def continuation_clip_for_starts(page: fitz.Page, starts: list[dict], previous_q
     return clip if clip.height > 36 else None
 
 
+def render_question_slice(page: fitz.Page, *, page_dir: Path, doc_id: str, page_number: int, slice_index: int, item: dict, page_text: str) -> tuple[Path, str]:
+    """Render one imported question slice and return its image path plus extracted text."""
+    clip = item.get("clip")
+    if clip:
+        image_path = page_dir / f"{doc_id}_page_{page_number:03d}_q{slice_index:02d}.png"
+        render_page_clip_image(page, clip, image_path)
+        question_text = page.get_text("text", sort=True, clip=clip).strip()
+    else:
+        image_path = page_dir / f"{doc_id}_page_{page_number:03d}.png"
+        render_page_image(page, image_path)
+        question_text = page_text
+    return image_path, question_text
+
+
 def trim_vertical_whitespace(image, trim_top: bool, trim_bottom: bool):
     rgb = image.convert("RGB")
     sample_width = min(360, rgb.width)
