@@ -2034,26 +2034,14 @@ class DemoHandler(BaseHTTPRequestHandler):
             return json_response(self, {"error": f"AI 调用失败：{exc}", "has_key": True}, 500)
         memory_candidate = sakura_ai.build_memory_candidate(message, answer, intent, strategy, context)
         with connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO ai_teacher_turns (id, user_message, intent, strategy, context_json, answer, memory_candidate, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    uuid.uuid4().hex,
-                    message[:2000],
-                    intent,
-                    strategy.get("key", ""),
-                    json.dumps({
-                        "profile": context.get("profile", {}),
-                        "top_gaps": context.get("top_gaps", [])[:5],
-                        "review_backlog": context.get("review_backlog", {}),
-                        "today_actions": context.get("today_actions", [])[:5],
-                    }, ensure_ascii=False),
-                    answer[:8000],
-                    memory_candidate,
-                    datetime.now().isoformat(timespec="seconds"),
-                ),
+            sakura_teacher_memory.save_teacher_turn(
+                conn,
+                message=message,
+                intent=intent,
+                strategy=strategy,
+                context=context,
+                answer=answer,
+                memory_candidate=memory_candidate,
             )
         return json_response(self, {
             "answer": answer,

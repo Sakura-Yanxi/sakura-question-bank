@@ -131,6 +131,45 @@ def delete_mentor_experience(conn, exp_id: str) -> bool:
     return True
 
 
+def save_teacher_turn(
+    conn,
+    *,
+    message: str,
+    intent: str,
+    strategy: dict,
+    context: dict,
+    answer: str,
+    memory_candidate: str,
+) -> str:
+    turn_id = uuid.uuid4().hex
+    context_json = json.dumps(
+        {
+            "profile": context.get("profile", {}),
+            "top_gaps": context.get("top_gaps", [])[:5],
+            "review_backlog": context.get("review_backlog", {}),
+            "today_actions": context.get("today_actions", [])[:5],
+        },
+        ensure_ascii=False,
+    )
+    conn.execute(
+        """
+        INSERT INTO ai_teacher_turns (id, user_message, intent, strategy, context_json, answer, memory_candidate, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            turn_id,
+            message[:2000],
+            intent,
+            strategy.get("key", ""),
+            context_json,
+            answer[:8000],
+            memory_candidate,
+            datetime.now().isoformat(timespec="seconds"),
+        ),
+    )
+    return turn_id
+
+
 def select_relevant_mentor_experiences(conn, message: str = "", subject_hint: str = "", limit: int = 5) -> list[dict]:
     experiences = load_mentor_experiences(conn, limit=80)
     text = (message or "").lower()
