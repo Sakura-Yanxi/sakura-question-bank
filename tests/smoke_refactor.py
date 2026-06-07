@@ -185,6 +185,25 @@ def make_import_conn() -> sqlite3.Connection:
     return conn
 
 
+def make_textbook_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE textbook_pages (
+            id TEXT PRIMARY KEY,
+            textbook_id TEXT,
+            page_number INTEGER,
+            image_path TEXT,
+            page_text TEXT,
+            paragraphs_json TEXT,
+            created_at TEXT
+        )
+        """
+    )
+    return conn
+
+
 def test_import_insert_and_ocr_helpers() -> None:
     metadata = sakura_documents.import_metadata(
         filename="demo import.pdf",
@@ -213,6 +232,29 @@ def test_import_insert_and_ocr_helpers() -> None:
         "title": "part 1",
         "subject": "Math",
     }
+    textbook_conn = make_textbook_conn()
+    textbook_doc = fitz.open()
+    textbook_page = textbook_doc.new_page()
+    textbook_page.insert_text((72, 100), "Definition one.", fontsize=12)
+    rendered_paths = []
+    sakura_textbook.import_textbook_page(
+        textbook_conn,
+        textbook_page,
+        book_id="book1",
+        page_number=2,
+        page_dir=Path("data/pages"),
+        render_page_image=lambda _page, path: rendered_paths.append(path),
+        created_at="now",
+    )
+    textbook_row = textbook_conn.execute("SELECT * FROM textbook_pages").fetchone()
+    assert textbook_row["textbook_id"] == "book1"
+    assert textbook_row["page_number"] == 2
+    assert textbook_row["image_path"] == str(Path("data/pages/book1_textbook_page_002.png"))
+    assert "Definition one." in textbook_row["page_text"]
+    assert json.loads(textbook_row["paragraphs_json"]) == ["Definition one."]
+    assert rendered_paths == [Path("data/pages/book1_textbook_page_002.png")]
+    textbook_doc.close()
+    textbook_conn.close()
 
     conn = make_import_conn()
     sakura_documents.insert_document(

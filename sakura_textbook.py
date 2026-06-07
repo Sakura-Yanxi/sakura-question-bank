@@ -91,6 +91,31 @@ def textbook_import_metadata(
     }
 
 
+def import_textbook_page(
+    conn,
+    page,
+    *,
+    book_id: str,
+    page_number: int,
+    page_dir: Path,
+    render_page_image: Callable,
+    created_at: str,
+) -> None:
+    page_id = uuid.uuid4().hex
+    text = page.get_text("text", sort=True).strip()
+    paragraphs = split_textbook_paragraphs(text)
+    image_path = page_dir / f"{book_id}_textbook_page_{page_number:03d}.png"
+    render_page_image(page, image_path)
+    conn.execute(
+        """
+        INSERT INTO textbook_pages (
+            id, textbook_id, page_number, image_path, page_text, paragraphs_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (page_id, book_id, page_number, str(image_path), text, json.dumps(paragraphs, ensure_ascii=False), created_at),
+    )
+
+
 def import_textbook_pdf(
     filename: str,
     pdf_bytes: bytes,
@@ -129,18 +154,14 @@ def import_textbook_pdf(
                 (book_id, title, subject, filename, str(pdf_path), page_count, now),
             )
             for index, page in enumerate(pdf, start=1):
-                page_id = uuid.uuid4().hex
-                text = page.get_text("text", sort=True).strip()
-                paragraphs = split_textbook_paragraphs(text)
-                image_path = page_dir / f"{book_id}_textbook_page_{index:03d}.png"
-                render_page_image(page, image_path)
-                conn.execute(
-                    """
-                    INSERT INTO textbook_pages (
-                        id, textbook_id, page_number, image_path, page_text, paragraphs_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (page_id, book_id, index, str(image_path), text, json.dumps(paragraphs, ensure_ascii=False), now),
+                import_textbook_page(
+                    conn,
+                    page,
+                    book_id=book_id,
+                    page_number=index,
+                    page_dir=page_dir,
+                    render_page_image=render_page_image,
+                    created_at=now,
                 )
     finally:
         pdf.close()
