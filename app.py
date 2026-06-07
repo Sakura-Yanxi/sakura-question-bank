@@ -28,8 +28,7 @@ from sakura_pdf import (
     append_page_clip_to_question_image,
     continuation_clip_for_starts,
     crop_image_by_ratio,
-    detect_question_slices,
-    detect_question_starts,
+    import_page_slices,
     page_range,
     render_page_image,
     render_question_slice,
@@ -1069,15 +1068,12 @@ def import_pdf(
                 else:
                     extracted_chapter = extract_chapter_from_page(page, text)
                     chapter_hint = chapters.resolve(extracted_chapter)
-                starts = detect_question_starts(page) if document_kind == MOCK_PAPER_KIND and split_questions else []
+                starts, slices = import_page_slices(page, split_enabled=document_kind == MOCK_PAPER_KIND and split_questions)
                 continuation_clip = continuation_clip_for_starts(page, starts, previous_question.value)
                 if continuation_clip and previous_question.question_id and previous_question.image_path:
                     append_page_clip_to_question_image(page, continuation_clip, previous_question.image_path)
                     continuation_text = page.get_text("text", sort=True, clip=continuation_clip).strip()
                     sakura_questions.append_question_ocr_text(conn, previous_question.question_id, continuation_text)
-                slices = detect_question_slices(page, starts) if document_kind == MOCK_PAPER_KIND and split_questions else []
-                if not slices:
-                    slices = [{"question_no": "", "clip": None}]
                 for slice_index, item in enumerate(slices, start=1):
                     seq_no += 1
                     q_id = uuid.uuid4().hex

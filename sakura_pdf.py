@@ -98,6 +98,15 @@ def detect_question_slices(page: fitz.Page, starts: list[dict] | None = None) ->
     return slices
 
 
+def import_page_slices(page: fitz.Page, *, split_enabled: bool) -> tuple[list[dict], list[dict]]:
+    """Return question starts plus import slices, falling back to one full-page question."""
+    starts = detect_question_starts(page) if split_enabled else []
+    slices = detect_question_slices(page, starts) if split_enabled else []
+    if not slices:
+        slices = [{"question_no": "", "clip": None}]
+    return starts, slices
+
+
 def continuation_clip_for_starts(page: fitz.Page, starts: list[dict], previous_question_value: int | None) -> fitz.Rect | None:
     """Return the top-page continuation clip when the next question starts mid-page."""
     if not starts or previous_question_value is None:

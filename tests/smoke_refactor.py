@@ -48,6 +48,12 @@ def test_pdf_helpers() -> None:
     assert round(clip.y1) == 196
     assert sakura_pdf.continuation_clip_for_starts(page, [{"value": 6, "y": 200}], 4) is None
     assert sakura_pdf.continuation_clip_for_starts(page, [{"value": 5, "y": 80}], 4) is None
+    starts, slices = sakura_pdf.import_page_slices(page, split_enabled=False)
+    assert starts == []
+    assert slices == [{"question_no": "", "clip": None}]
+    starts, slices = sakura_pdf.import_page_slices(page, split_enabled=True)
+    assert starts == []
+    assert slices == [{"question_no": "", "clip": None}]
     doc.close()
 
     state = sakura_pdf.PreviousQuestionState()
