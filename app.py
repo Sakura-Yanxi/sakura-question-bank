@@ -28,12 +28,11 @@ from sakura_pdf import (
     append_page_clip_to_question_image,
     continuation_clip_for_starts,
     crop_image_by_ratio,
-    import_page_slices,
     page_range,
+    prepare_import_page,
     render_page_image,
     render_question_slice,
     save_uploaded_pdf,
-    should_split_import_page,
 )
 import sakura_notifications
 import sakura_weather
@@ -1070,7 +1069,12 @@ def import_pdf(
             previous_question = PreviousQuestionState()
             for index in range(page_start, page_end + 1):
                 page = pdf[index - 1]
-                text = page.get_text("text", sort=True).strip()
+                text, starts, slices = prepare_import_page(
+                    page,
+                    document_kind=document_kind,
+                    split_questions=split_questions,
+                    mock_paper_kind=MOCK_PAPER_KIND,
+                )
                 chapter_hint = sakura_classify.resolve_import_chapter(
                     page=page,
                     text=text,
@@ -1079,14 +1083,6 @@ def import_pdf(
                     default_chapter=DEFAULT_CHAPTER,
                     mock_paper_kind=MOCK_PAPER_KIND,
                     mock_paper_chapter=MOCK_PAPER_CHAPTER,
-                )
-                starts, slices = import_page_slices(
-                    page,
-                    split_enabled=should_split_import_page(
-                        document_kind,
-                        split_questions=split_questions,
-                        mock_paper_kind=MOCK_PAPER_KIND,
-                    ),
                 )
                 continuation_clip = continuation_clip_for_starts(page, starts, previous_question.value)
                 if continuation_clip and previous_question.question_id and previous_question.image_path:

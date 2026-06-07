@@ -61,6 +61,16 @@ def test_pdf_helpers() -> None:
     starts, slices = sakura_pdf.import_page_slices(page, split_enabled=True)
     assert starts == []
     assert slices == [{"question_no": "", "clip": None}]
+    page.insert_text((72, 120), "Page text for import", fontsize=12)
+    text, starts, slices = sakura_pdf.prepare_import_page(
+        page,
+        document_kind="book",
+        split_questions=True,
+        mock_paper_kind="mock",
+    )
+    assert "Page text for import" in text
+    assert starts == []
+    assert slices == [{"question_no": "", "clip": None}]
     doc.close()
 
     state = sakura_pdf.PreviousQuestionState()

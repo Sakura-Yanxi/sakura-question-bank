@@ -117,6 +117,25 @@ def import_page_slices(page: fitz.Page, *, split_enabled: bool) -> tuple[list[di
     return starts, slices
 
 
+def prepare_import_page(
+    page: fitz.Page,
+    *,
+    document_kind: str,
+    split_questions: bool,
+    mock_paper_kind: str,
+) -> tuple[str, list[dict], list[dict]]:
+    text = page.get_text("text", sort=True).strip()
+    starts, slices = import_page_slices(
+        page,
+        split_enabled=should_split_import_page(
+            document_kind,
+            split_questions=split_questions,
+            mock_paper_kind=mock_paper_kind,
+        ),
+    )
+    return text, starts, slices
+
+
 def continuation_clip_for_starts(page: fitz.Page, starts: list[dict], previous_question_value: int | None) -> fitz.Rect | None:
     """Return the top-page continuation clip when the next question starts mid-page."""
     if not starts or previous_question_value is None:
