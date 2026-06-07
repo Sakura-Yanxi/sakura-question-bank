@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class RouteTarget:
     handler: str
     with_query: bool = False
+    args: tuple = ()
 
 
 GET_ROUTES: dict[str, RouteTarget] = {
@@ -76,3 +77,61 @@ def route_for(path: str, routes: dict[str, RouteTarget]) -> RouteTarget | None:
 
 def split_path(path: str) -> list[str]:
     return [part for part in path.strip("/").split("/") if part]
+
+
+def get_dynamic_route(path: str) -> RouteTarget | None:
+    if path.startswith("/api/textbooks/") and "/pages/" in path:
+        parts = path.split("/")
+        return RouteTarget("handle_textbook_page", args=(parts[3], int(parts[5])))
+    if path.startswith("/api/documents/") and path.endswith("/chapter-stats"):
+        return RouteTarget("handle_chapter_stats", args=(path.split("/")[-2],))
+    if path.startswith("/api/practice/"):
+        return RouteTarget("handle_practice_batch_get", args=(path.split("/")[-1],))
+    if path.startswith("/api/reflections/") and path.endswith("/download"):
+        return RouteTarget("handle_reflection_download", args=(path.split("/")[-2],))
+    if path.startswith("/api/questions/"):
+        return RouteTarget("handle_question_detail", args=(path.split("/")[-1],))
+    return None
+
+
+def post_dynamic_route(path: str) -> RouteTarget | None:
+    if path.startswith("/api/documents/") and path.endswith("/rescan-chapters"):
+        return RouteTarget("handle_rescan_chapters", args=(path.split("/")[-2],))
+    if path.startswith("/api/questions/") and path.endswith("/analyze"):
+        return RouteTarget("handle_analyze", args=(path.split("/")[-2],))
+    if path.startswith("/api/questions/") and path.endswith("/hint"):
+        return RouteTarget("handle_hint", args=(path.split("/")[-2],))
+    if path.startswith("/api/questions/") and path.endswith("/variations"):
+        return RouteTarget("handle_variations", args=(path.split("/")[-2],))
+    if path.startswith("/api/questions/") and path.endswith("/crop"):
+        return RouteTarget("handle_crop_question", args=(path.split("/")[-2],))
+    if path.startswith("/api/practice/") and "/questions/" in path:
+        parts = split_path(path)
+        return RouteTarget("handle_practice_feedback", args=(parts[2], parts[4]))
+    return None
+
+
+def delete_dynamic_route(path: str) -> RouteTarget | None:
+    if path.startswith("/api/textbooks/"):
+        return RouteTarget("handle_delete_textbook", args=(path.split("/")[-1],))
+    if path.startswith("/api/documents/"):
+        return RouteTarget("handle_delete_document", args=(path.split("/")[-1],))
+    if path.startswith("/api/questions/"):
+        return RouteTarget("handle_delete_question", args=(path.split("/")[-1],))
+    if path.startswith("/api/reflections/"):
+        return RouteTarget("handle_delete_reflection", args=(path.split("/")[-1],))
+    if path.startswith("/api/daily/rules/"):
+        return RouteTarget("handle_daily_rule_delete", args=(path.split("/")[-1],))
+    if path.startswith("/api/ai-chat/memory/"):
+        return RouteTarget("handle_ai_memory_delete", args=(path.split("/")[-1],))
+    if path.startswith("/api/mentor-experience/"):
+        return RouteTarget("handle_mentor_experience_delete", args=(path.split("/")[-1],))
+    return None
+
+
+def patch_dynamic_route(path: str) -> RouteTarget | None:
+    if path.startswith("/api/documents/"):
+        return RouteTarget("handle_update_document", args=(path.split("/")[-1],))
+    if path.startswith("/api/questions/"):
+        return RouteTarget("handle_update_question", args=(path.split("/")[-1],))
+    return None

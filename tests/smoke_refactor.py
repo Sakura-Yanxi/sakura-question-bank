@@ -68,6 +68,12 @@ def test_http_file_serving() -> None:
     assert sakura_routes.route_for("/api/notify/settings", sakura_routes.POST_ROUTES).handler == "handle_notification_settings_post"
     assert sakura_routes.route_for("/api/missing", sakura_routes.GET_ROUTES) is None
     assert sakura_routes.split_path("/api/practice/b1/questions/q2") == ["api", "practice", "b1", "questions", "q2"]
+    assert sakura_routes.get_dynamic_route("/api/questions/q1").handler == "handle_question_detail"
+    assert sakura_routes.get_dynamic_route("/api/textbooks/t1/pages/3").args == ("t1", 3)
+    assert sakura_routes.post_dynamic_route("/api/questions/q1/hint").args == ("q1",)
+    assert sakura_routes.post_dynamic_route("/api/practice/b1/questions/q2").args == ("b1", "q2")
+    assert sakura_routes.delete_dynamic_route("/api/mentor-experience/e1").handler == "handle_mentor_experience_delete"
+    assert sakura_routes.patch_dynamic_route("/api/documents/d1").args == ("d1",)
 
 
 def test_pdf_helpers() -> None:

@@ -1200,25 +1200,10 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return json_response(self, {"ok": True, "date": date.today().isoformat()})
             route = sakura_routes.route_for(parsed.path, sakura_routes.GET_ROUTES)
             if route:
-                handler = getattr(self, route.handler)
-                if route.with_query:
-                    return handler(parse_qs(parsed.query))
-                return handler()
-            if parsed.path.startswith("/api/textbooks/") and "/pages/" in parsed.path:
-                parts = parsed.path.split("/")
-                return self.handle_textbook_page(parts[3], int(parts[5]))
-            if parsed.path.startswith("/api/documents/") and parsed.path.endswith("/chapter-stats"):
-                doc_id = parsed.path.split("/")[-2]
-                return self.handle_chapter_stats(doc_id)
-            if parsed.path.startswith("/api/practice/"):
-                batch_id = parsed.path.split("/")[-1]
-                return self.handle_practice_batch_get(batch_id)
-            if parsed.path.startswith("/api/reflections/") and parsed.path.endswith("/download"):
-                ref_id = parsed.path.split("/")[-2]
-                return self.handle_reflection_download(ref_id)
-            if parsed.path.startswith("/api/questions/"):
-                q_id = parsed.path.split("/")[-1]
-                return self.handle_question_detail(q_id)
+                return self.dispatch_route(route, parse_qs(parsed.query))
+            route = sakura_routes.get_dynamic_route(parsed.path)
+            if route:
+                return self.dispatch_route(route, parse_qs(parsed.query))
             if parsed.path.startswith("/static/") or parsed.path.startswith("/data/"):
                 return self.serve_file(ROOT / parsed.path.lstrip("/"))
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
@@ -1252,25 +1237,10 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return
             route = sakura_routes.route_for(parsed.path, sakura_routes.POST_ROUTES)
             if route:
-                return getattr(self, route.handler)()
-            if parsed.path.startswith("/api/documents/") and parsed.path.endswith("/rescan-chapters"):
-                doc_id = parsed.path.split("/")[-2]
-                return self.handle_rescan_chapters(doc_id)
-            if parsed.path.startswith("/api/questions/") and parsed.path.endswith("/analyze"):
-                q_id = parsed.path.split("/")[-2]
-                return self.handle_analyze(q_id)
-            if parsed.path.startswith("/api/questions/") and parsed.path.endswith("/hint"):
-                q_id = parsed.path.split("/")[-2]
-                return self.handle_hint(q_id)
-            if parsed.path.startswith("/api/questions/") and parsed.path.endswith("/variations"):
-                q_id = parsed.path.split("/")[-2]
-                return self.handle_variations(q_id)
-            if parsed.path.startswith("/api/questions/") and parsed.path.endswith("/crop"):
-                q_id = parsed.path.split("/")[-2]
-                return self.handle_crop_question(q_id)
-            if parsed.path.startswith("/api/practice/") and "/questions/" in parsed.path:
-                parts = parsed.path.strip("/").split("/")
-                return self.handle_practice_feedback(parts[2], parts[4])
+                return self.dispatch_route(route)
+            route = sakura_routes.post_dynamic_route(parsed.path)
+            if route:
+                return self.dispatch_route(route)
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
         except Exception as exc:
             traceback.print_exc()
@@ -1283,28 +1253,10 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return
             route = sakura_routes.route_for(parsed.path, sakura_routes.DELETE_ROUTES)
             if route:
-                return getattr(self, route.handler)()
-            if parsed.path.startswith("/api/textbooks/"):
-                book_id = parsed.path.split("/")[-1]
-                return self.handle_delete_textbook(book_id)
-            if parsed.path.startswith("/api/documents/"):
-                doc_id = parsed.path.split("/")[-1]
-                return self.handle_delete_document(doc_id)
-            if parsed.path.startswith("/api/questions/"):
-                q_id = parsed.path.split("/")[-1]
-                return self.handle_delete_question(q_id)
-            if parsed.path.startswith("/api/reflections/"):
-                ref_id = parsed.path.split("/")[-1]
-                return self.handle_delete_reflection(ref_id)
-            if parsed.path.startswith("/api/daily/rules/"):
-                rule_id = parsed.path.split("/")[-1]
-                return self.handle_daily_rule_delete(rule_id)
-            if parsed.path.startswith("/api/ai-chat/memory/"):
-                memory_id = parsed.path.split("/")[-1]
-                return self.handle_ai_memory_delete(memory_id)
-            if parsed.path.startswith("/api/mentor-experience/"):
-                exp_id = parsed.path.split("/")[-1]
-                return self.handle_mentor_experience_delete(exp_id)
+                return self.dispatch_route(route)
+            route = sakura_routes.delete_dynamic_route(parsed.path)
+            if route:
+                return self.dispatch_route(route)
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
         except Exception as exc:
             traceback.print_exc()
@@ -1315,16 +1267,19 @@ class DemoHandler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             if not self.require_auth(parsed.path):
                 return
-            if parsed.path.startswith("/api/documents/"):
-                doc_id = parsed.path.split("/")[-1]
-                return self.handle_update_document(doc_id)
-            if parsed.path.startswith("/api/questions/"):
-                q_id = parsed.path.split("/")[-1]
-                return self.handle_update_question(q_id)
+            route = sakura_routes.patch_dynamic_route(parsed.path)
+            if route:
+                return self.dispatch_route(route)
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
         except Exception as exc:
             traceback.print_exc()
             return json_response(self, {"error": str(exc)}, 500)
+
+    def dispatch_route(self, route: sakura_routes.RouteTarget, query: dict | None = None) -> None:
+        handler = getattr(self, route.handler)
+        if route.with_query:
+            return handler(query or {})
+        return handler(*route.args)
 
     def read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", "0"))
