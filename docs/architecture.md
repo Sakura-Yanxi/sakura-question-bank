@@ -100,6 +100,11 @@ This project is intentionally local-first and lightweight, but new features shou
   - bind
 - Avoid adding new global event listeners when a scoped helper such as `on()` or event delegation can handle it.
 
+## Validation
+
+- Run `python tests\smoke_refactor.py` after backend refactors that touch PDF import, question updates, backup options or AI teacher persistence.
+- Run Python `py_compile` and `node --check static\app.js` before each safety commit.
+
 ## Next Good Splits
 
 - `app.py`: PDF import orchestration and route dispatch remain the largest backend areas.
