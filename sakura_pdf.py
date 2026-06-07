@@ -25,6 +25,12 @@ def safe_pdf_filename(filename: str, fallback: str = "questions.pdf") -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", filename) or fallback
 
 
+def save_uploaded_pdf(upload_dir: Path, doc_id: str, filename: str, pdf_bytes: bytes) -> Path:
+    pdf_path = upload_dir / f"{doc_id}_{safe_pdf_filename(filename)}"
+    pdf_path.write_bytes(pdf_bytes)
+    return pdf_path
+
+
 def page_range(page_count: int, start_page: int | None = None, end_page: int | None = None) -> tuple[int, int]:
     page_start = max(start_page or 1, 1)
     page_end = min(end_page or page_count, page_count)

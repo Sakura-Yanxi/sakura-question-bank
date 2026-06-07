@@ -28,6 +28,10 @@ def test_pdf_helpers() -> None:
     assert sakura_pdf.safe_pdf_filename("abc.pdf") == "abc.pdf"
     assert sakura_pdf.safe_pdf_filename("a b/name.pdf") == "a_b_name.pdf"
     assert sakura_pdf.safe_pdf_filename("") == "questions.pdf"
+    with tempfile.TemporaryDirectory() as tmp:
+        pdf_path = sakura_pdf.save_uploaded_pdf(Path(tmp), "doc1", "a b/name.pdf", b"%PDF-demo")
+        assert pdf_path.name == "doc1_a_b_name.pdf"
+        assert pdf_path.read_bytes() == b"%PDF-demo"
     assert sakura_pdf.page_range(10, None, None) == (1, 10)
     assert sakura_pdf.page_range(10, 3, 7) == (3, 7)
     assert sakura_pdf.page_range(10, -5, 99) == (1, 10)

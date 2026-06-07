@@ -32,7 +32,7 @@ from sakura_pdf import (
     page_range,
     render_page_image,
     render_question_slice,
-    safe_pdf_filename,
+    save_uploaded_pdf,
 )
 import sakura_notifications
 import sakura_weather
@@ -1033,9 +1033,7 @@ def import_pdf(
     split_questions: bool = False,
 ) -> dict:
     doc_id = uuid.uuid4().hex
-    safe_name = safe_pdf_filename(filename)
-    pdf_path = UPLOAD_DIR / f"{doc_id}_{safe_name}"
-    pdf_path.write_bytes(pdf_bytes)
+    pdf_path = save_uploaded_pdf(UPLOAD_DIR, doc_id, filename, pdf_bytes)
     metadata = sakura_documents.import_metadata(
         filename=filename,
         title=title,
