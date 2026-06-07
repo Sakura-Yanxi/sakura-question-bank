@@ -583,6 +583,29 @@ def test_real_import_pdf_smoke() -> None:
             assert len(questions) == 1
             assert "sin(x)/x" in questions[0]["ocr_text"]
             assert Path(questions[0]["image_path"]).exists()
+
+            textbook_result = app.import_textbook_pdf(
+                "demo textbook.pdf",
+                pdf_bytes,
+                title="Demo Textbook",
+                subject="Math",
+            )
+            assert textbook_result["title"] == "Demo Textbook"
+            assert textbook_result["subject"] == "Math"
+            assert textbook_result["page_count"] == 1
+
+            conn = app.connect()
+            try:
+                textbooks = conn.execute("SELECT * FROM textbooks").fetchall()
+                textbook_pages = conn.execute("SELECT * FROM textbook_pages").fetchall()
+            finally:
+                conn.close()
+            assert len(textbooks) == 1
+            assert textbooks[0]["title"] == "Demo Textbook"
+            assert Path(textbooks[0]["stored_path"]).exists()
+            assert len(textbook_pages) == 1
+            assert "sin(x)/x" in textbook_pages[0]["page_text"]
+            assert Path(textbook_pages[0]["image_path"]).exists()
         finally:
             for key, value in original_paths.items():
                 setattr(app, key, value)
