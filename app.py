@@ -1986,18 +1986,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             except (TypeError, json.JSONDecodeError):
                 cached_plan = {}
             insight_count = conn.execute("SELECT COUNT(*) c FROM insights").fetchone()["c"]
-        profile_summary = None
-        if latest:
-            p = latest["profile"]
-            profile_summary = {
-                "version": latest["version"],
-                "evidence_count": p.get("evidence_count", 0),
-                "knowledge_count": p.get("knowledge_count", 0),
-                "avg_mastery": p.get("avg_mastery", 0),
-                "velocity": p.get("velocity", ""),
-                "headline": p.get("headline", ""),
-                "created_at": latest["created_at"],
-            }
+        profile_summary = sakura_coach.profile_summary_from_latest(latest)
         return json_response(self, {
             "settings": self._coach_settings_view(state),
             "profile_summary": profile_summary,

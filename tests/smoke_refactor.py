@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
 import sakura_backup
 import sakura_ai
 import sakura_classify
+import sakura_coach
 import sakura_documents
 import sakura_http
 import sakura_import
@@ -594,6 +595,28 @@ def test_teacher_turn_persistence() -> None:
     assert len(calls) == 1
     assert calls[0][1] == 0.35
     assert calls[0][0][-1] == {"role": "user", "content": "please make a plan"}
+    assert sakura_coach.profile_summary_from_latest(None) is None
+    assert sakura_coach.profile_summary_from_latest(
+        {
+            "version": 3,
+            "created_at": "now",
+            "profile": {
+                "evidence_count": 8,
+                "knowledge_count": 4,
+                "avg_mastery": 0.75,
+                "velocity": "up",
+                "headline": "steady",
+            },
+        }
+    ) == {
+        "version": 3,
+        "evidence_count": 8,
+        "knowledge_count": 4,
+        "avg_mastery": 0.75,
+        "velocity": "up",
+        "headline": "steady",
+        "created_at": "now",
+    }
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

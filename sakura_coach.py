@@ -75,6 +75,21 @@ def parse_exam_date(value: str | None, fallback: date) -> date:
         return fallback
 
 
+def profile_summary_from_latest(latest: dict | None) -> dict | None:
+    if not latest:
+        return None
+    profile = latest.get("profile") or {}
+    return {
+        "version": latest.get("version", 0),
+        "evidence_count": profile.get("evidence_count", 0),
+        "knowledge_count": profile.get("knowledge_count", 0),
+        "avg_mastery": profile.get("avg_mastery", 0),
+        "velocity": profile.get("velocity", ""),
+        "headline": profile.get("headline", ""),
+        "created_at": latest.get("created_at", ""),
+    }
+
+
 def recent_learning_evidence(conn, limit: int = 8) -> list[dict]:
     rows = conn.execute(
         """
