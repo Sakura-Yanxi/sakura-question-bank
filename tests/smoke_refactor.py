@@ -32,6 +32,9 @@ def test_pdf_helpers() -> None:
         pdf_path = sakura_pdf.save_uploaded_pdf(Path(tmp), "doc1", "a b/name.pdf", b"%PDF-demo")
         assert pdf_path.name == "doc1_a_b_name.pdf"
         assert pdf_path.read_bytes() == b"%PDF-demo"
+    assert sakura_pdf.should_split_import_page("mock", split_questions=True, mock_paper_kind="mock") is True
+    assert sakura_pdf.should_split_import_page("mock", split_questions=False, mock_paper_kind="mock") is False
+    assert sakura_pdf.should_split_import_page("book", split_questions=True, mock_paper_kind="mock") is False
     assert sakura_pdf.page_range(10, None, None) == (1, 10)
     assert sakura_pdf.page_range(10, 3, 7) == (3, 7)
     assert sakura_pdf.page_range(10, -5, 99) == (1, 10)

@@ -33,6 +33,7 @@ from sakura_pdf import (
     render_page_image,
     render_question_slice,
     save_uploaded_pdf,
+    should_split_import_page,
 )
 import sakura_notifications
 import sakura_weather
@@ -1079,7 +1080,14 @@ def import_pdf(
                     mock_paper_kind=MOCK_PAPER_KIND,
                     mock_paper_chapter=MOCK_PAPER_CHAPTER,
                 )
-                starts, slices = import_page_slices(page, split_enabled=document_kind == MOCK_PAPER_KIND and split_questions)
+                starts, slices = import_page_slices(
+                    page,
+                    split_enabled=should_split_import_page(
+                        document_kind,
+                        split_questions=split_questions,
+                        mock_paper_kind=MOCK_PAPER_KIND,
+                    ),
+                )
                 continuation_clip = continuation_clip_for_starts(page, starts, previous_question.value)
                 if continuation_clip and previous_question.question_id and previous_question.image_path:
                     append_page_clip_to_question_image(page, continuation_clip, previous_question.image_path)

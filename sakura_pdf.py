@@ -31,6 +31,10 @@ def save_uploaded_pdf(upload_dir: Path, doc_id: str, filename: str, pdf_bytes: b
     return pdf_path
 
 
+def should_split_import_page(document_kind: str, *, split_questions: bool, mock_paper_kind: str) -> bool:
+    return document_kind == mock_paper_kind and split_questions
+
+
 def page_range(page_count: int, start_page: int | None = None, end_page: int | None = None) -> tuple[int, int]:
     page_start = max(start_page or 1, 1)
     page_end = min(end_page or page_count, page_count)
