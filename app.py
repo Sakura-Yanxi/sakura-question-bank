@@ -38,6 +38,7 @@ import sakura_settings
 import sakura_ai
 import sakura_profile
 import sakura_coach
+import sakura_migration
 import sakura_export
 import sakura_backup
 import sakura_reflection
@@ -1173,43 +1174,24 @@ def prune_empty_documents(conn: sqlite3.Connection) -> int:
     return sakura_documents.prune_empty_documents(conn, data_dir=DATA_DIR)
 
 
-MIGRATION_JOBS: dict[str, dict] = {}
-MIGRATION_LOCK = threading.Lock()
-
-
 def set_migration_job(job_id: str, **updates) -> None:
-    with MIGRATION_LOCK:
-        job = MIGRATION_JOBS.setdefault(job_id, {})
-        job.update(updates)
-        job["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    sakura_migration.set_job(job_id, **updates)
 
 
 def get_migration_job(job_id: str) -> dict | None:
-    with MIGRATION_LOCK:
-        job = MIGRATION_JOBS.get(job_id)
-        return dict(job) if job else None
+    return sakura_migration.get_job(job_id)
 
 
 def run_migration_import_job(job_id: str, upload_path: Path) -> None:
-    set_migration_job(job_id, status="running", message="Restoring backup...")
-    try:
-        result = sakura_backup.restore_backup_zip(
-            upload_path.read_bytes(),
-            root=ROOT,
-            db_path=DB_PATH,
-            folders={"uploads": UPLOAD_DIR, "pages": PAGE_DIR},
-            ensure_dirs=ensure_dirs,
-            init_db=init_db,
-        )
-        set_migration_job(job_id, status="done", message="Import completed.", result=result)
-    except Exception as exc:
-        traceback.print_exc()
-        set_migration_job(job_id, status="failed", message=str(exc), error=str(exc))
-    finally:
-        try:
-            upload_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+    sakura_migration.run_import_job(
+        job_id,
+        upload_path,
+        root=ROOT,
+        db_path=DB_PATH,
+        folders={"uploads": UPLOAD_DIR, "pages": PAGE_DIR},
+        ensure_dirs=ensure_dirs,
+        init_db=init_db,
+    )
 
 
 class DemoHandler(BaseHTTPRequestHandler):

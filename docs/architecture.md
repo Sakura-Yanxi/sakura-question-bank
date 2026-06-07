@@ -26,6 +26,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - Cover generation, image compression and CJK title rasterization.
 - `sakura_backup.py`
   - Migration ZIP export/restore filesystem operations and archive safety checks.
+- `sakura_migration.py`
+  - In-memory migration job status tracking and background restore-job orchestration.
 - `sakura_reflection.py`
   - Weekly/monthly reflection statistics, local narrative, AI prompt assembly and persistence.
 - `sakura_daily.py`
