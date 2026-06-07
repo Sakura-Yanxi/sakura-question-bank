@@ -40,6 +40,8 @@ This project is intentionally local-first and lightweight, but new features shou
 - `sakura_documents.py`
   - Document listing, document metadata updates and question/document deletion cleanup.
   - Safe data-directory file deletion and empty-document pruning.
+- `sakura_questions.py`
+  - Question index/detail SQL queries and category/subject aggregate statistics.
 - `sakura_retention.py`
   - Review interval constants, wrong-status detection and meta-tag normalization.
 - `sakura_models.py`

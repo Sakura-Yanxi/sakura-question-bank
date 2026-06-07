@@ -53,6 +53,7 @@ import sakura_db
 import sakura_classify
 import sakura_http
 import sakura_parse
+import sakura_questions
 import sakura_insights
 import sakura_hints
 import sakura_teacher_memory
@@ -1623,40 +1624,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             ("category", "status", "document_id", "chapter", "subject", "search"),
         )
         with connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT q.*, d.filename, d.title document_title, d.subject, d.document_kind
-                FROM questions q
-                JOIN documents d ON d.id = q.document_id
-                {where}
-                ORDER BY q.created_at DESC, q.page_number ASC
-                """,
-                params,
-            ).fetchall()
-            stats = conn.execute(
-                """
-                SELECT q.category, COUNT(*) total,
-                       SUM(CASE WHEN status = '做错' THEN 1 ELSE 0 END) wrong
-                FROM questions q
-                JOIN documents d ON d.id = q.document_id
-                {where}
-                GROUP BY q.category
-                ORDER BY total DESC
-                """.format(where=where),
-                params,
-            ).fetchall()
-            subject_stats = conn.execute(
-                """
-                SELECT d.subject, COUNT(*) total,
-                       SUM(CASE WHEN q.status = '做错' THEN 1 ELSE 0 END) wrong
-                FROM questions q
-                JOIN documents d ON d.id = q.document_id
-                {where}
-                GROUP BY d.subject
-                ORDER BY total DESC
-                """.format(where=where),
-                params,
-            ).fetchall()
+            rows, stats, subject_stats = sakura_questions.load_question_index(conn, where, params)
             options = get_scoped_filter_options(conn, query)
         return json_response(
             self,
@@ -1670,15 +1638,7 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_question_detail(self, q_id: str) -> None:
         with connect() as conn:
-            row = conn.execute(
-                """
-                SELECT q.*, d.filename, d.title document_title, d.subject, d.document_kind
-                FROM questions q
-                JOIN documents d ON d.id = q.document_id
-                WHERE q.id = ?
-                """,
-                (q_id,),
-            ).fetchone()
+            row = sakura_questions.load_question_detail(conn, q_id)
         if not row:
             return json_response(self, {"error": "题目不存在。"}, 404)
         return json_response(self, row_to_dict(row))
@@ -1792,28 +1752,12 @@ class DemoHandler(BaseHTTPRequestHandler):
                     params.append(value)
             params.append(q_id)
             conn.execute(f"UPDATE questions SET {', '.join(assignments)} WHERE id = ?", params)
-            row = conn.execute(
-                """
-                SELECT q.*, d.filename, d.title document_title, d.subject, d.document_kind
-                FROM questions q
-                JOIN documents d ON d.id = q.document_id
-                WHERE q.id = ?
-                """,
-                (q_id,),
-            ).fetchone()
+            row = sakura_questions.load_question_detail(conn, q_id)
         return json_response(self, row_to_dict(row))
 
     def handle_analyze(self, q_id: str) -> None:
         with connect() as conn:
-            row = conn.execute(
-                """
-                SELECT q.*, d.subject, d.document_kind
-                FROM questions q
-                JOIN documents d ON d.id = q.document_id
-                WHERE q.id = ?
-                """,
-                (q_id,),
-            ).fetchone()
+            row = sakura_questions.load_question_for_ai(conn, q_id)
             if not row:
                 return json_response(self, {"error": "题目不存在。"}, 404)
             question = question_payload(row)
@@ -1826,15 +1770,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         payload = self.read_json()
         level = sakura_parse.clamped_int(payload.get("level", "1"), minimum=1, maximum=3, fallback=1)
         with connect() as conn:
-            row = conn.execute(
-                """
-                SELECT q.*, d.subject, d.document_kind
-                FROM questions q
-                JOIN documents d ON d.id = q.document_id
-                WHERE q.id = ?
-                """,
-                (q_id,),
-            ).fetchone()
+            row = sakura_questions.load_question_for_ai(conn, q_id)
             if not row:
                 return json_response(self, {"error": "题目不存在。"}, 404)
             hint = generate_hint_with_ai(question_payload(row), level)
@@ -1843,15 +1779,7 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_variations(self, q_id: str) -> None:
         with connect() as conn:
-            row = conn.execute(
-                """
-                SELECT q.*, d.subject, d.document_kind
-                FROM questions q
-                JOIN documents d ON d.id = q.document_id
-                WHERE q.id = ?
-                """,
-                (q_id,),
-            ).fetchone()
+            row = sakura_questions.load_question_for_ai(conn, q_id)
             if not row:
                 return json_response(self, {"error": "题目不存在。"}, 404)
             variations = generate_variations_with_ai(question_payload(row))
@@ -1883,15 +1811,7 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return json_response(self, {"error": "裁剪功能需要安装 Pillow：pip install -r requirements.txt"}, 500)
             except Exception as exc:
                 return json_response(self, {"error": f"裁剪失败：{exc}"}, 400)
-            updated = conn.execute(
-                """
-                SELECT q.*, d.filename, d.title document_title, d.subject, d.document_kind
-                FROM questions q
-                JOIN documents d ON d.id = q.document_id
-                WHERE q.id = ?
-                """,
-                (q_id,),
-            ).fetchone()
+            updated = sakura_questions.load_question_detail(conn, q_id)
         return json_response(self, row_to_dict(updated))
 
     def handle_chapter_stats(self, doc_id: str) -> None:
