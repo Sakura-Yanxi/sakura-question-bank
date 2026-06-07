@@ -236,6 +236,32 @@ def test_import_insert_and_ocr_helpers() -> None:
         "subcategory": "rule",
         "chapter": "ch1",
     }
+    classified_summary = sakura_questions.classify_and_insert_imported_question(
+        conn,
+        classify_question=lambda text, subject, chapter, kind: {
+            "category": subject,
+            "subcategory": kind,
+            "chapter": chapter,
+            "difficulty": "medium",
+        },
+        q_id="q2",
+        doc_id="d1",
+        page_number=4,
+        seq_no=2,
+        item={"question_no": 8},
+        image_path=Path("data/pages/q2.png"),
+        slice_text="",
+        page_text="fallback page text",
+        subject="math",
+        chapter_hint="ch2",
+        document_kind="book",
+        created_at="now",
+    )
+    assert classified_summary["question_no"] == "8"
+    q2 = conn.execute("SELECT * FROM questions WHERE id = ?", ("q2",)).fetchone()
+    assert q2["ocr_text"] == "fallback page text"
+    assert q2["category"] == "math"
+    assert q2["chapter"] == "ch2"
     payload = sakura_documents.imported_document_payload(
         doc_id="d1",
         title="Title",

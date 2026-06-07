@@ -147,6 +147,39 @@ def insert_imported_question(
     }
 
 
+def classify_and_insert_imported_question(
+    conn,
+    *,
+    classify_question,
+    q_id: str,
+    doc_id: str,
+    page_number: int,
+    seq_no: int,
+    item: dict,
+    image_path,
+    slice_text: str,
+    page_text: str,
+    subject: str,
+    chapter_hint: str,
+    document_kind: str,
+    created_at: str,
+) -> dict:
+    question_text = import_question_text(slice_text, page_text)
+    classification = classify_question(question_text, subject, chapter_hint, document_kind)
+    return insert_imported_question(
+        conn,
+        q_id=q_id,
+        doc_id=doc_id,
+        page_number=page_number,
+        seq_no=seq_no,
+        question_no=import_question_no(item),
+        image_path=image_path,
+        question_text=question_text,
+        classification=classification,
+        created_at=created_at,
+    )
+
+
 def append_question_ocr_text(conn, q_id: str, text: str) -> None:
     if not text:
         return

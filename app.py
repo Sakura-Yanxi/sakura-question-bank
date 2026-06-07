@@ -1098,19 +1098,21 @@ def import_pdf(
                         item=item,
                         page_text=text,
                     )
-                    imported_text = sakura_questions.import_question_text(question_text, text)
-                    classification = classify_question_locally(imported_text, subject, chapter_hint, document_kind)
                     inserted.append(
-                        sakura_questions.insert_imported_question(
+                        sakura_questions.classify_and_insert_imported_question(
                             conn,
+                            classify_question=classify_question_locally,
                             q_id=q_id,
                             doc_id=doc_id,
                             page_number=index,
                             seq_no=seq_no,
-                            question_no=sakura_questions.import_question_no(item),
+                            item=item,
                             image_path=image_path,
-                            question_text=imported_text,
-                            classification=classification,
+                            slice_text=question_text,
+                            page_text=text,
+                            subject=subject,
+                            chapter_hint=chapter_hint,
+                            document_kind=document_kind,
                             created_at=now,
                         )
                     )
