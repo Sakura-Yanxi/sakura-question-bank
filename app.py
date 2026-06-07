@@ -52,6 +52,7 @@ import sakura_auth
 import sakura_db
 import sakura_classify
 import sakura_http
+import sakura_parse
 import sakura_insights
 import sakura_hints
 import sakura_teacher_memory
@@ -1009,11 +1010,7 @@ def extract_text_and_chapters(pdf_path: Path, document_kind: str = DEFAULT_DOCUM
 
 
 def parse_positive_int(value: str, fallback: int | None = None) -> int | None:
-    try:
-        parsed = int(str(value).strip())
-        return parsed if parsed > 0 else fallback
-    except (TypeError, ValueError):
-        return fallback
+    return sakura_parse.positive_int(value, fallback)
 
 
 def import_pdf(
@@ -1502,7 +1499,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         document_kind = form.getfirst("document_kind", DEFAULT_DOCUMENT_KIND)
         start_page = parse_positive_int(form.getfirst("start_page", ""), None)
         end_page = parse_positive_int(form.getfirst("end_page", ""), None)
-        split_questions = form.getfirst("split_questions", "") in {"1", "true", "on", "yes"}
+        split_questions = sakura_parse.bool_flag(form.getfirst("split_questions", ""))
         result = import_pdf(file_item.filename, file_item.file.read(), title, subject, document_kind, start_page, end_page, split_questions)
         return json_response(self, result)
 
@@ -1842,8 +1839,7 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_hint(self, q_id: str) -> None:
         payload = self.read_json()
-        level = parse_positive_int(str(payload.get("level", "1")), 1) or 1
-        level = max(1, min(3, level))
+        level = sakura_parse.clamped_int(payload.get("level", "1"), minimum=1, maximum=3, fallback=1)
         with connect() as conn:
             row = conn.execute(
                 """

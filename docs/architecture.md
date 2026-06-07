@@ -48,6 +48,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - Password-gated login page rendering and signed browser session tokens.
 - `sakura_http.py`
   - Minimal JSON, text and redirect response helpers for `BaseHTTPRequestHandler`.
+- `sakura_parse.py`
+  - Small request/form parsing helpers for integers, boolean flags and bounded values.
 - `sakura_db.py`
   - Data directory setup, SQLite connection creation, schema bootstrap and additive migrations.
 - `sakura_classify.py`
