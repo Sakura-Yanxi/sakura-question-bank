@@ -74,6 +74,7 @@ ADMIN_PASSWORD = os.getenv("SAKURA_ADMIN_PASSWORD") or os.getenv("APP_PASSWORD")
 AUTH_SECRET = os.getenv("SAKURA_AUTH_SECRET") or os.getenv("APP_SECRET") or ""
 AUTH_COOKIE_NAME = "sakura_session"
 AUTH_MAX_AGE_SECONDS = 60 * 60 * 24 * 14
+DEMO_MODE = os.getenv("SAKURA_DEMO_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 # === AI 接口（OpenAI 兼容）===
 # 默认接入小米 MiMo 开放平台（https://platform.xiaomimimo.com 申请 Key）。
@@ -275,6 +276,21 @@ def text_response(handler: BaseHTTPRequestHandler, text: str, status: int = 200,
 
 def redirect_response(handler: BaseHTTPRequestHandler, location: str, status: int = HTTPStatus.FOUND) -> None:
     sakura_http.redirect_response(handler, location, status)
+
+
+def demo_mode_enabled() -> bool:
+    return DEMO_MODE
+
+
+def demo_mode_response(handler: BaseHTTPRequestHandler) -> None:
+    return json_response(
+        handler,
+        {
+            "error": "Demo mode is read-only. Mutating actions are disabled on this public showcase.",
+            "demo_mode": True,
+        },
+        HTTPStatus.FORBIDDEN,
+    )
 
 
 def auth_enabled() -> bool:
@@ -1197,7 +1213,7 @@ class DemoHandler(BaseHTTPRequestHandler):
                 batch_id = parsed.path.split("/")[-1]
                 return self.handle_practice_page(batch_id)
             if parsed.path == "/api/health":
-                return json_response(self, {"ok": True, "date": date.today().isoformat()})
+                return json_response(self, {"ok": True, "date": date.today().isoformat(), "demo_mode": demo_mode_enabled()})
             route = sakura_routes.route_for(parsed.path, sakura_routes.GET_ROUTES)
             if route:
                 return self.dispatch_route(route, parse_qs(parsed.query))
@@ -1235,6 +1251,8 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return self.handle_login_post()
             if not self.require_auth(parsed.path):
                 return
+            if demo_mode_enabled():
+                return demo_mode_response(self)
             route = sakura_routes.route_for(parsed.path, sakura_routes.POST_ROUTES)
             if route:
                 return self.dispatch_route(route)
@@ -1251,6 +1269,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             if not self.require_auth(parsed.path):
                 return
+            if demo_mode_enabled():
+                return demo_mode_response(self)
             route = sakura_routes.route_for(parsed.path, sakura_routes.DELETE_ROUTES)
             if route:
                 return self.dispatch_route(route)
@@ -1267,6 +1287,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             if not self.require_auth(parsed.path):
                 return
+            if demo_mode_enabled():
+                return demo_mode_response(self)
             route = sakura_routes.patch_dynamic_route(parsed.path)
             if route:
                 return self.dispatch_route(route)

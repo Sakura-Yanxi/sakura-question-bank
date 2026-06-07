@@ -76,6 +76,7 @@ def test_http_file_serving() -> None:
     assert sakura_routes.patch_dynamic_route("/api/documents/d1").args == ("d1",)
     missing_handlers = [name for name in sakura_routes.configured_handler_names() if not hasattr(app.DemoHandler, name)]
     assert missing_handlers == []
+    assert app.demo_mode_enabled() is app.DEMO_MODE
 
 
 def test_pdf_helpers() -> None:
