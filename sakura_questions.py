@@ -93,6 +93,10 @@ def load_question_for_ai(conn, q_id: str):
     ).fetchone()
 
 
+def import_question_text(slice_text: str, page_text: str) -> str:
+    return slice_text or page_text
+
+
 def insert_imported_question(
     conn,
     *,

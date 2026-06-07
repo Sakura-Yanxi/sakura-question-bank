@@ -1105,7 +1105,8 @@ def import_pdf(
                         item=item,
                         page_text=text,
                     )
-                    classification = classify_question_locally(question_text or text, subject, chapter_hint, document_kind)
+                    imported_text = sakura_questions.import_question_text(question_text, text)
+                    classification = classify_question_locally(imported_text, subject, chapter_hint, document_kind)
                     inserted.append(
                         sakura_questions.insert_imported_question(
                             conn,
@@ -1115,7 +1116,7 @@ def import_pdf(
                             seq_no=seq_no,
                             question_no=str(item.get("question_no") or ""),
                             image_path=image_path,
-                            question_text=question_text or text,
+                            question_text=imported_text,
                             classification=classification,
                             created_at=now,
                         )
