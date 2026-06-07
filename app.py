@@ -1950,41 +1950,29 @@ class DemoHandler(BaseHTTPRequestHandler):
             }, 400)
         with connect() as conn:
             context = build_ai_teacher_context(conn, message)
-        intent = sakura_ai.infer_teacher_intent(message)
-        strategy = sakura_ai.choose_teacher_strategy(intent, context)
-        turn_instruction = sakura_ai.build_teacher_turn_instruction(intent, strategy)
         try:
-            answer = call_llm_messages(
-                [
-                    {"role": "system", "content": sakura_ai.AI_TEACHER_PROTOCOL},
-                    {"role": "system", "content": turn_instruction},
-                    {"role": "system", "content": "本地上下文：\n" + json.dumps(context, ensure_ascii=False)},
-                    {"role": "user", "content": message},
-                ],
-                temperature=0.35,
-            )
+            turn = sakura_ai.build_teacher_chat_turn(message, context, call_llm_messages=call_llm_messages)
         except Exception as exc:
             traceback.print_exc()
             return json_response(self, {"error": f"AI 调用失败：{exc}", "has_key": True}, 500)
-        memory_candidate = sakura_ai.build_memory_candidate(message, answer, intent, strategy, context)
         with connect() as conn:
             sakura_teacher_memory.save_teacher_turn(
                 conn,
                 message=message,
-                intent=intent,
-                strategy=strategy,
+                intent=turn["intent"],
+                strategy=turn["strategy"],
                 context=context,
-                answer=answer,
-                memory_candidate=memory_candidate,
+                answer=turn["answer"],
+                memory_candidate=turn["memory_candidate"],
             )
         return json_response(self, {
-            "answer": answer,
+            "answer": turn["answer"],
             "has_key": True,
             "model": LLM_MODEL,
             "base_url": LLM_BASE_URL,
-            "teacher_intent": intent,
-            "teacher_strategy": strategy,
-            "memory_candidate": memory_candidate,
+            "teacher_intent": turn["intent"],
+            "teacher_strategy": turn["strategy"],
+            "memory_candidate": turn["memory_candidate"],
         })
 
     def handle_coach_get(self) -> None:

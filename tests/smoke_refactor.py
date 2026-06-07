@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import sakura_backup
+import sakura_ai
 import sakura_classify
 import sakura_documents
 import sakura_http
@@ -571,6 +572,29 @@ def test_backup_options() -> None:
 
 
 def test_teacher_turn_persistence() -> None:
+    calls = []
+
+    def fake_call_llm_messages(messages, temperature=0.3):
+        calls.append((messages, temperature))
+        return "teacher answer"
+
+    turn = sakura_ai.build_teacher_chat_turn(
+        "please make a plan",
+        {
+            "profile": {"headline": "needs limits"},
+            "top_gaps": [{"name": "limits"}],
+            "review_backlog": {},
+            "today_actions": [],
+        },
+        call_llm_messages=fake_call_llm_messages,
+    )
+    assert turn["answer"] == "teacher answer"
+    assert turn["intent"] in sakura_ai.TEACHER_INTENTS
+    assert turn["strategy"]["key"]
+    assert len(calls) == 1
+    assert calls[0][1] == 0.35
+    assert calls[0][0][-1] == {"role": "user", "content": "please make a plan"}
+
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute(

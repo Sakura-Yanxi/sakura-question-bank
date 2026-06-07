@@ -133,6 +133,28 @@ def build_teacher_turn_instruction(intent: str, strategy: dict) -> str:
 """.strip()
 
 
+def build_teacher_chat_turn(message: str, context: dict, *, call_llm_messages) -> dict:
+    intent = infer_teacher_intent(message)
+    strategy = choose_teacher_strategy(intent, context)
+    turn_instruction = build_teacher_turn_instruction(intent, strategy)
+    answer = call_llm_messages(
+        [
+            {"role": "system", "content": AI_TEACHER_PROTOCOL},
+            {"role": "system", "content": turn_instruction},
+            {"role": "system", "content": "Local context:\n" + json.dumps(context, ensure_ascii=False)},
+            {"role": "user", "content": message},
+        ],
+        temperature=0.35,
+    )
+    memory_candidate = build_memory_candidate(message, answer, intent, strategy, context)
+    return {
+        "answer": answer,
+        "intent": intent,
+        "strategy": strategy,
+        "memory_candidate": memory_candidate,
+    }
+
+
 def build_memory_candidate(user_message: str, answer: str, intent: str, strategy: dict, context: dict) -> str:
     if intent not in {"wrong_review", "plan", "memory_update", "motivation"}:
         return ""
