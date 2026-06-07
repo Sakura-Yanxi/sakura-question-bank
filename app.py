@@ -24,6 +24,7 @@ import cgi
 
 import fitz
 from sakura_pdf import (
+    PreviousQuestionState,
     append_page_clip_to_question_image,
     continuation_clip_for_starts,
     crop_image_by_ratio,
@@ -1055,9 +1056,7 @@ def import_pdf(
             )
             page_start, page_end = page_range(pdf.page_count, start_page, end_page)
             seq_no = 0
-            previous_question_id = ""
-            previous_question_image: Path | None = None
-            previous_question_value: int | None = None
+            previous_question = PreviousQuestionState()
             for index in range(page_start, page_end + 1):
                 page = pdf[index - 1]
                 text = page.get_text("text", sort=True).strip()
@@ -1069,14 +1068,14 @@ def import_pdf(
                         last_chapter = extracted_chapter
                     chapter_hint = last_chapter if last_chapter != DEFAULT_CHAPTER else extracted_chapter
                 starts = detect_question_starts(page) if document_kind == MOCK_PAPER_KIND and split_questions else []
-                continuation_clip = continuation_clip_for_starts(page, starts, previous_question_value)
-                if continuation_clip and previous_question_id and previous_question_image:
-                    append_page_clip_to_question_image(page, continuation_clip, previous_question_image)
+                continuation_clip = continuation_clip_for_starts(page, starts, previous_question.value)
+                if continuation_clip and previous_question.question_id and previous_question.image_path:
+                    append_page_clip_to_question_image(page, continuation_clip, previous_question.image_path)
                     continuation_text = page.get_text("text", sort=True, clip=continuation_clip).strip()
                     if continuation_text:
                         conn.execute(
                             "UPDATE questions SET ocr_text = trim(coalesce(ocr_text, '') || char(10) || ?) WHERE id = ?",
-                            (continuation_text, previous_question_id),
+                            (continuation_text, previous_question.question_id),
                         )
                 slices = detect_question_slices(page, starts) if document_kind == MOCK_PAPER_KIND and split_questions else []
                 if not slices:
@@ -1108,10 +1107,7 @@ def import_pdf(
                             created_at=now,
                         )
                     )
-                    previous_question_id = q_id
-                    previous_question_image = image_path
-                    value = item.get("question_value")
-                    previous_question_value = int(value) if value is not None else None
+                    previous_question.update(q_id, image_path, item)
     finally:
         pdf.close()
 

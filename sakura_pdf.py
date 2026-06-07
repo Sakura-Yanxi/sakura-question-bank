@@ -2,9 +2,23 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 import fitz
+
+
+@dataclass
+class PreviousQuestionState:
+    question_id: str = ""
+    image_path: Path | None = None
+    value: int | None = None
+
+    def update(self, question_id: str, image_path: Path, item: dict) -> None:
+        self.question_id = question_id
+        self.image_path = image_path
+        value = item.get("question_value")
+        self.value = int(value) if value is not None else None
 
 
 def safe_pdf_filename(filename: str, fallback: str = "questions.pdf") -> str:
