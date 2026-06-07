@@ -33,6 +33,9 @@ This project is intentionally local-first and lightweight, but new features shou
   - Textbook page context assembly and AI explanation prompt construction.
 - `sakura_filters.py`
   - Question/document filter SQL assembly and scoped dropdown option queries.
+- `sakura_documents.py`
+  - Document listing, document metadata updates and question/document deletion cleanup.
+  - Safe data-directory file deletion and empty-document pruning.
 - `sakura_retention.py`
   - Review interval constants, wrong-status detection and meta-tag normalization.
 - `sakura_models.py`
@@ -89,7 +92,7 @@ This project is intentionally local-first and lightweight, but new features shou
 
 ## Next Good Splits
 
-- `app.py`: PDF import orchestration and document CRUD remain the largest backend areas.
+- `app.py`: PDF import orchestration and route dispatch remain the largest backend areas.
 - `static/reminders.js`: reminder-specific UI state and bindings.
 
 Do these incrementally. Each split should include syntax checks and a server smoke test.

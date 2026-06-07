@@ -43,6 +43,7 @@ import sakura_reflection
 import sakura_daily
 import sakura_textbook
 import sakura_filters
+import sakura_documents
 import sakura_retention
 import sakura_models
 import sakura_auth
@@ -1204,27 +1205,11 @@ def import_pdf(
 
 
 def unlink_if_inside_data(path_value: str) -> None:
-    if not path_value:
-        return
-    path = Path(path_value).resolve()
-    if str(path).startswith(str(DATA_DIR.resolve())) and path.exists() and path.is_file():
-        path.unlink()
+    sakura_documents.unlink_if_inside(DATA_DIR, path_value)
 
 
 def prune_empty_documents(conn: sqlite3.Connection) -> int:
-    rows = conn.execute(
-        """
-        SELECT d.id, d.stored_path
-        FROM documents d
-        LEFT JOIN questions q ON q.document_id = d.id
-        GROUP BY d.id
-        HAVING COUNT(q.id) = 0
-        """
-    ).fetchall()
-    for row in rows:
-        unlink_if_inside_data(row["stored_path"])
-        conn.execute("DELETE FROM documents WHERE id = ?", (row["id"],))
-    return len(rows)
+    return sakura_documents.prune_empty_documents(conn, data_dir=DATA_DIR)
 
 
 MIGRATION_JOBS: dict[str, dict] = {}
@@ -1690,19 +1675,7 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_documents(self) -> None:
         with connect() as conn:
-            prune_empty_documents(conn)
-            rows = conn.execute(
-                """
-                SELECT d.*,
-                       COUNT(q.id) question_count,
-                       SUM(CASE WHEN q.status = '做错' THEN 1 ELSE 0 END) wrong_count,
-                       SUM(CASE WHEN q.status IN ('需复习', '半会') THEN 1 ELSE 0 END) review_count
-                FROM documents d
-                LEFT JOIN questions q ON q.document_id = d.id
-                GROUP BY d.id
-                ORDER BY d.created_at DESC
-                """
-            ).fetchall()
+            rows = sakura_documents.load_documents(conn, data_dir=DATA_DIR)
             options = get_filter_options(conn)
         return json_response(self, {"documents": [document_to_dict(row) for row in rows], **options})
 
@@ -1719,14 +1692,15 @@ class DemoHandler(BaseHTTPRequestHandler):
             return json_response(self, {"error": "科目名称不能超过 60 个字符。"}, 400)
 
         with connect() as conn:
-            doc = conn.execute("SELECT id FROM documents WHERE id = ?", (doc_id,)).fetchone()
-            if not doc:
-                return json_response(self, {"error": "做题本不存在。"}, 404)
-            conn.execute(
-                "UPDATE documents SET title = ?, subject = ?, document_kind = ? WHERE id = ?",
-                (title, subject, document_kind, doc_id),
+            updated = sakura_documents.update_document(
+                conn,
+                doc_id,
+                title=title,
+                subject=subject,
+                document_kind=document_kind,
             )
-            updated = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+            if not updated:
+                return json_response(self, {"error": "做题本不存在。"}, 404)
         return json_response(self, {"ok": True, "document": document_to_dict(updated)})
 
     def handle_questions(self, query: dict) -> None:
@@ -1797,33 +1771,16 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_delete_question(self, q_id: str) -> None:
         with connect() as conn:
-            row = conn.execute("SELECT document_id, image_path FROM questions WHERE id = ?", (q_id,)).fetchone()
-            if not row:
+            result = sakura_documents.delete_question(conn, q_id, data_dir=DATA_DIR)
+            if not result:
                 return json_response(self, {"error": "题目不存在。"}, 404)
-            doc_id = row["document_id"]
-            unlink_if_inside_data(row["image_path"])
-            conn.execute("DELETE FROM questions WHERE id = ?", (q_id,))
-            remaining = conn.execute("SELECT COUNT(*) remaining FROM questions WHERE document_id = ?", (doc_id,)).fetchone()["remaining"]
-            document_deleted = False
-            if remaining == 0:
-                doc = conn.execute("SELECT stored_path FROM documents WHERE id = ?", (doc_id,)).fetchone()
-                if doc:
-                    unlink_if_inside_data(doc["stored_path"])
-                conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
-                document_deleted = True
-        return json_response(self, {"ok": True, "document_id": doc_id, "document_deleted": document_deleted})
+        return json_response(self, result)
 
     def handle_delete_document(self, doc_id: str) -> None:
         with connect() as conn:
-            doc = conn.execute("SELECT stored_path FROM documents WHERE id = ?", (doc_id,)).fetchone()
-            if not doc:
+            deleted = sakura_documents.delete_document(conn, doc_id, data_dir=DATA_DIR)
+            if not deleted:
                 return json_response(self, {"error": "做题本不存在。"}, 404)
-            question_rows = conn.execute("SELECT image_path FROM questions WHERE document_id = ?", (doc_id,)).fetchall()
-            for row in question_rows:
-                unlink_if_inside_data(row["image_path"])
-            unlink_if_inside_data(doc["stored_path"])
-            conn.execute("DELETE FROM questions WHERE document_id = ?", (doc_id,))
-            conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
         return json_response(self, {"ok": True})
 
     def handle_delete_reflection(self, ref_id: str) -> None:
