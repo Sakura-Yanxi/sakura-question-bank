@@ -2374,10 +2374,9 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_daily_rule_delete(self, rule_id: str) -> None:
         with connect() as conn:
-            row = conn.execute("SELECT id FROM daily_rules WHERE id = ?", (rule_id,)).fetchone()
-            if not row:
+            deleted = sakura_daily.delete_daily_rule(conn, rule_id)
+            if not deleted:
                 return json_response(self, {"error": "规则不存在"}, 404)
-            conn.execute("DELETE FROM daily_rules WHERE id = ?", (rule_id,))
         return json_response(self, {"ok": True})
 
     def handle_backup_export(self, query: dict) -> None:

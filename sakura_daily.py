@@ -77,6 +77,14 @@ def save_daily_rule(conn, payload: dict) -> dict:
     return daily_rule_to_dict(row)
 
 
+def delete_daily_rule(conn, rule_id: str) -> bool:
+    row = conn.execute("SELECT id FROM daily_rules WHERE id = ?", (rule_id,)).fetchone()
+    if not row:
+        return False
+    conn.execute("DELETE FROM daily_rules WHERE id = ?", (rule_id,))
+    return True
+
+
 def daily_rule_where(rule: dict, today_iso: str) -> tuple[str, list[str]]:
     clauses = []
     params: list[str] = []
