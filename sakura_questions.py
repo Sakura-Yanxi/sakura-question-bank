@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 
 QUESTION_UPDATE_FIELDS = {
@@ -20,10 +21,14 @@ QUESTION_UPDATE_FIELDS = {
 }
 
 
-class QuestionUpdateError(ValueError):
+class QuestionServiceError(ValueError):
     def __init__(self, message: str, status: int = 400) -> None:
         super().__init__(message)
         self.status = status
+
+
+class QuestionUpdateError(QuestionServiceError):
+    pass
 
 
 def load_question_index(conn, where: str, params: list[str]) -> tuple[list, list, list]:
@@ -159,3 +164,49 @@ def update_question(
     params.append(q_id)
     conn.execute(f"UPDATE questions SET {', '.join(assignments)} WHERE id = ?", params)
     return load_question_detail(conn, q_id)
+
+
+def rescan_document_chapters(
+    conn,
+    doc_id: str,
+    *,
+    normalize_document_kind,
+    extract_text_and_chapters,
+    classify_by_rules,
+    default_category: str,
+    default_chapter: str,
+    mock_paper_kind: str,
+) -> dict:
+    doc = conn.execute("SELECT stored_path, document_kind, subject FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    if not doc:
+        raise QuestionServiceError("做题本不存在。", 404)
+    pdf_path = Path(doc["stored_path"])
+    if not pdf_path.exists():
+        raise QuestionServiceError("原始 PDF 文件不存在，无法重扫。", 404)
+
+    document_kind = normalize_document_kind(doc["document_kind"])
+    pages = extract_text_and_chapters(pdf_path, document_kind)
+    updated = 0
+    for page in pages:
+        category, subcategory, difficulty = classify_by_rules(page["text"])
+        if document_kind != mock_paper_kind and category == default_category and page["chapter"] != default_chapter:
+            category = page["chapter"]
+            subcategory = "章节归类"
+        cursor = conn.execute(
+            """
+            UPDATE questions
+            SET ocr_text = ?, chapter = ?, category = ?, subcategory = ?, difficulty = ?
+            WHERE document_id = ? AND page_number = ?
+            """,
+            (
+                page["text"],
+                page["chapter"],
+                category,
+                subcategory,
+                difficulty,
+                doc_id,
+                page["page_number"],
+            ),
+        )
+        updated += max(cursor.rowcount, 0)
+    return {"ok": True, "pages": len(pages), "updated": updated}

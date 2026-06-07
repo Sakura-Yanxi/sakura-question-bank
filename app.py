@@ -1685,38 +1685,20 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_rescan_chapters(self, doc_id: str) -> None:
         with connect() as conn:
-            doc = conn.execute("SELECT stored_path, document_kind, subject FROM documents WHERE id = ?", (doc_id,)).fetchone()
-            if not doc:
-                return json_response(self, {"error": "做题本不存在。"}, 404)
-            pdf_path = Path(doc["stored_path"])
-            if not pdf_path.exists():
-                return json_response(self, {"error": "原始 PDF 文件不存在，无法重扫。"}, 404)
-            document_kind = normalize_document_kind(doc["document_kind"])
-            pages = extract_text_and_chapters(pdf_path, document_kind)
-            updated = 0
-            for page in pages:
-                category, subcategory, difficulty = classify_by_rules(page["text"])
-                if document_kind != MOCK_PAPER_KIND and category == DEFAULT_CATEGORY and page["chapter"] != DEFAULT_CHAPTER:
-                    category = page["chapter"]
-                    subcategory = "章节归类"
-                cursor = conn.execute(
-                    """
-                    UPDATE questions
-                    SET ocr_text = ?, chapter = ?, category = ?, subcategory = ?, difficulty = ?
-                    WHERE document_id = ? AND page_number = ?
-                    """,
-                    (
-                        page["text"],
-                        page["chapter"],
-                        category,
-                        subcategory,
-                        difficulty,
-                        doc_id,
-                        page["page_number"],
-                    ),
+            try:
+                result = sakura_questions.rescan_document_chapters(
+                    conn,
+                    doc_id,
+                    normalize_document_kind=normalize_document_kind,
+                    extract_text_and_chapters=extract_text_and_chapters,
+                    classify_by_rules=classify_by_rules,
+                    default_category=DEFAULT_CATEGORY,
+                    default_chapter=DEFAULT_CHAPTER,
+                    mock_paper_kind=MOCK_PAPER_KIND,
                 )
-                updated += max(cursor.rowcount, 0)
-        return json_response(self, {"ok": True, "pages": len(pages), "updated": updated})
+            except sakura_questions.QuestionServiceError as exc:
+                return json_response(self, {"error": str(exc)}, exc.status)
+        return json_response(self, result)
 
     def handle_update_question(self, q_id: str) -> None:
         payload = self.read_json()
