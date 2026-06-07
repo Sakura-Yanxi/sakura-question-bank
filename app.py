@@ -1517,15 +1517,7 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_textbooks(self) -> None:
         with connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT t.*, COUNT(p.id) saved_pages
-                FROM textbooks t
-                LEFT JOIN textbook_pages p ON p.textbook_id = t.id
-                GROUP BY t.id
-                ORDER BY t.created_at DESC
-                """
-            ).fetchall()
+            rows = sakura_textbook.load_textbooks(conn)
         return json_response(self, {"textbooks": [textbook_to_dict(row) for row in rows]})
 
     def handle_textbook_page(self, textbook_id: str, page_number: int) -> None:
@@ -1535,16 +1527,9 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_delete_textbook(self, textbook_id: str) -> None:
         with connect() as conn:
-            book = conn.execute("SELECT stored_path FROM textbooks WHERE id = ?", (textbook_id,)).fetchone()
-            if not book:
+            deleted = sakura_textbook.delete_textbook(conn, textbook_id, delete_file=unlink_if_inside_data)
+            if not deleted:
                 return json_response(self, {"error": "教材不存在。"}, 404)
-            page_rows = conn.execute("SELECT image_path FROM textbook_pages WHERE textbook_id = ?", (textbook_id,)).fetchall()
-            for row in page_rows:
-                unlink_if_inside_data(row["image_path"])
-            unlink_if_inside_data(book["stored_path"])
-            conn.execute("DELETE FROM textbook_chats WHERE textbook_id = ?", (textbook_id,))
-            conn.execute("DELETE FROM textbook_pages WHERE textbook_id = ?", (textbook_id,))
-            conn.execute("DELETE FROM textbooks WHERE id = ?", (textbook_id,))
         return json_response(self, {"ok": True})
 
     def handle_textbook_chat(self) -> None:

@@ -49,6 +49,32 @@ def textbook_page_to_dict(row, to_public_path: Callable[[str], str]) -> dict:
     return item
 
 
+def load_textbooks(conn) -> list:
+    return conn.execute(
+        """
+        SELECT t.*, COUNT(p.id) saved_pages
+        FROM textbooks t
+        LEFT JOIN textbook_pages p ON p.textbook_id = t.id
+        GROUP BY t.id
+        ORDER BY t.created_at DESC
+        """
+    ).fetchall()
+
+
+def delete_textbook(conn, textbook_id: str, *, delete_file: Callable[[str], None]) -> bool:
+    book = conn.execute("SELECT stored_path FROM textbooks WHERE id = ?", (textbook_id,)).fetchone()
+    if not book:
+        return False
+    page_rows = conn.execute("SELECT image_path FROM textbook_pages WHERE textbook_id = ?", (textbook_id,)).fetchall()
+    for row in page_rows:
+        delete_file(row["image_path"])
+    delete_file(book["stored_path"])
+    conn.execute("DELETE FROM textbook_chats WHERE textbook_id = ?", (textbook_id,))
+    conn.execute("DELETE FROM textbook_pages WHERE textbook_id = ?", (textbook_id,))
+    conn.execute("DELETE FROM textbooks WHERE id = ?", (textbook_id,))
+    return True
+
+
 def import_textbook_pdf(
     filename: str,
     pdf_bytes: bytes,
