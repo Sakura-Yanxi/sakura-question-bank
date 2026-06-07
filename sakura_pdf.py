@@ -72,6 +72,24 @@ def detect_question_slices(page: fitz.Page, starts: list[dict] | None = None) ->
     return slices
 
 
+def continuation_clip_for_starts(page: fitz.Page, starts: list[dict], previous_question_value: int | None) -> fitz.Rect | None:
+    """Return the top-page continuation clip when the next question starts mid-page."""
+    if not starts or previous_question_value is None:
+        return None
+    first_start = starts[0]
+    if first_start["value"] != previous_question_value + 1:
+        return None
+    if first_start["y"] <= page.rect.height * 0.12:
+        return None
+    clip = fitz.Rect(
+        page.rect.x0 + 18,
+        page.rect.y0 + 16,
+        page.rect.x1 - 18,
+        first_start["y"] - 4,
+    )
+    return clip if clip.height > 36 else None
+
+
 def trim_vertical_whitespace(image, trim_top: bool, trim_bottom: bool):
     rgb = image.convert("RGB")
     sample_width = min(360, rgb.width)

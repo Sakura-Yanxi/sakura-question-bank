@@ -25,6 +25,7 @@ import cgi
 import fitz
 from sakura_pdf import (
     append_page_clip_to_question_image,
+    continuation_clip_for_starts,
     crop_image_by_ratio,
     detect_question_slices,
     detect_question_starts,
@@ -1065,28 +1066,15 @@ def import_pdf(
                         last_chapter = extracted_chapter
                     chapter_hint = last_chapter if last_chapter != DEFAULT_CHAPTER else extracted_chapter
                 starts = detect_question_starts(page) if document_kind == MOCK_PAPER_KIND and split_questions else []
-                if (
-                    starts
-                    and previous_question_id
-                    and previous_question_image
-                    and previous_question_value is not None
-                    and starts[0]["value"] == previous_question_value + 1
-                    and starts[0]["y"] > page.rect.height * 0.12
-                ):
-                    continuation_clip = fitz.Rect(
-                        page.rect.x0 + 18,
-                        page.rect.y0 + 16,
-                        page.rect.x1 - 18,
-                        starts[0]["y"] - 4,
-                    )
-                    if continuation_clip.height > 36:
-                        append_page_clip_to_question_image(page, continuation_clip, previous_question_image)
-                        continuation_text = page.get_text("text", sort=True, clip=continuation_clip).strip()
-                        if continuation_text:
-                            conn.execute(
-                                "UPDATE questions SET ocr_text = trim(coalesce(ocr_text, '') || char(10) || ?) WHERE id = ?",
-                                (continuation_text, previous_question_id),
-                            )
+                continuation_clip = continuation_clip_for_starts(page, starts, previous_question_value)
+                if continuation_clip and previous_question_id and previous_question_image:
+                    append_page_clip_to_question_image(page, continuation_clip, previous_question_image)
+                    continuation_text = page.get_text("text", sort=True, clip=continuation_clip).strip()
+                    if continuation_text:
+                        conn.execute(
+                            "UPDATE questions SET ocr_text = trim(coalesce(ocr_text, '') || char(10) || ?) WHERE id = ?",
+                            (continuation_text, previous_question_id),
+                        )
                 slices = detect_question_slices(page, starts) if document_kind == MOCK_PAPER_KIND and split_questions else []
                 if not slices:
                     slices = [{"question_no": "", "clip": None}]
