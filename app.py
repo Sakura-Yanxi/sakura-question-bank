@@ -34,6 +34,7 @@ import sakura_notifications
 import sakura_weather
 import sakura_reminders
 import sakura_config
+import sakura_settings
 import sakura_ai
 import sakura_profile
 import sakura_coach
@@ -343,48 +344,12 @@ def llm_enabled() -> bool:
     return bool(LLM_API_KEY)
 
 
-def mask_secret(value: str) -> str:
-    value = value or ""
-    if not value:
-        return ""
-    keep = 4 if len(value) <= 12 else 8
-    return value[:keep] + "xxxx"
-
-
-def mask_public_url(value: str) -> str:
-    value = (value or "").strip()
-    if not value:
-        return ""
-    parsed = urlparse(value)
-    if parsed.scheme and parsed.netloc:
-        host = parsed.netloc
-        if re.match(r"^\d+\.\d+\.", host):
-            parts = host.split(".")
-            return f"{parsed.scheme}://{parts[0]}.{parts[1]}.xxxx"
-        keep = min(len(host), 6 if re.match(r"^\d+\.\d+", host) else 10)
-        return f"{parsed.scheme}://{host[:keep]}xxxx"
-    return mask_secret(value)
-
-
 def llm_settings_view() -> dict:
-    return {
-        "has_key": llm_enabled(),
-        "masked_key": mask_secret(LLM_API_KEY),
-        "base_url": LLM_BASE_URL,
-        "model": LLM_MODEL,
-        "key_env": "LLM_API_KEY" if LLM_API_KEY else "",
-    }
+    return sakura_settings.llm_settings_view(LLM_API_KEY, LLM_BASE_URL, LLM_MODEL)
 
 
 def notification_settings_view() -> dict:
-    return {
-        "has_wework": bool(WEWORK_BOT_WEBHOOK),
-        "masked_wework": mask_secret(WEWORK_BOT_WEBHOOK),
-        "has_pushplus": bool(PUSHPLUS_TOKEN),
-        "masked_pushplus": mask_secret(PUSHPLUS_TOKEN),
-        "app_public_url": "",
-        "masked_app_public_url": mask_public_url(APP_PUBLIC_URL),
-    }
+    return sakura_settings.notification_settings_view(WEWORK_BOT_WEBHOOK, PUSHPLUS_TOKEN, APP_PUBLIC_URL)
 
 
 def update_llm_runtime_settings(api_key: str | None = None, base_url: str | None = None, model: str | None = None) -> dict:
@@ -432,11 +397,7 @@ def update_notification_runtime_settings(
 
 
 def normalize_public_url(value: str) -> str:
-    clean = value.strip().rstrip("/")
-    parsed = urlparse(clean)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("公网地址必须是完整 URL，例如：https://your-domain.example")
-    return clean
+    return sakura_settings.normalize_public_url(value)
 
 
 def reminder_settings_view(cron_status: dict | None = None) -> dict:

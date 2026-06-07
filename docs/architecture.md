@@ -10,6 +10,8 @@ This project is intentionally local-first and lightweight, but new features shou
   - AI coach, question import, daily practice, reminders, textbooks and exports.
 - `sakura_config.py`
   - Local `.env` loading and in-place secret/config updates.
+- `sakura_settings.py`
+  - Runtime settings payload shaping, secret masking and public URL validation.
 - `sakura_ai.py`
   - OpenAI-compatible chat client and JSON response extraction.
   - AI teacher protocol, intent routing, strategy selection and memory compression.
