@@ -90,6 +90,14 @@ def profile_summary_from_latest(latest: dict | None) -> dict | None:
     }
 
 
+def cached_plan_from_state(state: dict) -> dict:
+    try:
+        parsed = json.loads(state.get("plan_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def recent_learning_evidence(conn, limit: int = 8) -> list[dict]:
     rows = conn.execute(
         """

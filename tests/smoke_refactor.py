@@ -617,6 +617,9 @@ def test_teacher_turn_persistence() -> None:
         "headline": "steady",
         "created_at": "now",
     }
+    assert sakura_coach.cached_plan_from_state({"plan_json": "{\"a\": 1}"}) == {"a": 1}
+    assert sakura_coach.cached_plan_from_state({"plan_json": "[]"}) == {}
+    assert sakura_coach.cached_plan_from_state({"plan_json": "not-json"}) == {}
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

@@ -1981,10 +1981,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             state = get_coach_state(conn)
             latest = load_latest_profile(conn)
             needs_refresh = self._profile_needs_refresh(conn, state)
-            try:
-                cached_plan = json.loads(state.get("plan_json") or "{}")
-            except (TypeError, json.JSONDecodeError):
-                cached_plan = {}
+            cached_plan = sakura_coach.cached_plan_from_state(state)
             insight_count = conn.execute("SELECT COUNT(*) c FROM insights").fetchone()["c"]
         profile_summary = sakura_coach.profile_summary_from_latest(latest)
         return json_response(self, {
