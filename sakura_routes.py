@@ -71,6 +71,38 @@ DELETE_ROUTES: dict[str, RouteTarget] = {
 }
 
 
+DYNAMIC_HANDLER_NAMES = {
+    "handle_textbook_page",
+    "handle_chapter_stats",
+    "handle_practice_batch_get",
+    "handle_reflection_download",
+    "handle_question_detail",
+    "handle_rescan_chapters",
+    "handle_analyze",
+    "handle_hint",
+    "handle_variations",
+    "handle_crop_question",
+    "handle_practice_feedback",
+    "handle_delete_textbook",
+    "handle_delete_document",
+    "handle_delete_question",
+    "handle_delete_reflection",
+    "handle_daily_rule_delete",
+    "handle_ai_memory_delete",
+    "handle_mentor_experience_delete",
+    "handle_update_document",
+    "handle_update_question",
+}
+
+
+def configured_handler_names() -> set[str]:
+    names = {target.handler for target in GET_ROUTES.values()}
+    names.update(target.handler for target in POST_ROUTES.values())
+    names.update(target.handler for target in DELETE_ROUTES.values())
+    names.update(DYNAMIC_HANDLER_NAMES)
+    return names
+
+
 def route_for(path: str, routes: dict[str, RouteTarget]) -> RouteTarget | None:
     return routes.get(path)
 

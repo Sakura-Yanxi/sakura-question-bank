@@ -74,6 +74,8 @@ def test_http_file_serving() -> None:
     assert sakura_routes.post_dynamic_route("/api/practice/b1/questions/q2").args == ("b1", "q2")
     assert sakura_routes.delete_dynamic_route("/api/mentor-experience/e1").handler == "handle_mentor_experience_delete"
     assert sakura_routes.patch_dynamic_route("/api/documents/d1").args == ("d1",)
+    missing_handlers = [name for name in sakura_routes.configured_handler_names() if not hasattr(app.DemoHandler, name)]
+    assert missing_handlers == []
 
 
 def test_pdf_helpers() -> None:
