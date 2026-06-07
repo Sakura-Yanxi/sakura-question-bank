@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+import sakura_classify
 import sakura_pdf
 import sakura_questions
 
@@ -54,3 +55,66 @@ def process_question_slice(
     )
     previous_question.update(q_id, image_path, item)
     return summary
+
+
+def process_import_page(
+    conn,
+    *,
+    page,
+    page_dir: Path,
+    doc_id: str,
+    page_number: int,
+    seq_no: int,
+    subject: str,
+    document_kind: str,
+    split_questions: bool,
+    chapters: sakura_classify.ChapterCarryState,
+    previous_question: sakura_pdf.PreviousQuestionState,
+    created_at: str,
+    default_chapter: str,
+    mock_paper_kind: str,
+    mock_paper_chapter: str,
+    classify_question,
+) -> tuple[int, list[dict]]:
+    page_text, starts, slices = sakura_pdf.prepare_import_page(
+        page,
+        document_kind=document_kind,
+        split_questions=split_questions,
+        mock_paper_kind=mock_paper_kind,
+    )
+    chapter_hint = sakura_classify.resolve_import_chapter(
+        page=page,
+        text=page_text,
+        document_kind=document_kind,
+        chapters=chapters,
+        default_chapter=default_chapter,
+        mock_paper_kind=mock_paper_kind,
+        mock_paper_chapter=mock_paper_chapter,
+    )
+    continuation_text = sakura_pdf.append_import_continuation(page, starts, previous_question)
+    if continuation_text:
+        sakura_questions.append_question_ocr_text(conn, previous_question.question_id, continuation_text)
+
+    inserted = []
+    for slice_index, item in enumerate(slices, start=1):
+        seq_no += 1
+        inserted.append(
+            process_question_slice(
+                conn,
+                page=page,
+                page_dir=page_dir,
+                doc_id=doc_id,
+                page_number=page_number,
+                slice_index=slice_index,
+                seq_no=seq_no,
+                item=item,
+                page_text=page_text,
+                subject=subject,
+                chapter_hint=chapter_hint,
+                document_kind=document_kind,
+                created_at=created_at,
+                previous_question=previous_question,
+                classify_question=classify_question,
+            )
+        )
+    return seq_no, inserted

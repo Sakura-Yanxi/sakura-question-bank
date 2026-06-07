@@ -25,10 +25,8 @@ import cgi
 import fitz
 from sakura_pdf import (
     PreviousQuestionState,
-    append_import_continuation,
     crop_image_by_ratio,
     page_range,
-    prepare_import_page,
     render_page_image,
     save_uploaded_pdf,
 )
@@ -1068,45 +1066,25 @@ def import_pdf(
             previous_question = PreviousQuestionState()
             for index in range(page_start, page_end + 1):
                 page = pdf[index - 1]
-                text, starts, slices = prepare_import_page(
-                    page,
+                seq_no, page_inserted = sakura_import.process_import_page(
+                    conn,
+                    page=page,
+                    page_dir=PAGE_DIR,
+                    doc_id=doc_id,
+                    page_number=index,
+                    seq_no=seq_no,
+                    subject=subject,
                     document_kind=document_kind,
                     split_questions=split_questions,
-                    mock_paper_kind=MOCK_PAPER_KIND,
-                )
-                chapter_hint = sakura_classify.resolve_import_chapter(
-                    page=page,
-                    text=text,
-                    document_kind=document_kind,
                     chapters=chapters,
+                    previous_question=previous_question,
+                    created_at=now,
                     default_chapter=DEFAULT_CHAPTER,
                     mock_paper_kind=MOCK_PAPER_KIND,
                     mock_paper_chapter=MOCK_PAPER_CHAPTER,
+                    classify_question=classify_question_locally,
                 )
-                continuation_text = append_import_continuation(page, starts, previous_question)
-                if continuation_text:
-                    sakura_questions.append_question_ocr_text(conn, previous_question.question_id, continuation_text)
-                for slice_index, item in enumerate(slices, start=1):
-                    seq_no += 1
-                    inserted.append(
-                        sakura_import.process_question_slice(
-                            conn,
-                            page=page,
-                            page_dir=PAGE_DIR,
-                            doc_id=doc_id,
-                            page_number=index,
-                            slice_index=slice_index,
-                            seq_no=seq_no,
-                            item=item,
-                            page_text=text,
-                            subject=subject,
-                            chapter_hint=chapter_hint,
-                            document_kind=document_kind,
-                            created_at=now,
-                            previous_question=previous_question,
-                            classify_question=classify_question_locally,
-                        )
-                    )
+                inserted.extend(page_inserted)
     finally:
         pdf.close()
 
