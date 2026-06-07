@@ -70,6 +70,26 @@ def insert_document(
     )
 
 
+def imported_document_payload(
+    *,
+    doc_id: str,
+    title: str,
+    subject: str,
+    document_kind: str,
+    filename: str,
+    questions: list[dict],
+) -> dict:
+    return {
+        "document_id": doc_id,
+        "title": title,
+        "subject": subject,
+        "document_kind": document_kind,
+        "filename": filename,
+        "page_count": len(questions),
+        "questions": questions,
+    }
+
+
 def update_document(conn, doc_id: str, *, title: str, subject: str, document_kind: str):
     doc = conn.execute("SELECT id FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc:

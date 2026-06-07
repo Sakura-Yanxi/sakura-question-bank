@@ -1109,15 +1109,14 @@ def import_pdf(
     finally:
         pdf.close()
 
-    return {
-        "document_id": doc_id,
-        "title": title,
-        "subject": subject,
-        "document_kind": document_kind,
-        "filename": filename,
-        "page_count": len(inserted),
-        "questions": inserted,
-    }
+    return sakura_documents.imported_document_payload(
+        doc_id=doc_id,
+        title=title,
+        subject=subject,
+        document_kind=document_kind,
+        filename=filename,
+        questions=inserted,
+    )
 
 
 def unlink_if_inside_data(path_value: str) -> None:

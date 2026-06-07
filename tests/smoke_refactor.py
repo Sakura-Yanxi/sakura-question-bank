@@ -187,6 +187,23 @@ def test_import_insert_and_ocr_helpers() -> None:
         "subcategory": "rule",
         "chapter": "ch1",
     }
+    payload = sakura_documents.imported_document_payload(
+        doc_id="d1",
+        title="Title",
+        subject="math",
+        document_kind="book",
+        filename="a.pdf",
+        questions=[summary],
+    )
+    assert payload == {
+        "document_id": "d1",
+        "title": "Title",
+        "subject": "math",
+        "document_kind": "book",
+        "filename": "a.pdf",
+        "page_count": 1,
+        "questions": [summary],
+    }
     sakura_questions.append_question_ocr_text(conn, "q1", "second")
     q = conn.execute("SELECT ocr_text FROM questions WHERE id = ?", ("q1",)).fetchone()
     assert q["ocr_text"] == "first\nsecond"
