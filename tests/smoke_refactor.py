@@ -307,6 +307,23 @@ def test_import_insert_and_ocr_helpers() -> None:
     assert chat_row["role"] == "user"
     assert chat_row["content"] == "x" * 10
     assert chat_row["created_at"] == "now"
+    parsed_request = sakura_textbook.parse_textbook_request(
+        {
+            "textbook_id": " book1 ",
+            "page_number": "2",
+            "paragraph_index": "3",
+            "message": " explain ",
+            "history": [{"role": "user", "content": "question"}],
+        },
+        parse_positive_int=lambda value, fallback: int(value) if value.isdigit() else fallback,
+    )
+    assert parsed_request == {
+        "textbook_id": "book1",
+        "page_number": 2,
+        "paragraph_index": 3,
+        "message": "explain",
+        "history": [{"role": "user", "content": "question"}],
+    }
     textbook_doc.close()
     textbook_conn.close()
 

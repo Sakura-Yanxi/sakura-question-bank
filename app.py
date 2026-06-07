@@ -1479,12 +1479,12 @@ class DemoHandler(BaseHTTPRequestHandler):
         return json_response(self, {"ok": True})
 
     def handle_textbook_chat(self) -> None:
-        payload = self.read_json()
-        textbook_id = str(payload.get("textbook_id", "")).strip()
-        page_number = parse_positive_int(str(payload.get("page_number", "")), 1) or 1
-        paragraph_index = parse_positive_int(str(payload.get("paragraph_index", "")), 0) or 0
-        message = str(payload.get("message", "")).strip()
-        history = payload.get("history") if isinstance(payload.get("history"), list) else []
+        request = sakura_textbook.parse_textbook_request(self.read_json(), parse_positive_int=parse_positive_int)
+        textbook_id = request["textbook_id"]
+        page_number = request["page_number"]
+        paragraph_index = request["paragraph_index"]
+        message = request["message"]
+        history = request["history"]
         if not textbook_id or not message:
             return json_response(self, {"error": "请选择教材并输入问题。"}, 400)
         with connect() as conn:
@@ -1513,11 +1513,11 @@ class DemoHandler(BaseHTTPRequestHandler):
         return json_response(self, {"answer": answer, "textbook": book, "page": page, "has_key": llm_enabled()})
 
     def handle_textbook_memory(self) -> None:
-        payload = self.read_json()
-        textbook_id = str(payload.get("textbook_id", "")).strip()
-        page_number = parse_positive_int(str(payload.get("page_number", "")), 1) or 1
-        paragraph_index = parse_positive_int(str(payload.get("paragraph_index", "")), 0) or 0
-        history = payload.get("history") if isinstance(payload.get("history"), list) else []
+        request = sakura_textbook.parse_textbook_request(self.read_json(), parse_positive_int=parse_positive_int)
+        textbook_id = request["textbook_id"]
+        page_number = request["page_number"]
+        paragraph_index = request["paragraph_index"]
+        history = request["history"]
         if not textbook_id:
             return json_response(self, {"error": "请选择教材。"}, 400)
         with connect() as conn:

@@ -165,6 +165,17 @@ def save_textbook_chat_message(
     return message_id
 
 
+def parse_textbook_request(payload: dict, *, parse_positive_int: Callable[[str, int | None], int | None]) -> dict:
+    history = payload.get("history") if isinstance(payload.get("history"), list) else []
+    return {
+        "textbook_id": str(payload.get("textbook_id", "")).strip(),
+        "page_number": parse_positive_int(str(payload.get("page_number", "")), 1) or 1,
+        "paragraph_index": parse_positive_int(str(payload.get("paragraph_index", "")), 0) or 0,
+        "message": str(payload.get("message", "")).strip(),
+        "history": history,
+    }
+
+
 def import_textbook_pdf(
     filename: str,
     pdf_bytes: bytes,
