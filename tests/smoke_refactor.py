@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 import sakura_backup
 import sakura_classify
 import sakura_documents
+import sakura_import
 import sakura_pdf
 import sakura_questions
 import sakura_teacher_memory
@@ -262,6 +263,41 @@ def test_import_insert_and_ocr_helpers() -> None:
     assert q2["ocr_text"] == "fallback page text"
     assert q2["category"] == "math"
     assert q2["chapter"] == "ch2"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pdf = fitz.open()
+        page = pdf.new_page(width=595, height=842)
+        page.insert_text((72, 120), "Rendered question text", fontsize=12)
+        previous = sakura_pdf.PreviousQuestionState()
+        processed = sakura_import.process_question_slice(
+            conn,
+            page=page,
+            page_dir=Path(tmp),
+            doc_id="d1",
+            page_number=5,
+            slice_index=1,
+            seq_no=3,
+            item={"question_no": "9", "clip": None},
+            page_text="Rendered question text",
+            subject="math",
+            chapter_hint="ch3",
+            document_kind="book",
+            created_at="now",
+            previous_question=previous,
+            classify_question=lambda _text, subject, chapter, kind: {
+                "category": subject,
+                "subcategory": kind,
+                "chapter": chapter,
+                "difficulty": "medium",
+            },
+            question_id_factory=lambda: "q3",
+        )
+        pdf.close()
+        assert processed["id"] == "q3"
+        assert previous.question_id == "q3"
+        assert previous.image_path is not None and previous.image_path.exists()
+        assert previous.value is None
+
     payload = sakura_documents.imported_document_payload(
         doc_id="d1",
         title="Title",

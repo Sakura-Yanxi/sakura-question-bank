@@ -30,7 +30,6 @@ from sakura_pdf import (
     page_range,
     prepare_import_page,
     render_page_image,
-    render_question_slice,
     save_uploaded_pdf,
 )
 import sakura_notifications
@@ -60,6 +59,7 @@ import sakura_questions
 import sakura_insights
 import sakura_hints
 import sakura_teacher_memory
+import sakura_import
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -1088,35 +1088,25 @@ def import_pdf(
                     sakura_questions.append_question_ocr_text(conn, previous_question.question_id, continuation_text)
                 for slice_index, item in enumerate(slices, start=1):
                     seq_no += 1
-                    q_id = uuid.uuid4().hex
-                    image_path, question_text = render_question_slice(
-                        page,
-                        page_dir=PAGE_DIR,
-                        doc_id=doc_id,
-                        page_number=index,
-                        slice_index=slice_index,
-                        item=item,
-                        page_text=text,
-                    )
                     inserted.append(
-                        sakura_questions.classify_and_insert_imported_question(
+                        sakura_import.process_question_slice(
                             conn,
-                            classify_question=classify_question_locally,
-                            q_id=q_id,
+                            page=page,
+                            page_dir=PAGE_DIR,
                             doc_id=doc_id,
                             page_number=index,
+                            slice_index=slice_index,
                             seq_no=seq_no,
                             item=item,
-                            image_path=image_path,
-                            slice_text=question_text,
                             page_text=text,
                             subject=subject,
                             chapter_hint=chapter_hint,
                             document_kind=document_kind,
                             created_at=now,
+                            previous_question=previous_question,
+                            classify_question=classify_question_locally,
                         )
                     )
-                    previous_question.update(q_id, image_path, item)
     finally:
         pdf.close()
 
