@@ -75,6 +75,22 @@ def delete_textbook(conn, textbook_id: str, *, delete_file: Callable[[str], None
     return True
 
 
+def textbook_import_metadata(
+    filename: str,
+    title: str,
+    subject: str,
+    *,
+    normalize_label: Callable[[str, str], str],
+    default_subject: str,
+) -> dict:
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", filename) or "textbook.pdf"
+    return {
+        "safe_name": safe_name,
+        "title": title.strip() or Path(filename).stem,
+        "subject": normalize_label(subject, default_subject),
+    }
+
+
 def import_textbook_pdf(
     filename: str,
     pdf_bytes: bytes,
@@ -89,11 +105,17 @@ def import_textbook_pdf(
     default_subject: str,
 ) -> dict:
     book_id = uuid.uuid4().hex
-    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", filename) or "textbook.pdf"
-    pdf_path = upload_dir / f"{book_id}_{safe_name}"
+    metadata = textbook_import_metadata(
+        filename,
+        title,
+        subject,
+        normalize_label=normalize_label,
+        default_subject=default_subject,
+    )
+    pdf_path = upload_dir / f"{book_id}_{metadata['safe_name']}"
     pdf_path.write_bytes(pdf_bytes)
-    title = title.strip() or Path(filename).stem
-    subject = normalize_label(subject, default_subject)
+    title = metadata["title"]
+    subject = metadata["subject"]
     now = datetime.now().isoformat(timespec="seconds")
     pdf = fitz.open(pdf_path)
     page_count = pdf.page_count

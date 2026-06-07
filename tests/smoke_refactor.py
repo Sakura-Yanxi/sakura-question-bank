@@ -21,6 +21,7 @@ import sakura_import
 import sakura_pdf
 import sakura_questions
 import sakura_teacher_memory
+import sakura_textbook
 
 import app
 
@@ -199,6 +200,19 @@ def test_import_insert_and_ocr_helpers() -> None:
     assert sakura_questions.import_question_text("", "page") == "page"
     assert sakura_questions.import_question_no({"question_no": 7}) == "7"
     assert sakura_questions.import_question_no({}) == ""
+
+    textbook_metadata = sakura_textbook.textbook_import_metadata(
+        "lecture notes/part 1.pdf",
+        "",
+        "  Math  ",
+        normalize_label=lambda value, fallback: (value or "").strip() or fallback,
+        default_subject="General",
+    )
+    assert textbook_metadata == {
+        "safe_name": "lecture_notes_part_1.pdf",
+        "title": "part 1",
+        "subject": "Math",
+    }
 
     conn = make_import_conn()
     sakura_documents.insert_document(
