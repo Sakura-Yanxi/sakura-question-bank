@@ -140,6 +140,31 @@ def imported_textbook_payload(*, book_id: str, title: str, subject: str, page_co
     return {"textbook_id": book_id, "title": title, "subject": subject, "page_count": page_count}
 
 
+def save_textbook_chat_message(
+    conn,
+    *,
+    textbook_id: str,
+    page_number: int,
+    role: str,
+    content: str,
+    content_limit: int,
+    created_at: str | None = None,
+) -> str:
+    message_id = uuid.uuid4().hex
+    conn.execute(
+        "INSERT INTO textbook_chats (id, textbook_id, page_number, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            message_id,
+            textbook_id,
+            page_number,
+            role,
+            content[:content_limit],
+            created_at or datetime.now().isoformat(timespec="seconds"),
+        ),
+    )
+    return message_id
+
+
 def import_textbook_pdf(
     filename: str,
     pdf_bytes: bytes,

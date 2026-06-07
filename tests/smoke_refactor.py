@@ -208,6 +208,14 @@ def make_textbook_conn() -> sqlite3.Connection:
             paragraphs_json TEXT,
             created_at TEXT
         );
+        CREATE TABLE textbook_chats (
+            id TEXT PRIMARY KEY,
+            textbook_id TEXT,
+            page_number INTEGER,
+            role TEXT,
+            content TEXT,
+            created_at TEXT
+        );
         """
     )
     return conn
@@ -286,6 +294,19 @@ def test_import_insert_and_ocr_helpers() -> None:
     assert "Definition one." in textbook_row["page_text"]
     assert json.loads(textbook_row["paragraphs_json"]) == ["Definition one."]
     assert rendered_paths == [Path("data/pages/book1_textbook_page_002.png")]
+    chat_id = sakura_textbook.save_textbook_chat_message(
+        textbook_conn,
+        textbook_id="book1",
+        page_number=2,
+        role="user",
+        content="x" * 12,
+        content_limit=10,
+        created_at="now",
+    )
+    chat_row = textbook_conn.execute("SELECT * FROM textbook_chats WHERE id = ?", (chat_id,)).fetchone()
+    assert chat_row["role"] == "user"
+    assert chat_row["content"] == "x" * 10
+    assert chat_row["created_at"] == "now"
     textbook_doc.close()
     textbook_conn.close()
 

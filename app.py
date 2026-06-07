@@ -1489,19 +1489,26 @@ class DemoHandler(BaseHTTPRequestHandler):
             return json_response(self, {"error": "请选择教材并输入问题。"}, 400)
         with connect() as conn:
             book, page = build_textbook_context(conn, textbook_id, page_number, paragraph_index)
-            now = datetime.now().isoformat(timespec="seconds")
-            conn.execute(
-                "INSERT INTO textbook_chats (id, textbook_id, page_number, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (uuid.uuid4().hex, textbook_id, page_number, "user", message[:4000], now),
+            sakura_textbook.save_textbook_chat_message(
+                conn,
+                textbook_id=textbook_id,
+                page_number=page_number,
+                role="user",
+                content=message,
+                content_limit=4000,
             )
             try:
                 answer = explain_textbook_with_ai(book, page, message, history)
             except Exception as exc:
                 traceback.print_exc()
                 return json_response(self, {"error": f"AI 精读失败：{exc}"}, 500)
-            conn.execute(
-                "INSERT INTO textbook_chats (id, textbook_id, page_number, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (uuid.uuid4().hex, textbook_id, page_number, "assistant", answer[:8000], datetime.now().isoformat(timespec="seconds")),
+            sakura_textbook.save_textbook_chat_message(
+                conn,
+                textbook_id=textbook_id,
+                page_number=page_number,
+                role="assistant",
+                content=answer,
+                content_limit=8000,
             )
         return json_response(self, {"answer": answer, "textbook": book, "page": page, "has_key": llm_enabled()})
 
