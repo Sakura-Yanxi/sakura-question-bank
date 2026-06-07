@@ -49,6 +49,27 @@ def load_documents(conn, *, data_dir: Path) -> list:
     ).fetchall()
 
 
+def insert_document(
+    conn,
+    *,
+    doc_id: str,
+    title: str,
+    subject: str,
+    document_kind: str,
+    filename: str,
+    stored_path: Path,
+    page_count: int,
+    created_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO documents (id, title, subject, document_kind, filename, stored_path, page_count, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (doc_id, title, subject, document_kind, filename, str(stored_path), page_count, created_at),
+    )
+
+
 def update_document(conn, doc_id: str, *, title: str, subject: str, document_kind: str):
     doc = conn.execute("SELECT id FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc:

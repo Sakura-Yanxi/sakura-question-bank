@@ -93,6 +93,52 @@ def load_question_for_ai(conn, q_id: str):
     ).fetchone()
 
 
+def insert_imported_question(
+    conn,
+    *,
+    q_id: str,
+    doc_id: str,
+    page_number: int,
+    seq_no: int,
+    question_no: str,
+    image_path,
+    question_text: str,
+    classification: dict,
+    created_at: str,
+) -> dict:
+    conn.execute(
+        """
+        INSERT INTO questions (
+            id, document_id, page_number, seq_no, question_no, image_path, ocr_text, category,
+            subcategory, chapter, difficulty, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            q_id,
+            doc_id,
+            page_number,
+            seq_no,
+            question_no,
+            str(image_path),
+            question_text,
+            classification["category"],
+            classification["subcategory"],
+            classification["chapter"],
+            classification["difficulty"],
+            created_at,
+        ),
+    )
+    return {
+        "id": q_id,
+        "page_number": page_number,
+        "seq_no": seq_no,
+        "question_no": question_no,
+        "category": classification["category"],
+        "subcategory": classification["subcategory"],
+        "chapter": classification["chapter"],
+    }
+
+
 def load_chapter_stats(conn, doc_id: str) -> tuple[object | None, list[dict]]:
     doc = conn.execute("SELECT id, title, filename FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc:

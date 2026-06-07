@@ -1042,12 +1042,16 @@ def import_pdf(
     last_chapter = DEFAULT_CHAPTER
     try:
         with connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO documents (id, title, subject, document_kind, filename, stored_path, page_count, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (doc_id, title, subject, document_kind, filename, str(pdf_path), pdf.page_count, now),
+            sakura_documents.insert_document(
+                conn,
+                doc_id=doc_id,
+                title=title,
+                subject=subject,
+                document_kind=document_kind,
+                filename=filename,
+                stored_path=pdf_path,
+                page_count=pdf.page_count,
+                created_at=now,
             )
             page_start, page_end = page_range(pdf.page_count, start_page, end_page)
             seq_no = 0
@@ -1090,38 +1094,19 @@ def import_pdf(
                         render_page_image(page, image_path)
                         question_text = text
                     classification = classify_question_locally(question_text or text, subject, chapter_hint, document_kind)
-                    conn.execute(
-                        """
-                        INSERT INTO questions (
-                            id, document_id, page_number, seq_no, question_no, image_path, ocr_text, category,
-                            subcategory, chapter, difficulty, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            q_id,
-                            doc_id,
-                            index,
-                            seq_no,
-                            str(item.get("question_no") or ""),
-                            str(image_path),
-                            question_text or text,
-                            classification["category"],
-                            classification["subcategory"],
-                            classification["chapter"],
-                            classification["difficulty"],
-                            now,
-                        ),
-                    )
                     inserted.append(
-                        {
-                            "id": q_id,
-                            "page_number": index,
-                            "seq_no": seq_no,
-                            "question_no": str(item.get("question_no") or ""),
-                            "category": classification["category"],
-                            "subcategory": classification["subcategory"],
-                            "chapter": classification["chapter"],
-                        }
+                        sakura_questions.insert_imported_question(
+                            conn,
+                            q_id=q_id,
+                            doc_id=doc_id,
+                            page_number=index,
+                            seq_no=seq_no,
+                            question_no=str(item.get("question_no") or ""),
+                            image_path=image_path,
+                            question_text=question_text or text,
+                            classification=classification,
+                            created_at=now,
+                        )
                     )
                     previous_question_id = q_id
                     previous_question_image = image_path
