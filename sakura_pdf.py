@@ -107,3 +107,17 @@ def append_page_clip_to_question_image(page: fitz.Page, clip: fitz.Rect, image_p
             combined.save(image_path, format="PNG", optimize=True)
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+def crop_image_by_ratio(image_path: Path, crop: dict) -> None:
+    """Crop an existing rendered question image with browser-provided ratio coordinates."""
+    from PIL import Image
+
+    with Image.open(image_path) as image:
+        width, height = image.size
+        left = max(0, min(width - 1, int(float(crop.get("x", 0)) * width)))
+        top = max(0, min(height - 1, int(float(crop.get("y", 0)) * height)))
+        right = max(left + 1, min(width, int(float(crop.get("w", 1)) * width) + left))
+        bottom = max(top + 1, min(height, int(float(crop.get("h", 1)) * height) + top))
+        cropped = image.crop((left, top, right, bottom))
+        cropped.save(image_path)

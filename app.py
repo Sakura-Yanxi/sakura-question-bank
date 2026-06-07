@@ -25,6 +25,7 @@ import cgi
 import fitz
 from sakura_pdf import (
     append_page_clip_to_question_image,
+    crop_image_by_ratio,
     detect_question_slices,
     detect_question_starts,
     render_page_clip_image,
@@ -1775,16 +1776,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             if not image_path.exists():
                 return json_response(self, {"error": "题图文件不存在。"}, 404)
             try:
-                from PIL import Image
-
-                with Image.open(image_path) as image:
-                    width, height = image.size
-                    left = max(0, min(width - 1, int(float(crop.get("x", 0)) * width)))
-                    top = max(0, min(height - 1, int(float(crop.get("y", 0)) * height)))
-                    right = max(left + 1, min(width, int(float(crop.get("w", 1)) * width) + left))
-                    bottom = max(top + 1, min(height, int(float(crop.get("h", 1)) * height) + top))
-                    cropped = image.crop((left, top, right, bottom))
-                    cropped.save(image_path)
+                crop_image_by_ratio(image_path, crop)
             except ImportError:
                 return json_response(self, {"error": "裁剪功能需要安装 Pillow：pip install -r requirements.txt"}, 500)
             except Exception as exc:
