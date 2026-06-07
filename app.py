@@ -336,6 +336,10 @@ def extract_chapter_from_page(page: fitz.Page, text: str) -> str:
     return sakura_classify.extract_chapter_from_page(page, text, DEFAULT_CHAPTER)
 
 
+def new_chapter_state() -> sakura_classify.ChapterCarryState:
+    return sakura_classify.ChapterCarryState(DEFAULT_CHAPTER)
+
+
 def llm_enabled() -> bool:
     """是否已配置 AI 接口密钥。"""
     return bool(LLM_API_KEY)
@@ -1040,7 +1044,7 @@ def import_pdf(
     now = datetime.now().isoformat(timespec="seconds")
     inserted = []
     pdf = fitz.open(pdf_path)
-    last_chapter = DEFAULT_CHAPTER
+    chapters = new_chapter_state()
     try:
         with connect() as conn:
             sakura_documents.insert_document(
@@ -1064,9 +1068,7 @@ def import_pdf(
                     chapter_hint = MOCK_PAPER_CHAPTER
                 else:
                     extracted_chapter = extract_chapter_from_page(page, text)
-                    if extracted_chapter != DEFAULT_CHAPTER:
-                        last_chapter = extracted_chapter
-                    chapter_hint = last_chapter if last_chapter != DEFAULT_CHAPTER else extracted_chapter
+                    chapter_hint = chapters.resolve(extracted_chapter)
                 starts = detect_question_starts(page) if document_kind == MOCK_PAPER_KIND and split_questions else []
                 continuation_clip = continuation_clip_for_starts(page, starts, previous_question.value)
                 if continuation_clip and previous_question.question_id and previous_question.image_path:

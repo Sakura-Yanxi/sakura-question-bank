@@ -1,8 +1,23 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 import fitz
+
+
+@dataclass
+class ChapterCarryState:
+    default_chapter: str
+    last_chapter: str | None = None
+
+    def resolve(self, extracted: str) -> str:
+        if self.last_chapter is None:
+            self.last_chapter = self.default_chapter
+        if extracted != self.default_chapter:
+            self.last_chapter = extracted
+        chapter = self.last_chapter if self.last_chapter != self.default_chapter else extracted
+        return normalize_chapter(chapter, self.default_chapter)
 
 
 def classify_by_rules(text: str, keyword_rules: list[tuple[str, list[str]]], default_category: str) -> tuple[str, str, str]:
@@ -152,7 +167,7 @@ def extract_text_and_chapters(
 ) -> list[dict]:
     """Extract page text and chapter hints from a PDF without importing questions."""
     pages = []
-    last_chapter = default_chapter
+    chapters = ChapterCarryState(default_chapter)
     pdf = fitz.open(pdf_path)
     try:
         for index, page in enumerate(pdf, start=1):
@@ -161,10 +176,7 @@ def extract_text_and_chapters(
                 pages.append({"page_number": index, "text": text, "chapter": mock_paper_chapter})
                 continue
             extracted = extract_chapter_from_page(page, text, default_chapter)
-            if extracted != default_chapter:
-                last_chapter = extracted
-            chapter = last_chapter if last_chapter != default_chapter else extracted
-            pages.append({"page_number": index, "text": text, "chapter": normalize_chapter(chapter, default_chapter)})
+            pages.append({"page_number": index, "text": text, "chapter": chapters.resolve(extracted)})
     finally:
         pdf.close()
     return pages
