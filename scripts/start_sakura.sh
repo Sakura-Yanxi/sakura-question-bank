@@ -10,6 +10,13 @@ ERR_LOG="${SAKURA_ERR_LOG:-$APP_DIR/server.err.log}"
 cd "$APP_DIR"
 mkdir -p data/uploads data/pages
 
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+
 if [ -f "$PID_FILE" ]; then
   old_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   if [ -n "${old_pid:-}" ] && kill -0 "$old_pid" 2>/dev/null; then
