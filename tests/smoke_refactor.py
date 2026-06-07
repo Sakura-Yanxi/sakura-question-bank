@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import gc
 import sqlite3
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +20,8 @@ import sakura_documents
 import sakura_pdf
 import sakura_questions
 import sakura_teacher_memory
+
+import app
 
 
 def test_pdf_helpers() -> None:
@@ -271,6 +275,63 @@ def test_teacher_turn_persistence() -> None:
     assert len(context["today_actions"]) == 5
 
 
+def test_real_import_pdf_smoke() -> None:
+    original_paths = {
+        "DATA_DIR": app.DATA_DIR,
+        "UPLOAD_DIR": app.UPLOAD_DIR,
+        "PAGE_DIR": app.PAGE_DIR,
+        "STATIC_DIR": app.STATIC_DIR,
+        "DB_PATH": app.DB_PATH,
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        app.DATA_DIR = root / "data"
+        app.UPLOAD_DIR = app.DATA_DIR / "uploads"
+        app.PAGE_DIR = app.DATA_DIR / "pages"
+        app.STATIC_DIR = root / "static"
+        app.DB_PATH = app.DATA_DIR / "gaoshu_demo.sqlite3"
+
+        pdf = fitz.open()
+        page = pdf.new_page(width=595, height=842)
+        page.insert_text((72, 72), "Chapter 1 Limits", fontsize=14)
+        page.insert_text((72, 130), "1. Find the limit of sin(x)/x as x -> 0.", fontsize=12)
+        pdf_bytes = pdf.write()
+        pdf.close()
+
+        try:
+            app.init_db()
+            result = app.import_pdf(
+                "demo import.pdf",
+                pdf_bytes,
+                title="Demo Import",
+                subject="Math",
+                document_kind=app.DEFAULT_DOCUMENT_KIND,
+            )
+            assert result["title"] == "Demo Import"
+            assert result["subject"] == "Math"
+            assert result["document_kind"] == app.DEFAULT_DOCUMENT_KIND
+            assert result["page_count"] == 1
+            assert len(result["questions"]) == 1
+
+            conn = app.connect()
+            try:
+                docs = conn.execute("SELECT * FROM documents").fetchall()
+                questions = conn.execute("SELECT * FROM questions").fetchall()
+            finally:
+                conn.close()
+            assert len(docs) == 1
+            assert docs[0]["title"] == "Demo Import"
+            assert docs[0]["page_count"] == 1
+            assert Path(docs[0]["stored_path"]).exists()
+            assert len(questions) == 1
+            assert "sin(x)/x" in questions[0]["ocr_text"]
+            assert Path(questions[0]["image_path"]).exists()
+        finally:
+            for key, value in original_paths.items():
+                setattr(app, key, value)
+            gc.collect()
+
+
 def main() -> None:
     test_pdf_helpers()
     test_chapter_carry_state()
@@ -278,6 +339,7 @@ def main() -> None:
     test_question_update_helper()
     test_backup_options()
     test_teacher_turn_persistence()
+    test_real_import_pdf_smoke()
     print("smoke_refactor_ok")
 
 
