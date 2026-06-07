@@ -74,6 +74,40 @@ def test_chapter_carry_state() -> None:
     assert state.resolve("Ch2") == "Ch2"
     assert state.resolve("unknown") == "Ch2"
 
+    resolved = sakura_classify.resolve_import_chapter(
+        page=None,
+        text="",
+        document_kind="mock",
+        chapters=sakura_classify.ChapterCarryState("unknown"),
+        default_chapter="unknown",
+        mock_paper_kind="mock",
+        mock_paper_chapter="whole paper",
+        extract_chapter=lambda _page, _text, _default: "should-not-run",
+    )
+    assert resolved == "whole paper"
+
+    state = sakura_classify.ChapterCarryState("unknown")
+    assert sakura_classify.resolve_import_chapter(
+        page=None,
+        text="page 1",
+        document_kind="book",
+        chapters=state,
+        default_chapter="unknown",
+        mock_paper_kind="mock",
+        mock_paper_chapter="whole paper",
+        extract_chapter=lambda _page, _text, _default: "Ch1",
+    ) == "Ch1"
+    assert sakura_classify.resolve_import_chapter(
+        page=None,
+        text="page 2",
+        document_kind="book",
+        chapters=state,
+        default_chapter="unknown",
+        mock_paper_kind="mock",
+        mock_paper_chapter="whole paper",
+        extract_chapter=lambda _page, _text, default: default,
+    ) == "Ch1"
+
 
 def make_import_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")

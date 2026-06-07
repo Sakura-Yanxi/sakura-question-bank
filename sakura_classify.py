@@ -20,6 +20,24 @@ class ChapterCarryState:
         return normalize_chapter(chapter, self.default_chapter)
 
 
+def resolve_import_chapter(
+    *,
+    page,
+    text: str,
+    document_kind: str,
+    chapters: ChapterCarryState,
+    default_chapter: str,
+    mock_paper_kind: str,
+    mock_paper_chapter: str,
+    extract_chapter=None,
+) -> str:
+    if document_kind == mock_paper_kind:
+        return mock_paper_chapter
+    extractor = extract_chapter or extract_chapter_from_page
+    extracted = extractor(page, text, default_chapter)
+    return chapters.resolve(extracted)
+
+
 def classify_by_rules(text: str, keyword_rules: list[tuple[str, list[str]]], default_category: str) -> tuple[str, str, str]:
     haystack = text.lower()
     for category, keywords in keyword_rules:

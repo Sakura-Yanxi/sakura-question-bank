@@ -1063,11 +1063,15 @@ def import_pdf(
             for index in range(page_start, page_end + 1):
                 page = pdf[index - 1]
                 text = page.get_text("text", sort=True).strip()
-                if document_kind == MOCK_PAPER_KIND:
-                    chapter_hint = MOCK_PAPER_CHAPTER
-                else:
-                    extracted_chapter = extract_chapter_from_page(page, text)
-                    chapter_hint = chapters.resolve(extracted_chapter)
+                chapter_hint = sakura_classify.resolve_import_chapter(
+                    page=page,
+                    text=text,
+                    document_kind=document_kind,
+                    chapters=chapters,
+                    default_chapter=DEFAULT_CHAPTER,
+                    mock_paper_kind=MOCK_PAPER_KIND,
+                    mock_paper_chapter=MOCK_PAPER_CHAPTER,
+                )
                 starts, slices = import_page_slices(page, split_enabled=document_kind == MOCK_PAPER_KIND and split_questions)
                 continuation_clip = continuation_clip_for_starts(page, starts, previous_question.value)
                 if continuation_clip and previous_question.question_id and previous_question.image_path:
