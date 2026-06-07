@@ -1036,9 +1036,18 @@ def import_pdf(
     safe_name = safe_pdf_filename(filename)
     pdf_path = UPLOAD_DIR / f"{doc_id}_{safe_name}"
     pdf_path.write_bytes(pdf_bytes)
-    title = title.strip() or Path(filename).stem
-    subject = normalize_label(subject, DEFAULT_SUBJECT)
-    document_kind = normalize_document_kind(document_kind)
+    metadata = sakura_documents.import_metadata(
+        filename=filename,
+        title=title,
+        subject=subject,
+        document_kind=document_kind,
+        normalize_label=normalize_label,
+        normalize_document_kind=normalize_document_kind,
+        default_subject=DEFAULT_SUBJECT,
+    )
+    title = metadata["title"]
+    subject = metadata["subject"]
+    document_kind = metadata["document_kind"]
 
     now = datetime.now().isoformat(timespec="seconds")
     inserted = []

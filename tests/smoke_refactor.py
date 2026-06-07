@@ -150,6 +150,17 @@ def make_import_conn() -> sqlite3.Connection:
 
 
 def test_import_insert_and_ocr_helpers() -> None:
+    metadata = sakura_documents.import_metadata(
+        filename="demo import.pdf",
+        title="",
+        subject="  Math  ",
+        document_kind="mock",
+        normalize_label=lambda value, fallback: (value or "").strip() or fallback,
+        normalize_document_kind=lambda value: "mock paper" if value == "mock" else "book",
+        default_subject="General",
+    )
+    assert metadata == {"title": "demo import", "subject": "Math", "document_kind": "mock paper"}
+
     conn = make_import_conn()
     sakura_documents.insert_document(
         conn,

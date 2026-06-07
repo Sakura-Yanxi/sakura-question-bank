@@ -3,6 +3,23 @@ from __future__ import annotations
 from pathlib import Path
 
 
+def import_metadata(
+    *,
+    filename: str,
+    title: str,
+    subject: str,
+    document_kind: str,
+    normalize_label,
+    normalize_document_kind,
+    default_subject: str,
+) -> dict:
+    return {
+        "title": title.strip() or Path(filename).stem,
+        "subject": normalize_label(subject, default_subject),
+        "document_kind": normalize_document_kind(document_kind),
+    }
+
+
 def unlink_if_inside(root: Path, path_value: str | Path | None) -> None:
     """Delete a file only when it belongs to the Sakura data directory."""
     if not path_value:
