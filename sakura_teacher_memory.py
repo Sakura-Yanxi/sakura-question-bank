@@ -31,6 +31,14 @@ def save_teacher_memory(conn, content: str, source: str = "chat") -> dict:
     return memory
 
 
+def delete_teacher_memory(conn, memory_id: str) -> bool:
+    row = conn.execute("SELECT id FROM teacher_memory WHERE id = ?", (memory_id,)).fetchone()
+    if not row:
+        return False
+    conn.execute("DELETE FROM teacher_memory WHERE id = ?", (memory_id,))
+    return True
+
+
 def teacher_memory_prompt(conn) -> str:
     memories = load_teacher_memories(conn, limit=8)
     if not memories:
@@ -113,6 +121,14 @@ def save_mentor_experience(conn, payload: dict) -> dict:
         ),
     )
     return item
+
+
+def delete_mentor_experience(conn, exp_id: str) -> bool:
+    row = conn.execute("SELECT id FROM mentor_experience WHERE id = ?", (exp_id,)).fetchone()
+    if not row:
+        return False
+    conn.execute("DELETE FROM mentor_experience WHERE id = ?", (exp_id,))
+    return True
 
 
 def select_relevant_mentor_experiences(conn, message: str = "", subject_hint: str = "", limit: int = 5) -> list[dict]:

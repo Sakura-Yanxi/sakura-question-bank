@@ -1976,10 +1976,9 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_ai_memory_delete(self, memory_id: str) -> None:
         with connect() as conn:
-            row = conn.execute("SELECT id FROM teacher_memory WHERE id = ?", (memory_id,)).fetchone()
-            if not row:
+            deleted = sakura_teacher_memory.delete_teacher_memory(conn, memory_id)
+            if not deleted:
                 return json_response(self, {"error": "记忆不存在"}, 404)
-            conn.execute("DELETE FROM teacher_memory WHERE id = ?", (memory_id,))
         return json_response(self, {"ok": True})
 
     def handle_mentor_experience_get(self) -> None:
@@ -1998,10 +1997,9 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_mentor_experience_delete(self, exp_id: str) -> None:
         with connect() as conn:
-            row = conn.execute("SELECT id FROM mentor_experience WHERE id = ?", (exp_id,)).fetchone()
-            if not row:
+            deleted = sakura_teacher_memory.delete_mentor_experience(conn, exp_id)
+            if not deleted:
                 return json_response(self, {"error": "经验不存在"}, 404)
-            conn.execute("DELETE FROM mentor_experience WHERE id = ?", (exp_id,))
         return json_response(self, {"ok": True})
 
     def handle_ai_chat(self) -> None:
