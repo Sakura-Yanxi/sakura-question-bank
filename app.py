@@ -29,8 +29,10 @@ from sakura_pdf import (
     crop_image_by_ratio,
     detect_question_slices,
     detect_question_starts,
+    page_range,
     render_page_clip_image,
     render_page_image,
+    safe_pdf_filename,
 )
 import sakura_notifications
 import sakura_weather
@@ -1027,7 +1029,7 @@ def import_pdf(
     split_questions: bool = False,
 ) -> dict:
     doc_id = uuid.uuid4().hex
-    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", filename) or "questions.pdf"
+    safe_name = safe_pdf_filename(filename)
     pdf_path = UPLOAD_DIR / f"{doc_id}_{safe_name}"
     pdf_path.write_bytes(pdf_bytes)
     title = title.strip() or Path(filename).stem
@@ -1047,10 +1049,7 @@ def import_pdf(
                 """,
                 (doc_id, title, subject, document_kind, filename, str(pdf_path), pdf.page_count, now),
             )
-            page_start = max(start_page or 1, 1)
-            page_end = min(end_page or pdf.page_count, pdf.page_count)
-            if page_start > page_end:
-                raise ValueError("页码范围无效，请检查起止页。")
+            page_start, page_end = page_range(pdf.page_count, start_page, end_page)
             seq_no = 0
             previous_question_id = ""
             previous_question_image: Path | None = None

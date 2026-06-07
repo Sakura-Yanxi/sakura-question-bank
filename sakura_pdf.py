@@ -7,6 +7,18 @@ from pathlib import Path
 import fitz
 
 
+def safe_pdf_filename(filename: str, fallback: str = "questions.pdf") -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", filename) or fallback
+
+
+def page_range(page_count: int, start_page: int | None = None, end_page: int | None = None) -> tuple[int, int]:
+    page_start = max(start_page or 1, 1)
+    page_end = min(end_page or page_count, page_count)
+    if page_start > page_end:
+        raise ValueError("页码范围无效，请检查起止页。")
+    return page_start, page_end
+
+
 def render_page_image(page: fitz.Page, image_path: Path) -> None:
     page_rect = page.rect
     target_width = 1800
