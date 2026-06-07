@@ -188,8 +188,17 @@ def make_import_conn() -> sqlite3.Connection:
 def make_textbook_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.execute(
+    conn.executescript(
         """
+        CREATE TABLE textbooks (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            subject TEXT,
+            filename TEXT,
+            stored_path TEXT,
+            page_count INTEGER,
+            created_at TEXT
+        );
         CREATE TABLE textbook_pages (
             id TEXT PRIMARY KEY,
             textbook_id TEXT,
@@ -198,7 +207,7 @@ def make_textbook_conn() -> sqlite3.Connection:
             page_text TEXT,
             paragraphs_json TEXT,
             created_at TEXT
-        )
+        );
         """
     )
     return conn
@@ -233,6 +242,30 @@ def test_import_insert_and_ocr_helpers() -> None:
         "subject": "Math",
     }
     textbook_conn = make_textbook_conn()
+    sakura_textbook.insert_textbook(
+        textbook_conn,
+        book_id="book1",
+        title="Lecture Notes",
+        subject="Math",
+        filename="lecture.pdf",
+        stored_path=Path("data/uploads/lecture.pdf"),
+        page_count=4,
+        created_at="now",
+    )
+    textbook_record = textbook_conn.execute("SELECT * FROM textbooks").fetchone()
+    assert textbook_record["title"] == "Lecture Notes"
+    assert textbook_record["stored_path"] == str(Path("data/uploads/lecture.pdf"))
+    assert sakura_textbook.imported_textbook_payload(
+        book_id="book1",
+        title="Lecture Notes",
+        subject="Math",
+        page_count=4,
+    ) == {
+        "textbook_id": "book1",
+        "title": "Lecture Notes",
+        "subject": "Math",
+        "page_count": 4,
+    }
     textbook_doc = fitz.open()
     textbook_page = textbook_doc.new_page()
     textbook_page.insert_text((72, 100), "Definition one.", fontsize=12)

@@ -116,6 +116,30 @@ def import_textbook_page(
     )
 
 
+def insert_textbook(
+    conn,
+    *,
+    book_id: str,
+    title: str,
+    subject: str,
+    filename: str,
+    stored_path: Path,
+    page_count: int,
+    created_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO textbooks (id, title, subject, filename, stored_path, page_count, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (book_id, title, subject, filename, str(stored_path), page_count, created_at),
+    )
+
+
+def imported_textbook_payload(*, book_id: str, title: str, subject: str, page_count: int) -> dict:
+    return {"textbook_id": book_id, "title": title, "subject": subject, "page_count": page_count}
+
+
 def import_textbook_pdf(
     filename: str,
     pdf_bytes: bytes,
@@ -146,12 +170,15 @@ def import_textbook_pdf(
     page_count = pdf.page_count
     try:
         with connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO textbooks (id, title, subject, filename, stored_path, page_count, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (book_id, title, subject, filename, str(pdf_path), page_count, now),
+            insert_textbook(
+                conn,
+                book_id=book_id,
+                title=title,
+                subject=subject,
+                filename=filename,
+                stored_path=pdf_path,
+                page_count=page_count,
+                created_at=now,
             )
             for index, page in enumerate(pdf, start=1):
                 import_textbook_page(
@@ -165,7 +192,7 @@ def import_textbook_pdf(
                 )
     finally:
         pdf.close()
-    return {"textbook_id": book_id, "title": title, "subject": subject, "page_count": page_count}
+    return imported_textbook_payload(book_id=book_id, title=title, subject=subject, page_count=page_count)
 
 
 def build_textbook_context(
