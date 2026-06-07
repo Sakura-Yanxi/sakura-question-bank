@@ -24,6 +24,7 @@ import sakura_http
 import sakura_import
 import sakura_pdf
 import sakura_questions
+import sakura_routes
 import sakura_teacher_memory
 import sakura_textbook
 
@@ -61,6 +62,12 @@ def test_http_file_serving() -> None:
         sakura_http.serve_file(missing, root / "missing.html", root)
         assert missing.status == 404
         assert b"Not found" in missing.wfile.getvalue()
+
+    assert sakura_routes.route_for("/api/questions", sakura_routes.GET_ROUTES).handler == "handle_questions"
+    assert sakura_routes.route_for("/api/questions", sakura_routes.GET_ROUTES).with_query is True
+    assert sakura_routes.route_for("/api/notify/settings", sakura_routes.POST_ROUTES).handler == "handle_notification_settings_post"
+    assert sakura_routes.route_for("/api/missing", sakura_routes.GET_ROUTES) is None
+    assert sakura_routes.split_path("/api/practice/b1/questions/q2") == ["api", "practice", "b1", "questions", "q2"]
 
 
 def test_pdf_helpers() -> None:

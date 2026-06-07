@@ -58,6 +58,7 @@ import sakura_insights
 import sakura_hints
 import sakura_teacher_memory
 import sakura_import
+import sakura_routes
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -1197,63 +1198,21 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return self.handle_practice_page(batch_id)
             if parsed.path == "/api/health":
                 return json_response(self, {"ok": True, "date": date.today().isoformat()})
-            if parsed.path == "/api/documents":
-                return self.handle_documents()
-            if parsed.path == "/api/textbooks":
-                return self.handle_textbooks()
+            route = sakura_routes.route_for(parsed.path, sakura_routes.GET_ROUTES)
+            if route:
+                handler = getattr(self, route.handler)
+                if route.with_query:
+                    return handler(parse_qs(parsed.query))
+                return handler()
             if parsed.path.startswith("/api/textbooks/") and "/pages/" in parsed.path:
                 parts = parsed.path.split("/")
                 return self.handle_textbook_page(parts[3], int(parts[5]))
             if parsed.path.startswith("/api/documents/") and parsed.path.endswith("/chapter-stats"):
                 doc_id = parsed.path.split("/")[-2]
                 return self.handle_chapter_stats(doc_id)
-            if parsed.path == "/api/questions":
-                return self.handle_questions(parse_qs(parsed.query))
-            if parsed.path == "/api/daily":
-                return self.handle_daily()
             if parsed.path.startswith("/api/practice/"):
                 batch_id = parsed.path.split("/")[-1]
                 return self.handle_practice_batch_get(batch_id)
-            if parsed.path == "/api/daily/rules":
-                return self.handle_daily_rules_get()
-            if parsed.path == "/api/daily/rule-options":
-                return self.handle_daily_rule_options(parse_qs(parsed.query))
-            if parsed.path == "/api/backup/export":
-                return self.handle_backup_export(parse_qs(parsed.query))
-            if parsed.path == "/api/backup/import-status":
-                return self.handle_backup_import_status(parse_qs(parsed.query))
-            if parsed.path == "/api/reflection":
-                return self.handle_reflection_preview(parse_qs(parsed.query))
-            if parsed.path == "/api/countdown":
-                return self.handle_countdown()
-            if parsed.path == "/api/quote":
-                return self.handle_quote()
-            if parsed.path == "/api/coach":
-                return self.handle_coach_get()
-            if parsed.path == "/api/coach/settings":
-                return self.handle_coach_settings_get()
-            if parsed.path == "/api/weather/settings":
-                return self.handle_weather_settings_get()
-            if parsed.path == "/api/weather/preview":
-                return self.handle_weather_preview(parse_qs(parsed.query))
-            if parsed.path == "/api/ai-chat/memory":
-                return self.handle_ai_memory_get()
-            if parsed.path == "/api/mentor-experience":
-                return self.handle_mentor_experience_get()
-            if parsed.path == "/api/llm/settings":
-                return self.handle_llm_settings_get()
-            if parsed.path in ("/api/notification/settings", "/api/notify/settings"):
-                return self.handle_notification_settings_get()
-            if parsed.path == "/api/reminder/settings":
-                return self.handle_reminder_settings_get()
-            if parsed.path == "/api/today/done":
-                return self.handle_today_done()
-            if parsed.path == "/api/today/status":
-                return self.handle_today_status()
-            if parsed.path == "/api/export/mistakes":
-                return self.handle_export_mistakes(parse_qs(parsed.query))
-            if parsed.path == "/api/reflections":
-                return self.handle_reflection_history()
             if parsed.path.startswith("/api/reflections/") and parsed.path.endswith("/download"):
                 ref_id = parsed.path.split("/")[-2]
                 return self.handle_reflection_download(ref_id)
@@ -1291,14 +1250,9 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return self.handle_login_post()
             if not self.require_auth(parsed.path):
                 return
-            if parsed.path == "/api/upload":
-                return self.handle_upload()
-            if parsed.path == "/api/textbooks/upload":
-                return self.handle_textbook_upload()
-            if parsed.path == "/api/textbooks/chat":
-                return self.handle_textbook_chat()
-            if parsed.path == "/api/textbooks/memory":
-                return self.handle_textbook_memory()
+            route = sakura_routes.route_for(parsed.path, sakura_routes.POST_ROUTES)
+            if route:
+                return getattr(self, route.handler)()
             if parsed.path.startswith("/api/documents/") and parsed.path.endswith("/rescan-chapters"):
                 doc_id = parsed.path.split("/")[-2]
                 return self.handle_rescan_chapters(doc_id)
@@ -1314,45 +1268,9 @@ class DemoHandler(BaseHTTPRequestHandler):
             if parsed.path.startswith("/api/questions/") and parsed.path.endswith("/crop"):
                 q_id = parsed.path.split("/")[-2]
                 return self.handle_crop_question(q_id)
-            if parsed.path == "/api/reflection":
-                return self.handle_reflection()
-            if parsed.path == "/api/profile/refresh":
-                return self.handle_profile_refresh()
-            if parsed.path == "/api/coach":
-                return self.handle_coach_post()
-            if parsed.path == "/api/coach/settings":
-                return self.handle_coach_settings_post()
-            if parsed.path == "/api/daily/rules":
-                return self.handle_daily_rule_save()
-            if parsed.path == "/api/backup/import":
-                return self.handle_backup_import()
-            if parsed.path == "/api/weather/settings":
-                return self.handle_weather_settings_post()
-            if parsed.path == "/api/weather/reminder":
-                return self.handle_weather_reminder_preview()
             if parsed.path.startswith("/api/practice/") and "/questions/" in parsed.path:
                 parts = parsed.path.strip("/").split("/")
                 return self.handle_practice_feedback(parts[2], parts[4])
-            if parsed.path == "/api/push/daily":
-                return self.handle_push_daily()
-            if parsed.path == "/api/push/morning":
-                return self.handle_push_morning()
-            if parsed.path == "/api/push/night":
-                return self.handle_push_night()
-            if parsed.path == "/api/push/weather":
-                return self.handle_push_weather()
-            if parsed.path == "/api/ai-chat":
-                return self.handle_ai_chat()
-            if parsed.path == "/api/ai-chat/memory":
-                return self.handle_ai_memory_post()
-            if parsed.path == "/api/mentor-experience":
-                return self.handle_mentor_experience_post()
-            if parsed.path == "/api/llm/settings":
-                return self.handle_llm_settings_post()
-            if parsed.path in ("/api/notification/settings", "/api/notify/settings"):
-                return self.handle_notification_settings_post()
-            if parsed.path == "/api/reminder/settings":
-                return self.handle_reminder_settings_post()
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
         except Exception as exc:
             traceback.print_exc()
@@ -1363,8 +1281,9 @@ class DemoHandler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             if not self.require_auth(parsed.path):
                 return
-            if parsed.path == "/api/coach/plan":
-                return self.handle_clear_coach_plan()
+            route = sakura_routes.route_for(parsed.path, sakura_routes.DELETE_ROUTES)
+            if route:
+                return getattr(self, route.handler)()
             if parsed.path.startswith("/api/textbooks/"):
                 book_id = parsed.path.split("/")[-1]
                 return self.handle_delete_textbook(book_id)
