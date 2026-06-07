@@ -1719,39 +1719,18 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_update_question(self, q_id: str) -> None:
         payload = self.read_json()
-        allowed = {
-            "status", "mistake_reason", "meta_tags", "user_note", "category",
-            "subcategory", "chapter", "difficulty", "question_no",
-            "ai_analysis", "ai_hint", "ai_variations",
-        }
-        updates = {k: v for k, v in payload.items() if k in allowed}
-        if not updates:
-            return json_response(self, {"error": "没有可更新字段。"}, 400)
         with connect() as conn:
-            current = conn.execute("SELECT * FROM questions WHERE id = ?", (q_id,)).fetchone()
-            if not current:
-                return json_response(self, {"error": "题目不存在。"}, 404)
-            if "meta_tags" in updates:
-                updates["meta_tags"] = json.dumps(normalize_meta_tags(updates["meta_tags"]), ensure_ascii=False)
-            if updates.get("status") in WRONGISH_STATUSES:
-                existing_tags = normalize_meta_tags(updates.get("meta_tags", current["meta_tags"]))
-                if not existing_tags:
-                    return json_response(self, {"error": "标记错题前，请至少选择一个元认知错因标签。"}, 400)
-            if updates.get("status") in {*WRONGISH_STATUSES, "做对"}:
-                updates["last_reviewed_at"] = datetime.now().isoformat(timespec="seconds")
-                updates["review_count"] = "review_count + 1"
-                updates.update(schedule_for_status(current, updates["status"]))
-            assignments = []
-            params = []
-            for key, value in updates.items():
-                if key == "review_count":
-                    assignments.append("review_count = review_count + 1")
-                else:
-                    assignments.append(f"{key} = ?")
-                    params.append(value)
-            params.append(q_id)
-            conn.execute(f"UPDATE questions SET {', '.join(assignments)} WHERE id = ?", params)
-            row = sakura_questions.load_question_detail(conn, q_id)
+            try:
+                row = sakura_questions.update_question(
+                    conn,
+                    q_id,
+                    payload,
+                    normalize_meta_tags=normalize_meta_tags,
+                    wrongish_statuses=WRONGISH_STATUSES,
+                    schedule_for_status=schedule_for_status,
+                )
+            except sakura_questions.QuestionUpdateError as exc:
+                return json_response(self, {"error": str(exc)}, exc.status)
         return json_response(self, row_to_dict(row))
 
     def handle_analyze(self, q_id: str) -> None:

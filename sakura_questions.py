@@ -1,5 +1,30 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime
+
+
+QUESTION_UPDATE_FIELDS = {
+    "status",
+    "mistake_reason",
+    "meta_tags",
+    "user_note",
+    "category",
+    "subcategory",
+    "chapter",
+    "difficulty",
+    "question_no",
+    "ai_analysis",
+    "ai_hint",
+    "ai_variations",
+}
+
+
+class QuestionUpdateError(ValueError):
+    def __init__(self, message: str, status: int = 400) -> None:
+        super().__init__(message)
+        self.status = status
+
 
 def load_question_index(conn, where: str, params: list[str]) -> tuple[list, list, list]:
     rows = conn.execute(
@@ -91,3 +116,46 @@ def load_chapter_stats(conn, doc_id: str) -> tuple[object | None, list[dict]]:
         item["correct_rate"] = correct_rate
         stats.append(item)
     return doc, stats
+
+
+def update_question(
+    conn,
+    q_id: str,
+    payload: dict,
+    *,
+    normalize_meta_tags,
+    wrongish_statuses: set[str],
+    schedule_for_status,
+) -> object:
+    updates = {key: value for key, value in payload.items() if key in QUESTION_UPDATE_FIELDS}
+    if not updates:
+        raise QuestionUpdateError("没有可更新字段。", 400)
+
+    current = conn.execute("SELECT * FROM questions WHERE id = ?", (q_id,)).fetchone()
+    if not current:
+        raise QuestionUpdateError("题目不存在。", 404)
+
+    normalized_meta_tags = None
+    if "meta_tags" in updates:
+        normalized_meta_tags = normalize_meta_tags(updates["meta_tags"])
+        updates["meta_tags"] = json.dumps(normalized_meta_tags, ensure_ascii=False)
+    if updates.get("status") in wrongish_statuses:
+        existing_tags = normalized_meta_tags if normalized_meta_tags is not None else normalize_meta_tags(current["meta_tags"])
+        if not existing_tags:
+            raise QuestionUpdateError("标记错题前，请至少选择一个元认知错因标签。", 400)
+    if updates.get("status") in {*wrongish_statuses, "做对"}:
+        updates["last_reviewed_at"] = datetime.now().isoformat(timespec="seconds")
+        updates["review_count"] = "review_count + 1"
+        updates.update(schedule_for_status(current, updates["status"]))
+
+    assignments = []
+    params = []
+    for key, value in updates.items():
+        if key == "review_count":
+            assignments.append("review_count = review_count + 1")
+        else:
+            assignments.append(f"{key} = ?")
+            params.append(value)
+    params.append(q_id)
+    conn.execute(f"UPDATE questions SET {', '.join(assignments)} WHERE id = ?", params)
+    return load_question_detail(conn, q_id)
