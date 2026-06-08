@@ -132,6 +132,7 @@ async function loadRemind() {
   $("#pushConfigBadge").textContent = "点测试按钮检测";
   $("#pushConfigBadge").className = "tag";
   await loadNotificationSettings();
+  await loadSecuritySettings();
 }
 
 function setCheckinUI(done) {
@@ -281,6 +282,80 @@ async function loadNotificationSettings() {
     $("#notifySettingsBadge").textContent = "配置读取失败";
     $("#notifySettingsBadge").className = "tag status wrong";
     if ($("#notifySettingsHint")) $("#notifySettingsHint").textContent = error.message;
+  }
+}
+
+function securityEventLabel(type) {
+  const map = {
+    login_failed: "登录失败",
+    login_locked: "触发锁定",
+    login_blocked: "锁定拦截",
+    login_success: "登录成功",
+    password_updated: "密码更新",
+  };
+  return map[type] || type || "安全事件";
+}
+
+function renderSecurityEvents(events = []) {
+  const box = $("#securityRecentEvents");
+  if (!box) return;
+  if (!events.length) {
+    box.innerHTML = `<p class="empty-note compact">暂无安全事件记录。</p>`;
+    return;
+  }
+  box.innerHTML = events.slice(0, 6).map((event) => {
+    const detail = event.detail || {};
+    const ua = detail.user_agent ? ` · ${escapeHtml(String(detail.user_agent).slice(0, 80))}` : "";
+    return `
+      <div class="security-event">
+        <span>${escapeHtml(securityEventLabel(event.event_type))}</span>
+        <strong>${escapeHtml(event.ip || "unknown")}</strong>
+        <small>${escapeHtml(event.created_at || "")}${ua}</small>
+      </div>`;
+  }).join("");
+}
+
+async function loadSecuritySettings() {
+  if (!$("#securitySettingsBadge")) return;
+  try {
+    const data = await api("/api/security/settings");
+    $("#securitySettingsBadge").textContent = data.password_configured ? "访问密码已启用" : "尚未启用访问密码";
+    $("#securitySettingsBadge").className = data.password_configured ? "security-ok" : "security-warn";
+    const policy = data.policy || {};
+    $("#securityPolicyText").textContent = `至少 ${policy.min_length || 12} 位，必须包含 ${(policy.requires || ["字母", "数字", "特殊字符"]).join("、")}；失败锁定：${(policy.lock_steps || []).join(" → ")}。`;
+    renderSecurityEvents(data.recent_events || []);
+  } catch (error) {
+    $("#securitySettingsBadge").textContent = "安全设置读取失败";
+    $("#securitySettingsBadge").className = "security-warn";
+    if ($("#securitySettingsHint")) $("#securitySettingsHint").textContent = error.message;
+  }
+}
+
+async function saveSecuritySettings() {
+  const hint = $("#securitySettingsHint");
+  const password = $("#adminPassword")?.value || "";
+  const confirm = $("#adminPasswordConfirm")?.value || "";
+  if (hint) hint.textContent = "正在保存访问密码...";
+  if (password !== confirm) {
+    if (hint) hint.textContent = "两次输入的密码不一致。";
+    return;
+  }
+  try {
+    const data = await api("/api/security/settings", {
+      method: "POST",
+      body: JSON.stringify({
+        admin_password: password,
+        admin_password_confirm: confirm,
+      }),
+    });
+    if ($("#adminPassword")) $("#adminPassword").value = "";
+    if ($("#adminPasswordConfirm")) $("#adminPasswordConfirm").value = "";
+    if (hint) hint.textContent = data.message || "访问密码已保存。";
+    setTimeout(() => {
+      window.location.href = "/login";
+    }, 1200);
+  } catch (error) {
+    if (hint) hint.textContent = error.message;
   }
 }
 

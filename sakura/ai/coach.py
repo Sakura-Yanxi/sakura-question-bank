@@ -166,7 +166,7 @@ def build_ai_teacher_context(
     subject_hint = state.get("focus_subject", "")
     mentor_experiences = select_relevant_mentor_experiences(conn, message, subject_hint, limit=5)
     return {
-        "teacher_memories": teacher_memory_prompt(conn),
+        "teacher_memories": teacher_memory_prompt(conn, subject_hint),
         "mentor_experiences": mentor_experiences,
         "mentor_experience_policy": "这些是外部经验参考，不是用户个人做题证据；只能辅助生成策略，不能替代本地错题统计。",
         "settings": {

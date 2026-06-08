@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -29,6 +30,85 @@ class QuestionServiceError(ValueError):
 
 class QuestionUpdateError(QuestionServiceError):
     pass
+
+
+def review_note_to_dict(row) -> dict:
+    item = dict(row)
+    try:
+        tags = json.loads(item.get("meta_tags") or "[]")
+    except json.JSONDecodeError:
+        tags = []
+    item["meta_tags"] = tags if isinstance(tags, list) else []
+    return item
+
+
+def load_question_review_notes(conn, q_id: str, limit: int = 30) -> list[dict]:
+    try:
+        safe_limit = int(limit)
+    except (TypeError, ValueError):
+        safe_limit = 30
+    safe_limit = max(1, min(safe_limit, 100))
+    rows = conn.execute(
+        """
+        SELECT id, question_id, status, note, meta_tags, source, created_at
+        FROM question_review_notes
+        WHERE question_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+        """,
+        (q_id, safe_limit),
+    ).fetchall()
+    return [review_note_to_dict(row) for row in rows]
+
+
+def insert_question_review_note(
+    conn,
+    q_id: str,
+    *,
+    status: str = "",
+    note: str = "",
+    meta_tags=None,
+    source: str = "detail",
+    created_at: str | None = None,
+    normalize_meta_tags=None,
+) -> dict | None:
+    clean_note = str(note or "").strip()[:1200]
+    if not clean_note:
+        return None
+    tags = normalize_meta_tags(meta_tags) if normalize_meta_tags else (meta_tags or [])
+    if not isinstance(tags, list):
+        tags = []
+    row = conn.execute("SELECT id, status, meta_tags FROM questions WHERE id = ?", (q_id,)).fetchone()
+    if not row:
+        raise QuestionUpdateError("题目不存在。", 404)
+    if not status:
+        status = row["status"]
+    created = created_at or datetime.now().isoformat(timespec="seconds")
+    note_id = uuid.uuid4().hex
+    conn.execute(
+        """
+        INSERT INTO question_review_notes (id, question_id, status, note, meta_tags, source, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            note_id,
+            q_id,
+            str(status or ""),
+            clean_note,
+            json.dumps(tags, ensure_ascii=False),
+            str(source or "detail")[:40],
+            created,
+        ),
+    )
+    return {
+        "id": note_id,
+        "question_id": q_id,
+        "status": str(status or ""),
+        "note": clean_note,
+        "meta_tags": tags,
+        "source": str(source or "detail")[:40],
+        "created_at": created,
+    }
 
 
 def load_question_index(conn, where: str, params: list[str]) -> tuple[list, list, list]:

@@ -66,6 +66,17 @@ def init_db(
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(document_id) REFERENCES documents(id)
             );
+
+            CREATE TABLE IF NOT EXISTS question_review_notes (
+                id TEXT PRIMARY KEY,
+                question_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                meta_tags TEXT NOT NULL DEFAULT '[]',
+                source TEXT NOT NULL DEFAULT 'detail',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(question_id) REFERENCES questions(id)
+            );
             """
         )
         migrate_db(
@@ -81,6 +92,8 @@ def init_db(
             CREATE INDEX IF NOT EXISTS idx_questions_status ON questions(status);
             CREATE INDEX IF NOT EXISTS idx_questions_document ON questions(document_id);
             CREATE INDEX IF NOT EXISTS idx_questions_next_review ON questions(next_review_at);
+            CREATE INDEX IF NOT EXISTS idx_question_review_notes_question
+                ON question_review_notes(question_id, created_at);
 
             CREATE TABLE IF NOT EXISTS reflections (
                 id TEXT PRIMARY KEY,
@@ -139,11 +152,51 @@ def init_db(
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS login_rate_limits (
+                ip TEXT PRIMARY KEY,
+                fail_count INTEGER NOT NULL DEFAULT 0,
+                window_started_at TEXT NOT NULL DEFAULT '',
+                locked_until TEXT NOT NULL DEFAULT '',
+                lock_level INTEGER NOT NULL DEFAULT 0,
+                last_failed_at TEXT NOT NULL DEFAULT '',
+                user_agent TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS login_security_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip TEXT NOT NULL DEFAULT '',
+                user_agent TEXT NOT NULL DEFAULT '',
+                event_type TEXT NOT NULL DEFAULT '',
+                detail_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_login_security_events_created
+                ON login_security_events(created_at);
+            CREATE INDEX IF NOT EXISTS idx_login_security_events_ip
+                ON login_security_events(ip);
+
             CREATE TABLE IF NOT EXISTS teacher_memory (
                 id TEXT PRIMARY KEY,
                 content TEXT NOT NULL,
+                subject TEXT NOT NULL DEFAULT '未分科',
                 source TEXT NOT NULL DEFAULT 'chat',
                 created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_teacher_memory_subject ON teacher_memory(subject);
+            CREATE INDEX IF NOT EXISTS idx_teacher_memory_created ON teacher_memory(created_at);
+
+            CREATE TABLE IF NOT EXISTS teacher_memory_subjects (
+                subject TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL
+            );
+            INSERT OR IGNORE INTO teacher_memory_subjects(subject, created_at)
+            SELECT DISTINCT COALESCE(NULLIF(subject, ''), '未分科'), datetime('now')
+            FROM teacher_memory;
+
+            CREATE TABLE IF NOT EXISTS teacher_memory_settings (
+                id TEXT PRIMARY KEY,
+                compression_prompt TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS mentor_experience (
@@ -299,6 +352,12 @@ def migrate_db(
         conn.execute("ALTER TABLE questions ADD COLUMN mastered_at TEXT")
     conn.execute("UPDATE questions SET chapter = ? WHERE chapter = ''", (default_chapter,))
     conn.execute("UPDATE questions SET meta_tags = '[]' WHERE meta_tags = ''")
+    teacher_memory_exists = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='teacher_memory'").fetchone()
+    teacher_memory_columns = {row["name"] for row in conn.execute("PRAGMA table_info(teacher_memory)").fetchall()} if teacher_memory_exists else set()
+    if teacher_memory_exists and "subject" not in teacher_memory_columns:
+        conn.execute("ALTER TABLE teacher_memory ADD COLUMN subject TEXT NOT NULL DEFAULT '未分科'")
+    if teacher_memory_exists:
+        conn.execute("UPDATE teacher_memory SET subject = '未分科' WHERE subject = ''")
     coach_exists = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='coach_state'").fetchone()
     coach_columns = {row["name"] for row in conn.execute("PRAGMA table_info(coach_state)").fetchall()} if coach_exists else set()
     if coach_exists and "weather_city" not in coach_columns:

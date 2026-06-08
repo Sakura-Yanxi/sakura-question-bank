@@ -44,6 +44,7 @@
     if (!doc) return;
     const kind = documentKind(doc);
     const dialog = $("#detailDialog");
+    dialog.classList.remove("archive-mode");
     $("#detailContent").innerHTML = `
       <form class="document-editor" id="documentEditForm">
         <div class="panel-head">

@@ -37,20 +37,74 @@
     return index >= 0 && ids.length ? `${index + 1}/${ids.length}` : "";
   }
 
+  function formatReviewNoteDate(value) {
+    if (!value) return "未记录日期";
+    const normalized = String(value).replace(" ", "T");
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  function reviewNoteSourceLabel(source) {
+    if (source === "daily") return "每日练习";
+    if (source === "legacy") return "旧备注";
+    return "题目详情";
+  }
+
+  function renderReviewNoteTimeline(notes = []) {
+    const list = Array.isArray(notes) ? notes : [];
+    if (!list.length) {
+      return `<p class="empty-note compact">还没有历史复盘记录。二刷、三刷时写下本次发现，就会按日期留在这里。</p>`;
+    }
+    return list
+      .map((note, index) => {
+        const tags = Array.isArray(note.meta_tags) ? note.meta_tags : [];
+        const tagHtml = tags.length
+          ? `<div class="review-note-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>`
+          : "";
+        return `
+          <details class="review-note-card" ${index === 0 ? "open" : ""}>
+            <summary>
+              <span class="review-note-date">${escapeHtml(formatReviewNoteDate(note.created_at))}</span>
+              <span class="tag status ${statusClass(note.status || "")}">${escapeHtml(note.status || "未标注")}</span>
+              <small>${escapeHtml(reviewNoteSourceLabel(note.source || ""))}</small>
+            </summary>
+            <p>${escapeHtml(note.note || "")}</p>
+            ${tagHtml}
+          </details>`;
+      })
+      .join("");
+  }
+
   function readDetailPatch() {
-    return {
+    const tags = selectedMetaTags();
+    const note = ($("#userNote")?.value || "").trim();
+    const patch = {
       status: $("#detailStatus")?.value || "未做",
-      meta_tags: selectedMetaTags(),
-      mistake_reason: selectedMetaTags().join("、"),
-      user_note: $("#userNote")?.value || "",
+      meta_tags: tags,
+      mistake_reason: tags.join("、"),
       chapter: $("#detailChapter")?.value || "",
       question_no: $("#detailQuestionNo")?.value?.trim() || "",
+    };
+    if (note) {
+      patch.user_note = note;
+      patch.review_note = note;
+      patch.append_review_note = true;
+      patch.review_note_source = "detail";
+    }
+    return {
+      ...patch,
     };
   }
 
   function readDetailInsightPatch() {
     const patch = readDetailPatch();
     delete patch.question_no;
+    delete patch.user_note;
+    delete patch.review_note;
+    delete patch.append_review_note;
+    delete patch.review_note_source;
     return patch;
   }
 
@@ -114,9 +168,16 @@
             <div class="meta-checks">${metaTagControls(q.meta_tags || [])}</div>
           </label>
           <label>
-            我的备注
-            <textarea id="userNote" placeholder="记录这题错在哪里，或者下次要注意什么">${escapeHtml(q.user_note || "")}</textarea>
+            本次复盘补充
+            <textarea id="userNote" placeholder="写这一次二刷/三刷的新发现；保存后会追加到下方历史记录，不覆盖旧记录"></textarea>
           </label>
+          <section class="review-note-panel">
+            <div class="review-note-head">
+              <strong>多刷记录</strong>
+              <span>${(q.review_notes || []).length || 0} 条</span>
+            </div>
+            <div class="review-note-timeline">${renderReviewNoteTimeline(q.review_notes || [])}</div>
+          </section>
           <div class="detail-actions">
             <button id="saveDetail">保存标注</button>
             <button id="analyzeQuestion" class="ghost">错题分析</button>
@@ -139,6 +200,7 @@
     const q = await api(`/api/questions/${id}`);
     const currentStatus = presetStatus || q.status;
     const dialog = $("#detailDialog");
+    dialog.classList.remove("archive-mode");
     const prev = detailNeighbor(q.id, -1);
     const next = detailNeighbor(q.id, 1);
     const positionText = detailPositionText(q.id);
@@ -165,11 +227,10 @@
       dialog.close();
     };
     $("#needReview").onclick = async () => {
+      const patch = readDetailPatch();
       await updateQuestion(q.id, {
+        ...patch,
         status: "需复习",
-        meta_tags: selectedMetaTags(),
-        mistake_reason: selectedMetaTags().join("、"),
-        user_note: $("#userNote")?.value || "",
       });
       dialog.close();
     };

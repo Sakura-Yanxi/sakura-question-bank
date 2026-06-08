@@ -1,6 +1,12 @@
 (function () {
   let lastAiChatAnswer = "";
   let isBound = false;
+  let memorySubjects = ["未分科"];
+  let memorySettings = {
+    compression_prompt: "",
+    default_compression_prompt: "",
+    is_custom: false,
+  };
 
   function updateLlmFields(data) {
     if (!data) return;
@@ -20,11 +26,42 @@
       ? memories.map((m) => `
         <article class="memory-item">
           <p>${escapeHtml(m.content)}</p>
-          <small>${escapeHtml(m.source || "chat")} · ${escapeHtml(m.created_at || "")}</small>
+          <small><span class="subject-chip">${escapeHtml(m.subject || "未分科")}</span> · ${escapeHtml(m.source || "chat")} · ${escapeHtml(m.created_at || "")}</small>
           <button class="ghost" data-delete-ai-memory="${escapeAttr(m.id)}"><i data-lucide="trash-2"></i>删除</button>
         </article>`).join("")
       : `<p class="empty-note">还没有老师记忆。发送对话后，可把有价值的一轮主动导入。</p>`;
     if (window.lucide) lucide.createIcons();
+  }
+
+  function updateMemorySubjects(subjects = []) {
+    const next = subjects.map((item) => String(item || "").trim()).filter(Boolean);
+    memorySubjects = Array.from(new Set(["未分科", ...next]));
+    return memorySubjects;
+  }
+
+  function updateMemorySettings(settings = {}) {
+    memorySettings = {
+      ...memorySettings,
+      ...settings,
+    };
+    return memorySettings;
+  }
+
+  async function loadTeacherMemorySubjects() {
+    const data = await api("/api/ai-chat/memory-subjects");
+    return updateMemorySubjects(data.subjects || []);
+  }
+
+  async function loadTeacherMemorySettings() {
+    const data = await api("/api/ai-chat/memory-settings");
+    return updateMemorySettings(data);
+  }
+
+  function subjectSelectOptions(selected = "") {
+    const active = selected || memorySubjects[0] || "未分科";
+    return memorySubjects.map((subject) => `
+      <option value="${escapeAttr(subject)}"${subject === active ? " selected" : ""}>${escapeHtml(subject)}</option>
+    `).join("");
   }
 
   function renderMentorExperiences(experiences = []) {
@@ -56,6 +93,8 @@
     try {
       const data = await api("/api/ai-chat/memory");
       updateLlmFields(data);
+      updateMemorySubjects(data.subjects || []);
+      updateMemorySettings(data.memory_settings || {});
       renderTeacherMemories(data.memories || []);
       await loadMentorExperiences();
     } catch (error) {
@@ -106,13 +145,150 @@
     }
   }
 
-  async function saveAiMemory(content, source = "chat") {
+  async function openMemorySubjectDialog({ content, source }) {
+    const text = (content || "").trim();
+    if (!text) return null;
+    try {
+      await loadTeacherMemorySubjects();
+      await loadTeacherMemorySettings();
+    } catch (error) {
+      memorySubjects = memorySubjects.length ? memorySubjects : ["未分科"];
+    }
+    const dialog = $("#detailDialog");
+    const preview = text.length > 260 ? `${text.slice(0, 260)}...` : text;
+    let resolved = false;
+    return new Promise((resolve) => {
+      const finish = (value) => {
+        if (resolved) return;
+        resolved = true;
+        dialog.removeEventListener("close", onClose);
+        resolve(value);
+      };
+      const onClose = () => finish(null);
+      dialog.classList.add("archive-mode");
+      $("#detailContent").innerHTML = `
+        <div class="archive-dialog memory-subject-dialog">
+          <div class="archive-dialog-head">
+            <div>
+              <h2>导入老师记忆</h2>
+              <p>先选择学科，再把原始内容压缩成长期可复用的老师记忆。摘要可以手动修改。</p>
+            </div>
+          </div>
+          <div class="memory-subject-form">
+            <label class="coach-field">
+              <span>选择已有学科</span>
+              <select id="memoryImportSubject">${subjectSelectOptions()}</select>
+            </label>
+            <label class="coach-field">
+              <span>新建学科（可选）</span>
+              <input id="memoryImportNewSubject" type="text" placeholder="例如：408 机组 / 高等数学 / 英语阅读" />
+            </label>
+            <label class="coach-field memory-wide-field">
+              <span>本次额外压缩要求（可选）</span>
+              <input id="memoryCompressionInstruction" type="text" placeholder="例如：更关注我的错因；只保留后续教学策略；语气更严格一点" />
+            </label>
+            <details class="memory-compression-settings memory-wide-field">
+              <summary><i data-lucide="sliders-horizontal"></i> 自定义记忆压缩模板</summary>
+              <textarea id="memoryCompressionPrompt" rows="8">${escapeHtml(memorySettings.compression_prompt || "")}</textarea>
+              <div class="memory-compression-actions">
+                <button id="saveMemoryCompressionPrompt" type="button" class="ghost"><i data-lucide="save"></i>保存模板</button>
+                <button id="resetMemoryCompressionPrompt" type="button" class="ghost"><i data-lucide="rotate-ccw"></i>恢复默认</button>
+                <span id="memoryCompressionPromptHint" class="coach-hint">${memorySettings.is_custom ? "当前使用自定义模板" : "当前使用默认模板"}</span>
+              </div>
+            </details>
+            <div class="memory-preview-box">
+              <strong>原始内容预览</strong>
+              <p>${escapeHtml(preview)}</p>
+              <small>来源：${escapeHtml(source || "chat")}</small>
+            </div>
+            <label class="coach-field memory-wide-field">
+              <span>压缩后的老师记忆（可编辑）</span>
+              <textarea id="memoryCompressedContent" rows="5" placeholder="点击“智能归纳”生成；如果直接保存，会先自动归纳。"></textarea>
+            </label>
+          </div>
+          <div class="archive-actions">
+            <button id="cancelMemoryImport" class="ghost"><i data-lucide="x"></i>取消</button>
+            <button id="runMemoryCompress" class="ghost"><i data-lucide="wand-sparkles"></i>智能归纳</button>
+            <button id="confirmMemoryImport"><i data-lucide="brain-circuit"></i>保存归纳记忆</button>
+          </div>
+        </div>`;
+      dialog.addEventListener("close", onClose, { once: true });
+      if (!dialog.open) dialog.showModal();
+      if (window.lucide) lucide.createIcons();
+      const currentSubject = () => {
+        const created = $("#memoryImportNewSubject")?.value.trim() || "";
+        const selected = $("#memoryImportSubject")?.value || "未分科";
+        return created || selected;
+      };
+      const runCompression = async () => {
+        const target = $("#memoryCompressedContent");
+        if (target) target.value = "正在归纳压缩...";
+        try {
+          const data = await api("/api/ai-chat/memory/compress", {
+            method: "POST",
+            body: JSON.stringify({
+              content: text,
+              source,
+              subject: currentSubject(),
+              instruction: $("#memoryCompressionInstruction")?.value.trim() || "",
+            }),
+          });
+          updateMemorySettings(data.memory_settings || {});
+          if (target) target.value = data.summary || "";
+          return data.summary || "";
+        } catch (error) {
+          if (target) target.value = error.message;
+          throw error;
+        }
+      };
+      $("#cancelMemoryImport").onclick = () => {
+        finish(null);
+        dialog.close();
+      };
+      $("#runMemoryCompress").onclick = async () => {
+        await runCompression();
+      };
+      $("#saveMemoryCompressionPrompt").onclick = async () => {
+        const hint = $("#memoryCompressionPromptHint");
+        if (hint) hint.textContent = "正在保存模板...";
+        const data = await api("/api/ai-chat/memory-settings", {
+          method: "POST",
+          body: JSON.stringify({ compression_prompt: $("#memoryCompressionPrompt")?.value || "" }),
+        });
+        updateMemorySettings(data);
+        if (hint) hint.textContent = "已保存自定义压缩模板。";
+      };
+      $("#resetMemoryCompressionPrompt").onclick = async () => {
+        const data = await api("/api/ai-chat/memory-settings", {
+          method: "POST",
+          body: JSON.stringify({ reset: true }),
+        });
+        updateMemorySettings(data);
+        if ($("#memoryCompressionPrompt")) $("#memoryCompressionPrompt").value = data.compression_prompt || "";
+        if ($("#memoryCompressionPromptHint")) $("#memoryCompressionPromptHint").textContent = "已恢复默认模板。";
+      };
+      $("#confirmMemoryImport").onclick = async () => {
+        let summary = $("#memoryCompressedContent")?.value.trim() || "";
+        if (!summary || summary === "正在归纳压缩...") {
+          summary = await runCompression();
+        }
+        if (!summary) return;
+        finish({ subject: currentSubject(), content: summary });
+        dialog.close();
+      };
+    });
+  }
+
+  async function saveAiMemory(content, source = "chat", subject = "") {
     const text = (content || "").trim();
     if (!text) return;
-    await api("/api/ai-chat/memory", {
+    const saved = await api("/api/ai-chat/memory", {
       method: "POST",
-      body: JSON.stringify({ content: text, source }),
+      body: JSON.stringify({ content: text, source, subject }),
     });
+    if (saved.memory?.subject) {
+      updateMemorySubjects([saved.memory.subject, ...memorySubjects]);
+    }
     await loadAiChatPanel();
   }
 
@@ -147,11 +323,16 @@
     on("#saveAiChatMemory", "click", async () => {
       const message = $("#aiChatInput")?.value.trim() || "";
       const content = lastAiChatAnswer ? `用户问题：${message}\nAI 回答：${lastAiChatAnswer}` : message;
-      await saveAiMemory(content, "chat");
+      const result = await openMemorySubjectDialog({ content, source: "chat" });
+      if (!result) return;
+      await saveAiMemory(result.content, "chat", result.subject);
       if ($("#aiChatOutput")) $("#aiChatOutput").textContent = "已导入老师记忆。";
     });
     on("#saveManualAiMemory", "click", async () => {
-      await saveAiMemory($("#manualAiMemory")?.value || "", "manual");
+      const content = $("#manualAiMemory")?.value || "";
+      const result = await openMemorySubjectDialog({ content, source: "manual" });
+      if (!result) return;
+      await saveAiMemory(result.content, "manual", result.subject);
       if ($("#manualAiMemory")) $("#manualAiMemory").value = "";
     });
     on("#clearAiChat", "click", () => {
@@ -174,9 +355,13 @@
   }
 
   window.loadAiChatPanel = loadAiChatPanel;
+  window.loadTeacherMemorySubjects = loadTeacherMemorySubjects;
+  window.loadTeacherMemorySettings = loadTeacherMemorySettings;
   window.SakuraAiChat = {
     load: loadAiChatPanel,
     bind: bindAiChatPanel,
+    loadTeacherMemorySubjects,
+    loadTeacherMemorySettings,
   };
 
   bindAiChatPanel();

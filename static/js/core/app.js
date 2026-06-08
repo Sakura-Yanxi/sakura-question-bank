@@ -404,6 +404,7 @@ onEach(["#remindMorningOn", "#remindMorningTime", "#remindNightTime", "#remindWe
   renderRemindGuide(readRemindForm(), "设置已修改，点击保存提醒设置后生效。");
 });
 on("#saveNotifySettings", "click", saveNotificationSettings);
+on("#saveSecuritySettings", "click", saveSecuritySettings);
 on("#testEmailBtn", "click", testEmailNotification);
 on("#saveWeatherCity", "click", saveWeatherCity);
 on("#previewWeather", "click", previewWeather);

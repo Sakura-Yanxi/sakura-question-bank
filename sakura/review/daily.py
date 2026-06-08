@@ -386,7 +386,17 @@ def practice_batch_payload(conn, batch_id: str, row_to_dict) -> dict | None:
     return {"batch": batch_dict, "questions": questions}
 
 
-def apply_practice_feedback(conn, batch_id: str, q_id: str, status: str, note: str, normalize_label, schedule_for_status, row_to_dict) -> dict:
+def apply_practice_feedback(
+    conn,
+    batch_id: str,
+    q_id: str,
+    status: str,
+    note: str,
+    normalize_label,
+    schedule_for_status,
+    row_to_dict,
+    insert_review_note=None,
+) -> dict:
     status = normalize_label(status, "")
     if status not in {"做对", "做错", "半会", "需复习"}:
         raise ValueError("状态只能是：做对、做错、半会、需复习。")
@@ -400,9 +410,10 @@ def apply_practice_feedback(conn, batch_id: str, q_id: str, status: str, note: s
     if not item:
         raise ValueError("这道题不属于当前推送批次。")
     now = datetime.now()
+    clean_note = note.strip()[:1000]
     updates = {
         "status": status,
-        "user_note": note.strip()[:1000] or current["user_note"],
+        "user_note": clean_note or current["user_note"],
         "last_reviewed_at": now.isoformat(timespec="seconds"),
         "review_count": "review_count + 1",
     }
@@ -424,8 +435,18 @@ def apply_practice_feedback(conn, batch_id: str, q_id: str, status: str, note: s
         SET quick_status = ?, quick_note = ?, completed_at = ?
         WHERE batch_id = ? AND question_id = ?
         """,
-        (status, note.strip()[:1000], completed_at, batch_id, q_id),
+        (status, clean_note, completed_at, batch_id, q_id),
     )
+    if insert_review_note and clean_note:
+        insert_review_note(
+            conn,
+            q_id,
+            status=status,
+            note=clean_note,
+            meta_tags=current["meta_tags"],
+            source="daily",
+            created_at=completed_at,
+        )
     remaining = conn.execute(
         "SELECT COUNT(*) n FROM practice_batch_items WHERE batch_id = ? AND quick_status = ''",
         (batch_id,),
@@ -441,4 +462,4 @@ def apply_practice_feedback(conn, batch_id: str, q_id: str, status: str, note: s
         """,
         (q_id,),
     ).fetchone()
-    return row_to_dict(row) | {"quick_status": status, "quick_note": note.strip()[:1000], "remaining": remaining}
+    return row_to_dict(row) | {"quick_status": status, "quick_note": clean_note, "remaining": remaining}

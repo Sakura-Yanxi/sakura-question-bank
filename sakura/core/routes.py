@@ -27,11 +27,14 @@ GET_ROUTES: dict[str, RouteTarget] = {
     "/api/profile/history": RouteTarget("handle_profile_history"),
     "/api/weather/settings": RouteTarget("handle_weather_settings_get"),
     "/api/weather/preview": RouteTarget("handle_weather_preview", with_query=True),
-    "/api/ai-chat/memory": RouteTarget("handle_ai_memory_get"),
+    "/api/ai-chat/memory": RouteTarget("handle_ai_memory_get", with_query=True),
+    "/api/ai-chat/memory-settings": RouteTarget("handle_ai_memory_settings_get"),
+    "/api/ai-chat/memory-subjects": RouteTarget("handle_ai_memory_subjects_get"),
     "/api/mentor-experience": RouteTarget("handle_mentor_experience_get"),
     "/api/llm/settings": RouteTarget("handle_llm_settings_get"),
     "/api/notification/settings": RouteTarget("handle_notification_settings_get"),
     "/api/notify/settings": RouteTarget("handle_notification_settings_get"),
+    "/api/security/settings": RouteTarget("handle_security_settings_get"),
     "/api/reminder/settings": RouteTarget("handle_reminder_settings_get"),
     "/api/today/done": RouteTarget("handle_today_done"),
     "/api/today/status": RouteTarget("handle_today_status"),
@@ -58,11 +61,15 @@ POST_ROUTES: dict[str, RouteTarget] = {
     "/api/push/night": RouteTarget("handle_push_night"),
     "/api/push/weather": RouteTarget("handle_push_weather"),
     "/api/ai-chat": RouteTarget("handle_ai_chat"),
+    "/api/ai-chat/memory/compress": RouteTarget("handle_ai_memory_compress"),
     "/api/ai-chat/memory": RouteTarget("handle_ai_memory_post"),
+    "/api/ai-chat/memory-settings": RouteTarget("handle_ai_memory_settings_post"),
+    "/api/ai-chat/memory-subjects": RouteTarget("handle_ai_memory_subjects_post"),
     "/api/mentor-experience": RouteTarget("handle_mentor_experience_post"),
     "/api/llm/settings": RouteTarget("handle_llm_settings_post"),
     "/api/notification/settings": RouteTarget("handle_notification_settings_post"),
     "/api/notify/settings": RouteTarget("handle_notification_settings_post"),
+    "/api/security/settings": RouteTarget("handle_security_settings_post"),
     "/api/notification/test-email": RouteTarget("handle_email_test"),
     "/api/reminder/settings": RouteTarget("handle_reminder_settings_post"),
 }
@@ -123,6 +130,9 @@ def get_dynamic_route(path: str) -> RouteTarget | None:
         return RouteTarget("handle_practice_batch_get", args=(path.split("/")[-1],))
     if path.startswith("/api/reflections/") and path.endswith("/download"):
         return RouteTarget("handle_reflection_download", args=(path.split("/")[-2],))
+    if path.startswith("/api/questions/") and path.endswith("/review-notes"):
+        parts = split_path(path)
+        return RouteTarget("handle_question_review_notes_get", args=(parts[2],))
     if path.startswith("/api/questions/"):
         return RouteTarget("handle_question_detail", args=(path.split("/")[-1],))
     return None
@@ -139,6 +149,9 @@ def post_dynamic_route(path: str) -> RouteTarget | None:
         return RouteTarget("handle_variations", args=(path.split("/")[-2],))
     if path.startswith("/api/questions/") and path.endswith("/crop"):
         return RouteTarget("handle_crop_question", args=(path.split("/")[-2],))
+    if path.startswith("/api/questions/") and path.endswith("/review-notes"):
+        parts = split_path(path)
+        return RouteTarget("handle_question_review_notes_post", args=(parts[2],))
     if path.startswith("/api/practice/") and "/questions/" in path:
         parts = split_path(path)
         return RouteTarget("handle_practice_feedback", args=(parts[2], parts[4]))

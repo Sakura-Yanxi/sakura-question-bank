@@ -124,6 +124,7 @@ def delete_question(conn, q_id: str, *, data_dir: Path) -> dict | None:
         return None
     doc_id = row["document_id"]
     unlink_if_inside(data_dir, row["image_path"])
+    conn.execute("DELETE FROM question_review_notes WHERE question_id = ?", (q_id,))
     conn.execute("DELETE FROM questions WHERE id = ?", (q_id,))
     remaining = conn.execute("SELECT COUNT(*) remaining FROM questions WHERE document_id = ?", (doc_id,)).fetchone()["remaining"]
     document_deleted = False
@@ -144,6 +145,13 @@ def delete_document(conn, doc_id: str, *, data_dir: Path) -> bool:
     for row in question_rows:
         unlink_if_inside(data_dir, row["image_path"])
     unlink_if_inside(data_dir, doc["stored_path"])
+    conn.execute(
+        """
+        DELETE FROM question_review_notes
+        WHERE question_id IN (SELECT id FROM questions WHERE document_id = ?)
+        """,
+        (doc_id,),
+    )
     conn.execute("DELETE FROM questions WHERE document_id = ?", (doc_id,))
     conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
     return True

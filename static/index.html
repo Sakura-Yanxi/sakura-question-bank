@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260608-notify-guide" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260608-security-hardening" />
     <script>
       window.MathJax = {
         tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] },
@@ -567,6 +567,34 @@
                     </label>
                   </div>
                 </details>
+
+                <details class="notify-section optional security-section" open>
+                  <summary><span class="notify-step">4</span><div><h3>访问安全</h3><p>设置管理员访问密码，并开启登录失败分级锁定与安全告警。</p></div><i data-lucide="chevron-down"></i></summary>
+                  <div class="security-help-box">
+                    <div><i data-lucide="shield-alert"></i><span>规则：1 分钟内 5 次密码错误会锁定；锁定级别依次为 5 分钟、10 分钟、1 小时、1 年。</span></div>
+                    <div><i data-lucide="radar"></i><span>告警：首次触发锁定会按当前打卡入口的推送优先级发送 IP、时间和浏览器标识。</span></div>
+                    <div><i data-lucide="map-pin"></i><span>追踪：系统只能记录来源 IP 和请求头；精确身份或地理位置需要结合云厂商、Cloudflare 或反向代理日志。</span></div>
+                  </div>
+                  <div class="notify-settings-grid security-grid">
+                    <label class="coach-field">
+                      <span>新的访问密码</span>
+                      <input id="adminPassword" type="password" placeholder="至少 12 位，含字母/数字/特殊字符" autocomplete="new-password" />
+                    </label>
+                    <label class="coach-field">
+                      <span>再次确认</span>
+                      <input id="adminPasswordConfirm" type="password" placeholder="再次输入新密码" autocomplete="new-password" />
+                    </label>
+                    <div class="security-policy-card">
+                      <strong id="securitySettingsBadge">检测中...</strong>
+                      <span id="securityPolicyText">密码必须包含字母、数字、特殊字符。</span>
+                    </div>
+                  </div>
+                  <div id="securityRecentEvents" class="security-events"></div>
+                  <div class="remind-actions security-actions">
+                    <button id="saveSecuritySettings" class="ghost"><i data-lucide="shield-check"></i>保存访问密码</button>
+                    <span id="securitySettingsHint" class="coach-hint">保存后旧登录态会失效，需要用新密码重新登录。</span>
+                  </div>
+                </details>
               </div>
               <div class="remind-actions">
                 <button id="saveNotifySettings" class="ghost"><i data-lucide="save"></i>保存推送配置</button>
@@ -719,17 +747,17 @@
       <p class="lightbox-tip">滚轮缩放 · 拖拽移动 · 双击复位 · Esc 关闭</p>
     </dialog>
 
-    <script src="/static/js/system/reminders.js?v=20260608-module-folders"></script>
-    <script src="/static/js/core/app.js?v=20260608-module-folders"></script>
+    <script src="/static/js/system/reminders.js?v=20260608-security-hardening"></script>
+    <script src="/static/js/core/app.js?v=20260608-security-hardening"></script>
     <script src="/static/js/content/dashboard.js?v=20260608-module-folders"></script>
-    <script src="/static/js/content/documents.js?v=20260608-module-folders"></script>
+    <script src="/static/js/content/documents.js?v=20260608-teacher-memory-subjects"></script>
     <script src="/static/js/content/library.js?v=20260608-module-folders"></script>
-    <script src="/static/js/content/question_detail.js?v=20260608-module-folders"></script>
-    <script src="/static/js/review/archives.js?v=20260608-module-folders"></script>
+    <script src="/static/js/content/question_detail.js?v=20260608-review-notes"></script>
+    <script src="/static/js/review/archives.js?v=20260608-teacher-memory-subjects"></script>
     <script src="/static/js/review/chapter_stats.js?v=20260608-module-folders"></script>
     <script src="/static/js/content/upload.js?v=20260608-module-folders"></script>
     <script src="/static/js/review/mistakes.js?v=20260608-module-folders"></script>
-    <script src="/static/js/ai/ai_chat.js?v=20260608-module-folders"></script>
+    <script src="/static/js/ai/ai_chat.js?v=20260608-memory-compression"></script>
     <script src="/static/js/review/reflection.js?v=20260608-module-folders"></script>
     <script src="/static/js/content/textbook.js?v=20260608-module-folders"></script>
     <script src="/static/js/review/daily.js?v=20260608-module-folders"></script>

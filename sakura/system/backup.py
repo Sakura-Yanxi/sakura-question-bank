@@ -116,6 +116,7 @@ def _prune_by_date(conn: sqlite3.Connection, start_date: str, end_date: str) -> 
         "daily_rules": ["created_at", "updated_at"],
         "learner_profile": ["created_at"],
         "mentor_experience": ["created_at"],
+        "question_review_notes": ["created_at"],
         "reflections": ["period_start", "period_end", "created_at"],
         "teacher_memory": ["created_at"],
     }
@@ -138,6 +139,13 @@ def _prune_by_date(conn: sqlite3.Connection, start_date: str, end_date: str) -> 
             DELETE FROM practice_batch_items
             WHERE batch_id NOT IN (SELECT id FROM practice_batches)
                OR question_id NOT IN (SELECT id FROM questions)
+            """
+        )
+    if _table_exists(conn, "question_review_notes"):
+        conn.execute(
+            """
+            DELETE FROM question_review_notes
+            WHERE question_id NOT IN (SELECT id FROM questions)
             """
         )
 

@@ -4,6 +4,7 @@ import json
 import hmac
 import os
 import re
+import secrets
 import sqlite3
 import shutil
 import sys
@@ -48,6 +49,7 @@ from sakura.core import db as sakura_db
 from sakura.core import http as sakura_http
 from sakura.core import parse as sakura_parse
 from sakura.core import routes as sakura_routes
+from sakura.core import security as sakura_security
 from sakura.review import daily as sakura_daily
 from sakura.review import export as sakura_export
 from sakura.review import hints as sakura_hints
@@ -248,6 +250,25 @@ def row_to_dict(row: sqlite3.Row) -> dict:
     )
 
 
+def question_detail_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    item = row_to_dict(row)
+    notes = sakura_questions.load_question_review_notes(conn, item["id"])
+    if not notes and item.get("user_note"):
+        notes = [
+            {
+                "id": "legacy-user-note",
+                "question_id": item["id"],
+                "status": item.get("status") or "",
+                "note": item.get("user_note") or "",
+                "meta_tags": item.get("meta_tags") or [],
+                "source": "legacy",
+                "created_at": item.get("last_reviewed_at") or item.get("created_at") or "",
+            }
+        ]
+    item["review_notes"] = notes
+    return item
+
+
 def document_to_dict(row: sqlite3.Row) -> dict:
     return sakura_models.document_to_dict(row, normalize_document_kind)
 
@@ -331,6 +352,48 @@ def verify_session_token(token: str) -> bool:
 
 def login_page(error: str = "") -> str:
     return sakura_auth.login_page(error)
+
+
+def update_security_runtime_settings(admin_password: str) -> dict:
+    global ADMIN_PASSWORD, AUTH_SECRET
+    errors = sakura_security.validate_admin_password(admin_password)
+    if errors:
+        raise ValueError("；".join(errors))
+    AUTH_SECRET = secrets.token_urlsafe(32)
+    ADMIN_PASSWORD = admin_password
+    os.environ["SAKURA_ADMIN_PASSWORD"] = ADMIN_PASSWORD
+    os.environ["SAKURA_AUTH_SECRET"] = AUTH_SECRET
+    sakura_config.write_local_env(
+        ROOT,
+        {
+            "SAKURA_ADMIN_PASSWORD": ADMIN_PASSWORD,
+            "SAKURA_AUTH_SECRET": AUTH_SECRET,
+        },
+    )
+    return sakura_security.security_settings_view(ADMIN_PASSWORD)
+
+
+def send_login_security_alert(ip: str, user_agent_value: str, result: dict) -> dict:
+    title = "Sakura 安全警报 | 登录失败锁定"
+    content = "\n".join([
+        "### Sakura 登录异常",
+        f"- 来源 IP：`{ip}`",
+        f"- 浏览器标识：`{user_agent_value[:180] or 'unknown'}`",
+        f"- 触发规则：1 分钟内 {sakura_security.LOCK_THRESHOLD} 次密码错误",
+        f"- 锁定级别：第 {result.get('lock_level', 1)} 级",
+        f"- 锁定时长：{result.get('lock_duration') or sakura_security.duration_label(result.get('remaining_seconds', 0))}",
+        f"- 解锁时间：{result.get('locked_until') or '-'}",
+        "",
+        "如果这不是你本人操作，请检查服务器访问日志、Cloudflare/Nginx 访问记录，并尽快更换管理员密码。",
+    ])
+    preferred = sakura_reminders.normalize_checkin_mode(REMIND_CHECKIN_MODE)
+    if preferred == "local":
+        return send_notification_all_channels(title, content)
+    result_primary = send_notification(title, content, preferred)
+    if result_primary.get("ok"):
+        return result_primary
+    result_primary["fallback"] = send_notification_all_channels(title, content)
+    return result_primary
 
 
 def classify_by_rules(text: str) -> tuple[str, str, str]:
@@ -821,16 +884,36 @@ def parse_exam_date(value: str | None) -> date:
     return sakura_coach.parse_exam_date(value, EXAM_DATE)
 
 
-def load_teacher_memories(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
-    return sakura_teacher_memory.load_teacher_memories(conn, limit)
+def load_teacher_memories(conn: sqlite3.Connection, limit: int = 10, subject: str = "", search: str = "") -> list[dict]:
+    return sakura_teacher_memory.load_teacher_memories(conn, limit, subject, search)
 
 
-def save_teacher_memory(conn: sqlite3.Connection, content: str, source: str = "chat") -> dict:
-    return sakura_teacher_memory.save_teacher_memory(conn, content, source)
+def save_teacher_memory(conn: sqlite3.Connection, content: str, source: str = "chat", subject: str = "") -> dict:
+    return sakura_teacher_memory.save_teacher_memory(conn, content, source, subject)
 
 
-def teacher_memory_prompt(conn: sqlite3.Connection) -> str:
-    return sakura_teacher_memory.teacher_memory_prompt(conn)
+def load_teacher_memory_subjects(conn: sqlite3.Connection) -> list[str]:
+    return sakura_teacher_memory.load_teacher_memory_subjects(conn)
+
+
+def ensure_teacher_memory_subject(conn: sqlite3.Connection, subject: str) -> str:
+    return sakura_teacher_memory.ensure_teacher_memory_subject(conn, subject)
+
+
+def load_teacher_memory_settings(conn: sqlite3.Connection) -> dict:
+    return sakura_teacher_memory.load_teacher_memory_settings(conn)
+
+
+def save_teacher_memory_settings(conn: sqlite3.Connection, compression_prompt: str) -> dict:
+    return sakura_teacher_memory.save_teacher_memory_settings(conn, compression_prompt)
+
+
+def reset_teacher_memory_settings(conn: sqlite3.Connection) -> dict:
+    return sakura_teacher_memory.reset_teacher_memory_settings(conn)
+
+
+def teacher_memory_prompt(conn: sqlite3.Connection, subject_hint: str = "") -> str:
+    return sakura_teacher_memory.teacher_memory_prompt(conn, subject_hint)
 
 
 def parse_tags(value) -> list[str]:
@@ -1114,6 +1197,14 @@ def practice_batch_payload(conn: sqlite3.Connection, batch_id: str) -> dict | No
 
 
 def apply_practice_feedback(conn: sqlite3.Connection, batch_id: str, q_id: str, status: str, note: str = "") -> dict:
+    def insert_daily_review_note(db, question_id, **kwargs):
+        return sakura_questions.insert_question_review_note(
+            db,
+            question_id,
+            normalize_meta_tags=normalize_meta_tags,
+            **kwargs,
+        )
+
     return sakura_daily.apply_practice_feedback(
         conn,
         batch_id,
@@ -1123,6 +1214,7 @@ def apply_practice_feedback(conn: sqlite3.Connection, batch_id: str, q_id: str, 
         normalize_label,
         schedule_for_status,
         row_to_dict,
+        insert_daily_review_note,
     )
 
 
@@ -1317,6 +1409,12 @@ class DemoHandler(BaseHTTPRequestHandler):
                 return urllib.parse.unquote(value)
         return ""
 
+    def client_ip(self) -> str:
+        return sakura_security.client_ip(self.headers, self.client_address)
+
+    def user_agent(self) -> str:
+        return sakura_security.user_agent(self.headers)
+
     def is_authenticated(self) -> bool:
         if not auth_enabled():
             return True
@@ -1339,10 +1437,29 @@ class DemoHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length).decode("utf-8") if length else ""
         fields = parse_qs(raw)
         password = fields.get("password", [""])[0]
+        ip = self.client_ip()
+        ua = self.user_agent()
         if not auth_enabled():
             return redirect_response(self, "/")
+        with connect() as conn:
+            locked = sakura_security.current_lock(conn, ip)
+            if locked["locked"]:
+                blocked = sakura_security.record_login_failure(conn, ip, ua)
+                return text_response(
+                    self,
+                    login_page(sakura_security.login_failure_message(blocked)),
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    "text/html",
+                )
         if not hmac.compare_digest(password, ADMIN_PASSWORD):
-            return text_response(self, login_page("密码不正确，请重新输入。"), HTTPStatus.UNAUTHORIZED, "text/html")
+            with connect() as conn:
+                result = sakura_security.record_login_failure(conn, ip, ua)
+            if result.get("alert"):
+                send_login_security_alert(ip, ua, result)
+            status = HTTPStatus.TOO_MANY_REQUESTS if result.get("locked") else HTTPStatus.UNAUTHORIZED
+            return text_response(self, login_page(sakura_security.login_failure_message(result)), status, "text/html")
+        with connect() as conn:
+            sakura_security.record_login_success(conn, ip, ua)
         token = make_session_token()
         self.send_response(HTTPStatus.FOUND)
         self.send_header("Location", "/")
@@ -1568,7 +1685,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             else:
                 last_user = next((item.get("content", "") for item in reversed(history) if item.get("role") == "user"), "")
                 content = f"教材精读：{book.get('title')} 第{page_number}页。困惑：{last_user or '未记录'}。关键段落：{selected[:160]}。后续复习时优先回看该页概念与例题。"
-            memory = save_teacher_memory(conn, content, "textbook")
+            memory = save_teacher_memory(conn, content, "textbook", str(book.get("subject") or ""))
         return json_response(self, {"memory": memory})
 
     def handle_documents(self) -> None:
@@ -1622,9 +1739,10 @@ class DemoHandler(BaseHTTPRequestHandler):
     def handle_question_detail(self, q_id: str) -> None:
         with connect() as conn:
             row = sakura_questions.load_question_detail(conn, q_id)
-        if not row:
-            return json_response(self, {"error": "题目不存在。"}, 404)
-        return json_response(self, row_to_dict(row))
+            if not row:
+                return json_response(self, {"error": "题目不存在。"}, 404)
+            payload = question_detail_to_dict(conn, row)
+        return json_response(self, payload)
 
     def handle_delete_question(self, q_id: str) -> None:
         with connect() as conn:
@@ -1684,6 +1802,8 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_update_question(self, q_id: str) -> None:
         payload = self.read_json()
+        review_note = str(payload.get("review_note") or "").strip()
+        should_append_note = bool(payload.get("append_review_note")) and bool(review_note)
         with connect() as conn:
             try:
                 row = sakura_questions.update_question(
@@ -1694,9 +1814,51 @@ class DemoHandler(BaseHTTPRequestHandler):
                     wrongish_statuses=WRONGISH_STATUSES,
                     schedule_for_status=schedule_for_status,
                 )
+                if should_append_note:
+                    sakura_questions.insert_question_review_note(
+                        conn,
+                        q_id,
+                        status=row["status"],
+                        note=review_note,
+                        meta_tags=payload.get("meta_tags", row["meta_tags"]),
+                        source=str(payload.get("review_note_source") or "detail"),
+                        normalize_meta_tags=normalize_meta_tags,
+                    )
+                    row = sakura_questions.load_question_detail(conn, q_id)
             except sakura_questions.QuestionUpdateError as exc:
                 return json_response(self, {"error": str(exc)}, exc.status)
-        return json_response(self, row_to_dict(row))
+            result = question_detail_to_dict(conn, row)
+        return json_response(self, result)
+
+    def handle_question_review_notes_get(self, q_id: str) -> None:
+        with connect() as conn:
+            row = sakura_questions.load_question_detail(conn, q_id)
+            if not row:
+                return json_response(self, {"error": "题目不存在。"}, 404)
+            notes = question_detail_to_dict(conn, row)["review_notes"]
+        return json_response(self, {"question_id": q_id, "review_notes": notes})
+
+    def handle_question_review_notes_post(self, q_id: str) -> None:
+        payload = self.read_json()
+        with connect() as conn:
+            try:
+                row = sakura_questions.load_question_detail(conn, q_id)
+                if not row:
+                    return json_response(self, {"error": "题目不存在。"}, 404)
+                note = sakura_questions.insert_question_review_note(
+                    conn,
+                    q_id,
+                    status=str(payload.get("status") or row["status"] or ""),
+                    note=str(payload.get("note") or ""),
+                    meta_tags=payload.get("meta_tags", row["meta_tags"]),
+                    source=str(payload.get("source") or "detail"),
+                    normalize_meta_tags=normalize_meta_tags,
+                )
+            except sakura_questions.QuestionUpdateError as exc:
+                return json_response(self, {"error": str(exc)}, exc.status)
+        if not note:
+            return json_response(self, {"error": "复盘记录不能为空。"}, 400)
+        return json_response(self, {"ok": True, "review_note": note})
 
     def handle_analyze(self, q_id: str) -> None:
         with connect() as conn:
@@ -1885,13 +2047,30 @@ class DemoHandler(BaseHTTPRequestHandler):
             "will_send": False,
         })
 
-    def handle_ai_memory_get(self) -> None:
+    def handle_ai_memory_get(self, query: dict) -> None:
+        subject = (query.get("subject", [""])[0] or "").strip()
+        search = (query.get("q", [""])[0] or "").strip()
+        limit = sakura_parse.clamped_int(query.get("limit", ["30"])[0], minimum=1, maximum=200, fallback=30)
         with connect() as conn:
-            memories = load_teacher_memories(conn, limit=30)
+            memories = load_teacher_memories(conn, limit=limit, subject=subject, search=search)
+            subjects = load_teacher_memory_subjects(conn)
+            memory_settings = load_teacher_memory_settings(conn)
         return json_response(self, {
             "memories": memories,
+            "subjects": subjects,
+            "memory_settings": memory_settings,
             **llm_settings_view(),
         })
+
+    def handle_ai_memory_settings_get(self) -> None:
+        with connect() as conn:
+            settings = load_teacher_memory_settings(conn)
+        return json_response(self, settings)
+
+    def handle_ai_memory_subjects_get(self) -> None:
+        with connect() as conn:
+            subjects = load_teacher_memory_subjects(conn)
+        return json_response(self, {"subjects": subjects})
 
     def handle_llm_settings_get(self) -> None:
         return json_response(self, llm_settings_view())
@@ -1915,6 +2094,14 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_notification_settings_get(self) -> None:
         return json_response(self, notification_settings_view())
+
+    def handle_security_settings_get(self) -> None:
+        with connect() as conn:
+            events = sakura_security.recent_security_events(conn)
+        return json_response(self, {
+            **sakura_security.security_settings_view(ADMIN_PASSWORD),
+            "recent_events": events,
+        })
 
     def handle_reminder_settings_get(self) -> None:
         return json_response(self, reminder_settings_view())
@@ -1981,6 +2168,31 @@ class DemoHandler(BaseHTTPRequestHandler):
             "message": "已保存到本地 .env，并已更新当前运行中的推送配置。",
         })
 
+    def handle_security_settings_post(self) -> None:
+        payload = self.read_json()
+        password = str(payload.get("admin_password", "")).strip()
+        confirm = str(payload.get("admin_password_confirm", "")).strip()
+        if not password:
+            return json_response(self, {"error": "请填写新的访问密码。"}, 400)
+        if confirm and password != confirm:
+            return json_response(self, {"error": "两次输入的密码不一致。"}, 400)
+        try:
+            settings = update_security_runtime_settings(password)
+        except ValueError as exc:
+            return json_response(self, {"error": str(exc), "policy": sakura_security.password_policy_view()}, 400)
+        with connect() as conn:
+            sakura_security.record_security_event(
+                conn,
+                self.client_ip(),
+                self.user_agent(),
+                "password_updated",
+                {"source": "settings_panel"},
+            )
+        return json_response(self, {
+            **settings,
+            "message": "访问密码已保存，旧登录态已失效。请刷新页面并使用新密码重新登录。",
+        })
+
     def handle_email_test(self) -> None:
         result = sakura_email.send_email(
             current_email_settings(),
@@ -1999,14 +2211,74 @@ class DemoHandler(BaseHTTPRequestHandler):
             "detail": result,
         }, status)
 
+    def handle_ai_memory_compress(self) -> None:
+        payload = self.read_json()
+        content = str(payload.get("content", "")).strip()
+        subject = str(payload.get("subject", "")).strip()
+        source = str(payload.get("source", "chat")).strip() or "chat"
+        instruction = str(payload.get("instruction", "")).strip()
+        if not content:
+            return json_response(self, {"error": "原始内容不能为空"}, 400)
+        with connect() as conn:
+            settings = load_teacher_memory_settings(conn)
+        prompt = sakura_teacher_memory.build_memory_compression_prompt(
+            content=content,
+            subject=subject,
+            source=source,
+            compression_prompt=settings["compression_prompt"],
+            instruction=instruction,
+        )
+        used_ai = False
+        error = ""
+        summary = ""
+        if llm_enabled():
+            try:
+                summary = call_llm(prompt, temperature=0.15).strip()
+                used_ai = True
+            except Exception as exc:
+                traceback.print_exc()
+                error = str(exc)
+        if not summary:
+            summary = sakura_teacher_memory.local_compress_memory(content, subject, instruction)
+        return json_response(self, {
+            "summary": summary[:2000],
+            "used_ai": used_ai,
+            "error": error,
+            "memory_settings": settings,
+        })
+
     def handle_ai_memory_post(self) -> None:
         payload = self.read_json()
         try:
             with connect() as conn:
-                memory = save_teacher_memory(conn, str(payload.get("content", "")), str(payload.get("source", "chat")))
+                memory = save_teacher_memory(
+                    conn,
+                    str(payload.get("content", "")),
+                    str(payload.get("source", "chat")),
+                    str(payload.get("subject", "")),
+                )
         except ValueError as exc:
             return json_response(self, {"error": str(exc)}, 400)
         return json_response(self, {"memory": memory})
+
+    def handle_ai_memory_settings_post(self) -> None:
+        payload = self.read_json()
+        with connect() as conn:
+            if payload.get("reset"):
+                settings = reset_teacher_memory_settings(conn)
+            else:
+                settings = save_teacher_memory_settings(conn, str(payload.get("compression_prompt", "")))
+        return json_response(self, settings)
+
+    def handle_ai_memory_subjects_post(self) -> None:
+        payload = self.read_json()
+        subject = str(payload.get("subject", "")).strip()
+        if not subject:
+            return json_response(self, {"error": "学科名称不能为空"}, 400)
+        with connect() as conn:
+            normalized = ensure_teacher_memory_subject(conn, subject)
+            subjects = load_teacher_memory_subjects(conn)
+        return json_response(self, {"subject": normalized, "subjects": subjects})
 
     def handle_ai_memory_delete(self, memory_id: str) -> None:
         with connect() as conn:
