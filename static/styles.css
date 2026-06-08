@@ -779,10 +779,14 @@ body:not([data-view="library"]) .search-box { display: none; }
 /* LaTeX / 文本输出区 */
 .mathjax-container { font-size: 14px; line-height: 1.7; color: #334155; }
 .mathjax-container mjx-container { max-width: 100% !important; overflow-x: auto !important; overflow-y: hidden !important; padding: 4px 0; }
-.detail-side pre, .reflection-output {
+.detail-side pre {
   font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace; font-size: 12.5px; line-height: 1.7;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md);
   padding: 14px; white-space: pre-wrap; word-break: break-word; color: #334155; margin: 0;
+}
+.reflection-output {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 14px; white-space: normal; word-break: break-word; color: #334155; margin: 0;
 }
 .math-output {
   font-family: inherit;

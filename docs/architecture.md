@@ -88,6 +88,9 @@ This project is intentionally local-first and lightweight, but new features shou
 - `static/ai_chat.js`
   - AI chat, LLM settings, teacher-memory and mentor-experience UI helpers.
   - Loaded after `app.js` so shared render/API helpers are initialized; exposes `loadAiChatPanel()` for view navigation.
+- `static/reflection.js`
+  - Reflection preview, AI-generated reflection output and history archive UI helpers.
+  - Loaded after `app.js`; exposes `SakuraReflection.load()` for view navigation.
 - `static/backup.js`
   - Backup export/import and migration-panel bindings.
   - Loaded after `app.js` so shared helpers and refresh hooks are available.

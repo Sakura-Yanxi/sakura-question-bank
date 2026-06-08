@@ -1328,60 +1328,7 @@ function renderRadar(items) {
     </svg>`;
 }
 
-async function loadReflectionPreview() {
-  const period = $("#reflectionPeriod").value;
-  const data = await api(`/api/reflection?period=${period}`);
-  renderReflectionSummary(data);
-}
-
-function renderReflectionSummary(data) {
-  const total = Number(data.total || 0);
-  if (!total) {
-    $("#reflectionSummary").innerHTML = '<p class="empty-note">本周期还没有做题记录。先开始做题，再来做周期反思复盘。</p>';
-    $("#reflectionSubjectSummary").innerHTML = '<p class="empty-note">导入题目不会计入统计，只有做对、做错、半会或需复习后才会进入这里。</p>';
-    $("#reflectionOutput").textContent = "本周期暂无可复盘内容。";
-    return;
-  }
-  $("#reflectionSummary").innerHTML = `
-    <div class="summary-pill"><span>周期</span><strong>${data.period === "month" ? "本月" : "本周"}</strong></div>
-    <div class="summary-pill"><span>完成/复盘</span><strong>${data.total}</strong></div>
-    <div class="summary-pill"><span>做对</span><strong>${data.correct}</strong></div>
-    <div class="summary-pill"><span>做错</span><strong>${data.wrong}</strong></div>
-    <div class="summary-pill"><span>需复习</span><strong>${data.review}</strong></div>`;
-  $("#reflectionSubjectSummary").innerHTML =
-    (data.subjects || [])
-      .map((item) => {
-        const done = item.total || 0;
-        const correctRate = done ? Math.round(((item.correct || 0) / done) * 100) : 0;
-        return `
-        <article class="subject-reflection-card">
-          <div>
-            <span>科目</span>
-            <strong>${item.subject}</strong>
-          </div>
-          <div class="subject-reflection-grid">
-            <span>做题 ${item.total || 0}</span>
-            <span>做对 ${item.correct || 0}</span>
-            <span>做错 ${item.wrong || 0}</span>
-            <span>需复习 ${item.review || 0}</span>
-          </div>
-          <div class="mini-rate"><span style="width: ${correctRate}%"></span></div>
-          <small>正确率 ${correctRate}%</small>
-        </article>`;
-      })
-      .join("") || `<p class="empty-note">本周期还没有已标记的做题记录。导入题目不会计入这里，只有标记做对、做错、半会或需复习后才会统计。</p>`;
-}
-
-async function generateReflection() {
-  const period = $("#reflectionPeriod").value;
-  $("#reflectionOutput").textContent = "正在生成总结与反思...";
-  const data = await api("/api/reflection", {
-    method: "POST",
-    body: JSON.stringify({ period }),
-  });
-  renderReflectionSummary(data.summary);
-  $("#reflectionOutput").textContent = data.reflection;
-}
+// Reflection summary/history helpers live in /static/reflection.js
 
 async function loadDaily() {
   if ($("#dailyRuleList")) await loadDailyRules();
@@ -1856,7 +1803,7 @@ function setView(view) {
   $("#viewSubtitle").textContent = titles[view][1];
   if (view === "daily") loadDaily();
   if (view === "chapterStats") loadChapterStats();
-  if (view === "reflection") { loadReflectionPreview(); loadReflectionHistory(); }
+  if (view === "reflection" && window.SakuraReflection) window.SakuraReflection.load();
   if (view === "coach") loadCoach();
   if (view === "aiChat" && window.loadAiChatPanel) window.loadAiChatPanel();
   if (view === "remind") { loadRemind(); loadWeatherSettings(); }
@@ -2083,9 +2030,6 @@ $("#mistakeChapterFilter").addEventListener("change", async (event) => {
 $("#statsDocumentSelect").addEventListener("change", async (event) => {
   await loadChapterStats(event.target.value);
 });
-
-$("#reflectionPeriod").addEventListener("change", loadReflectionPreview);
-$("#generateReflection").addEventListener("click", generateReflection);
 
 $("#statusFilter").addEventListener("change", async (event) => {
   state.status = event.target.value;
@@ -2420,47 +2364,3 @@ async function loadQuote() {
     if (el) el.textContent = "You are more than what you have become.";
   }
 }
-
-async function loadReflectionHistory() {
-  try {
-    const data = await api("/api/reflections");
-    const list = data.reflections || [];
-    if (!list.length) {
-      $("#historyList").innerHTML = '<p class="empty-note">' + "暂无历史反思记录。" + '</p>';
-      return;
-    }
-    $("#historyList").innerHTML = list.map((ref) => {
-      const periodLabel = ref.period === "week" ? "周" : "月";
-      const dateLabel = ref.period_start + " ~ " + ref.period_end;
-      const preview = (ref.reflection_text || "").slice(0, 120);
-      return '<div class="history-item">' +
-        '<div class="history-meta">' +
-        '<strong>' + periodLabel + '总结</strong>' +
-        '<span>' + dateLabel + '</span>' +
-        '<small>' + ref.created_at.slice(0, 16) + '</small>' +
-        '</div>' +
-        '<p class="history-preview">' + preview + (preview.length >= 120 ? "..." : "") + '</p>' +
-        '<div class="history-actions">' +
-        '<button class="ghost" onclick="downloadReflection(\'' + ref.id + '\')">下载 TXT</button>' +
-        '<button class="danger" onclick="deleteReflection(\'' + ref.id + '\')">删除</button>' +
-        '</div>' +
-        '</div>';
-    }).join("");
-  } catch (e) {
-    $("#historyList").innerHTML = '<p class="empty-note">' + "加载历史失败。" + '</p>';
-  }
-}
-function downloadReflection(refId) {
-  const a = document.createElement("a");
-  a.href = `/api/reflections/${refId}/download`;
-  a.download = "";
-  a.click();
-}
-
-async function deleteReflection(refId) {
-  if (!confirm("确定删除这条历史记录吗？")) return;
-  await api(`/api/reflections/${refId}`, { method: "DELETE" });
-  await loadReflectionHistory();
-}
-
-$("#loadReflectionHistory").addEventListener("click", loadReflectionHistory);
