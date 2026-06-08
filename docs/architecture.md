@@ -82,6 +82,9 @@ This project is intentionally local-first and lightweight, but new features shou
   - Stable DOM shell and ID-bound controls.
 - `static/app.js`
   - Browser state, API calls, rendering and event binding.
+- `static/reminders.js`
+  - Reminder/check-in/weather/notification settings UI helpers.
+  - Loaded before `app.js`; functions execute after shared browser helpers are initialized.
 - `static/styles.css`
   - Shared visual system and component styles.
 
@@ -108,6 +111,6 @@ This project is intentionally local-first and lightweight, but new features shou
 ## Next Good Splits
 
 - `app.py`: PDF import orchestration and route dispatch remain the largest backend areas.
-- `static/reminders.js`: reminder-specific UI state and bindings.
+- Continue splitting `static/app.js` by feature, using `static/reminders.js` as the first lightweight module pattern.
 
 Do these incrementally. Each split should include syntax checks and a server smoke test.
