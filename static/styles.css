@@ -1026,8 +1026,9 @@ body:not([data-view="library"]) .search-box { display: none; }
 .weather-grid { align-items: end; margin-top: 14px; }
 .weather-preview { margin-top: 12px; min-height: 108px; white-space: pre-wrap; }
 .notify-settings-card { margin-top: 18px; }
-.notify-settings-grid { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(300px, 1.2fr) minmax(220px, 1fr); gap: 14px; align-items: end; }
-.notify-settings-grid input { width: 100%; }
+.notify-settings-grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 14px; align-items: end; }
+.notify-settings-grid input, .notify-settings-grid select { width: 100%; }
+.notify-settings-grid .wide-field { grid-column: span 2; }
 .ai-chat-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 420px;
@@ -1238,6 +1239,7 @@ body:not([data-view="library"]) .search-box { display: none; }
   #dashboard.view.active { grid-template-columns: 1fr; }
   .metrics-grid { grid-template-columns: 1fr 1fr; }
   .distribution-grid, .form-grid, .ai-chat-grid, .llm-settings-grid, .notify-settings-grid, .daily-rule-grid, .migration-options, .textbook-reader-grid, .textbook-page-layout { grid-template-columns: 1fr; }
+  .notify-settings-grid .wide-field { grid-column: auto; }
   .daily-rule-grid .coach-field:first-child { grid-column: auto; }
   .ai-chat-grid { padding: 8px; }
   .ai-chat-main, .ai-side-stack, .llm-settings-card { grid-column: 1; grid-row: auto; }

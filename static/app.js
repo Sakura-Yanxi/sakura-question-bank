@@ -1416,11 +1416,11 @@ async function testPush(kind) {
     });
     const r = await res.json();
     if (r.configured === false) {
-      hint.textContent = "未配置推送通道：请先在服务器 .env 配置 WEWORK_BOT_WEBHOOK 或 PUSHPLUS_TOKEN 后重启服务。";
+      hint.textContent = "未配置推送通道：请先配置企业微信、PushPlus 或邮箱 SMTP。";
       $("#pushConfigBadge").textContent = "未配置推送";
       $("#pushConfigBadge").className = "tag status wrong";
     } else if (r.ok) {
-      hint.textContent = "已发送，请到企业微信群或微信推送通道查看。";
+      hint.textContent = "已发送，请到企业微信、PushPlus 或邮箱收件箱查看。";
       $("#pushConfigBadge").textContent = "推送已配置";
       $("#pushConfigBadge").className = "tag status";
     } else {
@@ -1434,11 +1434,25 @@ async function testPush(kind) {
   }
 }
 
+function emailSecureFromData(data = {}) {
+  if (String(data.email_use_ssl || "0") === "1") return "ssl";
+  if (String(data.email_use_starttls || "0") === "1") return "starttls";
+  return "none";
+}
+
+function emailSecurePayload() {
+  const secure = $("#emailSecure")?.value || "ssl";
+  return {
+    email_use_ssl: secure === "ssl" ? "1" : "0",
+    email_use_starttls: secure === "starttls" ? "1" : "0",
+  };
+}
+
 async function loadNotificationSettings() {
   if (!$("#notifySettingsBadge")) return;
   try {
     const data = await api("/api/notification/settings");
-    const configured = data.has_wework || data.has_pushplus;
+    const configured = data.has_wework || data.has_pushplus || data.has_email;
     $("#notifySettingsBadge").textContent = configured ? "推送已配置" : "未配置推送";
     $("#notifySettingsBadge").className = `tag ${configured ? "" : "status wrong"}`;
     if ($("#pushConfigBadge")) {
@@ -1451,12 +1465,39 @@ async function loadNotificationSettings() {
     }
     if ($("#weworkWebhook")) $("#weworkWebhook").placeholder = data.masked_wework ? `已保存：${data.masked_wework}` : "未保存";
     if ($("#pushplusToken")) $("#pushplusToken").placeholder = data.masked_pushplus ? `已保存：${data.masked_pushplus}` : "未保存";
+    if ($("#emailEnabled")) $("#emailEnabled").value = String(data.email_enabled || "0") === "1" ? "1" : "0";
+    if ($("#emailHost")) {
+      $("#emailHost").value = data.email_host || "";
+      $("#emailHost").placeholder = data.email_host ? `已保存：${data.email_host}` : "smtp.qq.com";
+    }
+    if ($("#emailPort")) {
+      $("#emailPort").value = data.email_port || "";
+      $("#emailPort").placeholder = data.email_port ? `已保存：${data.email_port}` : "465";
+    }
+    if ($("#emailSecure")) $("#emailSecure").value = emailSecureFromData(data);
+    if ($("#emailUser")) {
+      $("#emailUser").value = "";
+      $("#emailUser").placeholder = data.masked_email_user ? `已保存：${data.masked_email_user}` : "your@qq.com";
+    }
+    if ($("#emailPassword")) {
+      $("#emailPassword").value = "";
+      $("#emailPassword").placeholder = data.has_email_password ? "已保存：授权码已配置" : "邮箱授权码，不是登录密码";
+    }
+    if ($("#emailTo")) {
+      $("#emailTo").value = "";
+      $("#emailTo").placeholder = data.masked_email_to ? `已保存：${data.masked_email_to}` : "多个邮箱用逗号分隔";
+    }
+    if ($("#emailFromName")) {
+      $("#emailFromName").value = data.email_from_name || "";
+      $("#emailFromName").placeholder = data.email_from_name ? `已保存：${data.email_from_name}` : "Sakura 做题集";
+    }
     if ($("#notifySettingsHint")) {
       const channels = [
         data.has_wework ? "企业微信机器人" : "",
         data.has_pushplus ? "PushPlus" : "",
+        data.has_email ? "邮箱" : "",
       ].filter(Boolean).join("、");
-      $("#notifySettingsHint").textContent = channels ? `当前通道：${channels}。不填写的密钥会保留原值。` : "还没有推送通道；填写企业微信 Webhook 或 PushPlus Token 后保存。";
+      $("#notifySettingsHint").textContent = channels ? `当前通道：${channels}。不填写的密钥会保留原值。` : "还没有推送通道；填写企业微信 Webhook、PushPlus Token 或邮箱 SMTP 后保存。";
     }
   } catch (error) {
     $("#notifySettingsBadge").textContent = "配置读取失败";
@@ -1475,11 +1516,22 @@ async function saveNotificationSettings() {
         app_public_url: $("#notifyAppPublicUrl")?.value.trim() || "",
         wework_webhook: $("#weworkWebhook")?.value.trim() || "",
         pushplus_token: $("#pushplusToken")?.value.trim() || "",
+        email_enabled: $("#emailEnabled")?.value || "",
+        email_host: $("#emailHost")?.value.trim() || "",
+        email_port: $("#emailPort")?.value.trim() || "",
+        ...emailSecurePayload(),
+        email_user: $("#emailUser")?.value.trim() || "",
+        email_password: $("#emailPassword")?.value.trim() || "",
+        email_to: $("#emailTo")?.value.trim() || "",
+        email_from_name: $("#emailFromName")?.value.trim() || "",
       }),
     });
     if ($("#weworkWebhook")) $("#weworkWebhook").value = "";
     if ($("#pushplusToken")) $("#pushplusToken").value = "";
     if ($("#notifyAppPublicUrl")) $("#notifyAppPublicUrl").value = "";
+    if ($("#emailUser")) $("#emailUser").value = "";
+    if ($("#emailPassword")) $("#emailPassword").value = "";
+    if ($("#emailTo")) $("#emailTo").value = "";
     await loadNotificationSettings();
     if (hint) hint.textContent = data.message || "已保存推送配置。";
   } catch (error) {
@@ -1490,6 +1542,21 @@ async function saveNotificationSettings() {
 // ==========================================================================
 // 天气推送设置
 // ==========================================================================
+async function testEmailNotification() {
+  const hint = $("#notifySettingsHint");
+  if (hint) hint.textContent = "正在发送测试邮件...";
+  try {
+    const data = await api("/api/notification/test-email", {
+      method: "POST",
+      body: "{}",
+    });
+    if (hint) hint.textContent = data.ok ? "测试邮件已发送，请检查收件箱或垃圾邮件。" : "测试邮件发送失败。";
+    await loadNotificationSettings();
+  } catch (error) {
+    if (hint) hint.textContent = `测试邮件发送失败：${error.message}`;
+  }
+}
+
 async function loadWeatherSettings() {
   if (!$("#weatherCity")) return;
   try {
@@ -1564,7 +1631,7 @@ async function testWeatherPush() {
       body: JSON.stringify({ city }),
     });
     if (data.ok) {
-      box.textContent = `已发送天气推送：${data.title}\n\n请到企业微信群或 PushPlus 通道查看。`;
+      box.textContent = `已发送天气推送：${data.title}\n\n请到企业微信、PushPlus 或邮箱通道查看。`;
       if ($("#pushConfigBadge")) {
         $("#pushConfigBadge").textContent = "推送已配置";
         $("#pushConfigBadge").className = "tag status";
@@ -2743,6 +2810,7 @@ onEach(["#remindMorningOn", "#remindMorningTime", "#remindNightTime", "#remindWe
   renderRemindGuide(readRemindForm(), "设置已修改，点击保存提醒设置后生效。");
 });
 on("#saveNotifySettings", "click", saveNotificationSettings);
+on("#testEmailBtn", "click", testEmailNotification);
 on("#saveWeatherCity", "click", saveWeatherCity);
 on("#previewWeather", "click", previewWeather);
 on("#sendWeatherPreview", "click", previewWeatherPush);

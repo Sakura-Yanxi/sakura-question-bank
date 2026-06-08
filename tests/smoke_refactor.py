@@ -20,6 +20,7 @@ import sakura_ai
 import sakura_classify
 import sakura_coach
 import sakura_documents
+import sakura_email
 import sakura_http
 import sakura_import
 import sakura_pdf
@@ -77,6 +78,54 @@ def test_http_file_serving() -> None:
     missing_handlers = [name for name in sakura_routes.configured_handler_names() if not hasattr(app.DemoHandler, name)]
     assert missing_handlers == []
     assert app.demo_mode_enabled() is app.DEMO_MODE
+
+
+def test_email_notification_helpers() -> None:
+    settings = sakura_email.EmailSettings(
+        enabled="1",
+        host="smtp.example.com",
+        port="465",
+        use_ssl="1",
+        user="sender@example.com",
+        password="secret",
+        to="first@example.com, second@example.com",
+        from_name="Sakura",
+    )
+    assert sakura_email.is_configured(settings)
+    view = sakura_email.settings_public_view(settings)
+    assert view["has_email"] is True
+    assert view["masked_email_user"] == "sexxxx@example.com"
+    assert view["masked_email_to"].startswith("fixxxx@example.com")
+
+    calls = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None, context=None):
+            calls.append(("connect", host, port, timeout, bool(context)))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def login(self, user, password):
+            calls.append(("login", user, password))
+
+        def send_message(self, message):
+            calls.append(("send", message["Subject"], message["To"]))
+
+    old_smtp_ssl = sakura_email.smtplib.SMTP_SSL
+    sakura_email.smtplib.SMTP_SSL = FakeSMTP
+    try:
+        result = sakura_email.send_email(settings, "Test Subject", "### Hello\n\n[Open](https://example.com)")
+    finally:
+        sakura_email.smtplib.SMTP_SSL = old_smtp_ssl
+
+    assert result["ok"] is True
+    assert calls[0][:3] == ("connect", "smtp.example.com", 465)
+    assert ("login", "sender@example.com", "secret") in calls
+    assert calls[-1][0] == "send"
 
 
 def test_pdf_helpers() -> None:

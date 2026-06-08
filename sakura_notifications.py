@@ -6,6 +6,8 @@ import urllib.request
 from datetime import date, datetime
 from typing import Callable
 
+import sakura_email
+
 
 PUSHPLUS_URL = "https://www.pushplus.plus/send"
 
@@ -47,17 +49,26 @@ def send_wework_bot(webhook: str, title: str, content: str) -> dict:
         return {"ok": False, "channel": "wework", "error": str(exc)}
 
 
-def send_notification(title: str, content: str, *, wework_webhook: str = "", pushplus_token: str = "") -> dict:
+def send_notification(
+    title: str,
+    content: str,
+    *,
+    wework_webhook: str = "",
+    pushplus_token: str = "",
+    email_settings: sakura_email.EmailSettings | None = None,
+) -> dict:
     results = []
     if wework_webhook:
         results.append(send_wework_bot(wework_webhook, title, content))
     if pushplus_token:
         results.append(send_pushplus(pushplus_token, title, content))
+    if email_settings and sakura_email.is_configured(email_settings):
+        results.append(sakura_email.send_email(email_settings, title, content))
     if not results:
         return {
             "ok": False,
             "configured": False,
-            "detail": "No notification channel configured. Set WEWORK_BOT_WEBHOOK or PUSHPLUS_TOKEN.",
+            "detail": "No notification channel configured. Set WEWORK_BOT_WEBHOOK, PUSHPLUS_TOKEN or EMAIL_*.",
             "results": [],
         }
     return {

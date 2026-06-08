@@ -31,6 +31,7 @@ from sakura_pdf import (
     save_uploaded_pdf,
 )
 import sakura_notifications
+import sakura_email
 import sakura_weather
 import sakura_reminders
 import sakura_config
@@ -88,6 +89,16 @@ LLM_MODEL = os.getenv("LLM_MODEL") or os.getenv("DEEPSEEK_MODEL") or "mimo-v2.5-
 # 在 https://www.pushplus.plus 用微信扫码登录，复制 token 后设环境变量 PUSHPLUS_TOKEN。
 PUSHPLUS_TOKEN = os.getenv("PUSHPLUS_TOKEN", "")
 WEWORK_BOT_WEBHOOK = os.getenv("WEWORK_BOT_WEBHOOK", "")
+EMAIL_ENABLED = os.getenv("EMAIL_ENABLED", "0")
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = os.getenv("EMAIL_PORT", "465")
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "1")
+EMAIL_USE_STARTTLS = os.getenv("EMAIL_USE_STARTTLS", "0")
+EMAIL_USER = os.getenv("EMAIL_USER", "")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "") or os.getenv("EMAIL_AUTH_CODE", "")
+EMAIL_TO = os.getenv("EMAIL_TO", "")
+EMAIL_FROM = os.getenv("EMAIL_FROM", "")
+EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "Sakura 做题集")
 # 推送正文里的“打开做题集”链接（部署到公网后改成你的域名/IP）
 APP_PUBLIC_URL = os.getenv("APP_PUBLIC_URL", "http://127.0.0.1:8000")
 WEATHER_CITY = os.getenv("WEATHER_CITY", "北京")
@@ -362,8 +373,36 @@ def llm_settings_view() -> dict:
     return sakura_settings.llm_settings_view(LLM_API_KEY, LLM_BASE_URL, LLM_MODEL)
 
 
+def current_email_settings() -> sakura_email.EmailSettings:
+    return sakura_email.EmailSettings(
+        enabled=EMAIL_ENABLED,
+        host=EMAIL_HOST,
+        port=EMAIL_PORT,
+        use_ssl=EMAIL_USE_SSL,
+        use_starttls=EMAIL_USE_STARTTLS,
+        user=EMAIL_USER,
+        password=EMAIL_PASSWORD,
+        to=EMAIL_TO,
+        from_email=EMAIL_FROM,
+        from_name=EMAIL_FROM_NAME,
+    )
+
+
+def notification_channels_configured() -> bool:
+    return bool(
+        WEWORK_BOT_WEBHOOK
+        or PUSHPLUS_TOKEN
+        or sakura_email.is_configured(current_email_settings())
+    )
+
+
 def notification_settings_view() -> dict:
-    return sakura_settings.notification_settings_view(WEWORK_BOT_WEBHOOK, PUSHPLUS_TOKEN, APP_PUBLIC_URL)
+    return sakura_settings.notification_settings_view(
+        WEWORK_BOT_WEBHOOK,
+        PUSHPLUS_TOKEN,
+        APP_PUBLIC_URL,
+        sakura_email.settings_public_view(current_email_settings()),
+    )
 
 
 def update_llm_runtime_settings(api_key: str | None = None, base_url: str | None = None, model: str | None = None) -> dict:
@@ -390,8 +429,20 @@ def update_notification_runtime_settings(
     wework_webhook: str | None = None,
     pushplus_token: str | None = None,
     app_public_url: str | None = None,
+    email_enabled: str | None = None,
+    email_host: str | None = None,
+    email_port: str | None = None,
+    email_use_ssl: str | None = None,
+    email_use_starttls: str | None = None,
+    email_user: str | None = None,
+    email_password: str | None = None,
+    email_to: str | None = None,
+    email_from: str | None = None,
+    email_from_name: str | None = None,
 ) -> dict:
     global WEWORK_BOT_WEBHOOK, PUSHPLUS_TOKEN, APP_PUBLIC_URL
+    global EMAIL_ENABLED, EMAIL_HOST, EMAIL_PORT, EMAIL_USE_SSL, EMAIL_USE_STARTTLS
+    global EMAIL_USER, EMAIL_PASSWORD, EMAIL_TO, EMAIL_FROM, EMAIL_FROM_NAME
     updates = {}
     if wework_webhook is not None and wework_webhook.strip():
         WEWORK_BOT_WEBHOOK = wework_webhook.strip()
@@ -405,6 +456,46 @@ def update_notification_runtime_settings(
         APP_PUBLIC_URL = app_public_url.strip().rstrip("/")
         os.environ["APP_PUBLIC_URL"] = APP_PUBLIC_URL
         updates["APP_PUBLIC_URL"] = APP_PUBLIC_URL
+    if email_enabled is not None and email_enabled.strip():
+        EMAIL_ENABLED = sakura_email.normalize_onoff(email_enabled)
+        os.environ["EMAIL_ENABLED"] = EMAIL_ENABLED
+        updates["EMAIL_ENABLED"] = EMAIL_ENABLED
+    if email_host is not None and email_host.strip():
+        EMAIL_HOST = email_host.strip()
+        os.environ["EMAIL_HOST"] = EMAIL_HOST
+        updates["EMAIL_HOST"] = EMAIL_HOST
+    if email_port is not None and email_port.strip():
+        EMAIL_PORT = sakura_email.normalize_port(email_port, EMAIL_PORT)
+        os.environ["EMAIL_PORT"] = EMAIL_PORT
+        updates["EMAIL_PORT"] = EMAIL_PORT
+    if email_use_ssl is not None and email_use_ssl.strip():
+        EMAIL_USE_SSL = sakura_email.normalize_onoff(email_use_ssl, EMAIL_USE_SSL)
+        os.environ["EMAIL_USE_SSL"] = EMAIL_USE_SSL
+        updates["EMAIL_USE_SSL"] = EMAIL_USE_SSL
+    if email_use_starttls is not None and email_use_starttls.strip():
+        EMAIL_USE_STARTTLS = sakura_email.normalize_onoff(email_use_starttls, EMAIL_USE_STARTTLS)
+        os.environ["EMAIL_USE_STARTTLS"] = EMAIL_USE_STARTTLS
+        updates["EMAIL_USE_STARTTLS"] = EMAIL_USE_STARTTLS
+    if email_user is not None and email_user.strip():
+        EMAIL_USER = email_user.strip()
+        os.environ["EMAIL_USER"] = EMAIL_USER
+        updates["EMAIL_USER"] = EMAIL_USER
+    if email_password is not None and email_password.strip():
+        EMAIL_PASSWORD = email_password.strip()
+        os.environ["EMAIL_PASSWORD"] = EMAIL_PASSWORD
+        updates["EMAIL_PASSWORD"] = EMAIL_PASSWORD
+    if email_to is not None and email_to.strip():
+        EMAIL_TO = email_to.strip()
+        os.environ["EMAIL_TO"] = EMAIL_TO
+        updates["EMAIL_TO"] = EMAIL_TO
+    if email_from is not None and email_from.strip():
+        EMAIL_FROM = email_from.strip()
+        os.environ["EMAIL_FROM"] = EMAIL_FROM
+        updates["EMAIL_FROM"] = EMAIL_FROM
+    if email_from_name is not None and email_from_name.strip():
+        EMAIL_FROM_NAME = email_from_name.strip()
+        os.environ["EMAIL_FROM_NAME"] = EMAIL_FROM_NAME
+        updates["EMAIL_FROM_NAME"] = EMAIL_FROM_NAME
     if updates:
         sakura_config.write_local_env(ROOT, updates)
     return notification_settings_view()
@@ -886,6 +977,7 @@ def send_notification(title: str, content: str) -> dict:
         content,
         wework_webhook=WEWORK_BOT_WEBHOOK,
         pushplus_token=PUSHPLUS_TOKEN,
+        email_settings=current_email_settings(),
     )
 
 
@@ -1779,7 +1871,31 @@ class DemoHandler(BaseHTTPRequestHandler):
         wework_webhook = str(payload.get("wework_webhook", "")).strip()
         pushplus_token = str(payload.get("pushplus_token", "")).strip()
         app_public_url = str(payload.get("app_public_url", "")).strip()
-        if not any([wework_webhook, pushplus_token, app_public_url]):
+        email_enabled = str(payload.get("email_enabled", "")).strip()
+        email_host = str(payload.get("email_host", "")).strip()
+        email_port = str(payload.get("email_port", "")).strip()
+        email_use_ssl = str(payload.get("email_use_ssl", "")).strip()
+        email_use_starttls = str(payload.get("email_use_starttls", "")).strip()
+        email_user = str(payload.get("email_user", "")).strip()
+        email_password = str(payload.get("email_password", "")).strip()
+        email_to = str(payload.get("email_to", "")).strip()
+        email_from = str(payload.get("email_from", "")).strip()
+        email_from_name = str(payload.get("email_from_name", "")).strip()
+        if not any([
+            wework_webhook,
+            pushplus_token,
+            app_public_url,
+            email_enabled,
+            email_host,
+            email_port,
+            email_use_ssl,
+            email_use_starttls,
+            email_user,
+            email_password,
+            email_to,
+            email_from,
+            email_from_name,
+        ]):
             return json_response(self, {"error": "至少填写企业微信 Webhook、PushPlus Token 或公网地址中的一项"}, 400)
         try:
             normalized_public_url = normalize_public_url(app_public_url) if app_public_url else None
@@ -1789,11 +1905,39 @@ class DemoHandler(BaseHTTPRequestHandler):
             wework_webhook=wework_webhook or None,
             pushplus_token=pushplus_token or None,
             app_public_url=normalized_public_url,
+            email_enabled=email_enabled or None,
+            email_host=email_host or None,
+            email_port=email_port or None,
+            email_use_ssl=email_use_ssl or None,
+            email_use_starttls=email_use_starttls or None,
+            email_user=email_user or None,
+            email_password=email_password or None,
+            email_to=email_to or None,
+            email_from=email_from or None,
+            email_from_name=email_from_name or None,
         )
         return json_response(self, {
             **settings,
             "message": "已保存到本地 .env，并已更新当前运行中的推送配置。",
         })
+
+    def handle_email_test(self) -> None:
+        result = sakura_email.send_email(
+            current_email_settings(),
+            "Sakura 邮箱推送测试",
+            (
+                "### Sakura 邮箱推送测试\n\n"
+                "如果你收到这封邮件，说明 SMTP 邮箱通道已经配置成功。\n\n"
+                f"[打开 Sakura 做题集]({APP_PUBLIC_URL.rstrip('/')})"
+            ),
+        )
+        status = 200 if result.get("ok") else 400
+        return json_response(self, {
+            "ok": result.get("ok", False),
+            "configured": result.get("configured", True),
+            "error": result.get("error", ""),
+            "detail": result,
+        }, status)
 
     def handle_ai_memory_post(self) -> None:
         payload = self.read_json()
@@ -2097,7 +2241,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             "batch_id": reminder.get("batch_id", ""),
             "practice_url": reminder.get("practice_url", ""),
             "detail": result.get("detail") or result.get("resp") or result.get("error"),
-            "configured": result.get("configured", bool(PUSHPLUS_TOKEN or WEWORK_BOT_WEBHOOK)),
+            "configured": result.get("configured", notification_channels_configured()),
         }, status)
 
     def handle_push_morning(self) -> None:
@@ -2109,7 +2253,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             "ok": result["ok"], "kind": "morning", "title": reminder["title"],
             "batch_id": reminder.get("batch_id", ""), "practice_url": reminder.get("practice_url", ""),
             "detail": result.get("detail") or result.get("resp") or result.get("error"),
-            "configured": result.get("configured", bool(PUSHPLUS_TOKEN or WEWORK_BOT_WEBHOOK)),
+            "configured": result.get("configured", notification_channels_configured()),
         }, status)
 
     def handle_push_night(self) -> None:
@@ -2121,7 +2265,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         return json_response(self, {
             "ok": result["ok"], "kind": "night", "checked_in": checked, "title": payload["title"],
             "detail": result.get("detail") or result.get("resp") or result.get("error"),
-            "configured": result.get("configured", bool(PUSHPLUS_TOKEN or WEWORK_BOT_WEBHOOK)),
+            "configured": result.get("configured", notification_channels_configured()),
         }, status)
 
     def handle_push_weather(self) -> None:
@@ -2136,7 +2280,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             "title": payload["title"],
             "weather": payload["weather"],
             "detail": result.get("detail") or result.get("resp") or result.get("error"),
-            "configured": result.get("configured", bool(PUSHPLUS_TOKEN or WEWORK_BOT_WEBHOOK)),
+            "configured": result.get("configured", notification_channels_configured()),
         }, status)
 
     def handle_today_done(self) -> None:

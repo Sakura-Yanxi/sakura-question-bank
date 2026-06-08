@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260607-profile-memory-archive" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260608-email-notify" />
     <script>
       window.MathJax = {
         tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] },
@@ -485,6 +485,38 @@
               </div>
               <div class="notify-settings-grid">
                 <label class="coach-field">
+                  <span>邮箱推送</span>
+                  <select id="emailEnabled"><option value="0">关闭</option><option value="1">开启</option></select>
+                </label>
+                <label class="coach-field">
+                  <span>SMTP Host</span>
+                  <input id="emailHost" type="text" placeholder="smtp.qq.com" autocomplete="off" />
+                </label>
+                <label class="coach-field">
+                  <span>SMTP Port</span>
+                  <input id="emailPort" type="number" min="1" max="65535" placeholder="465" autocomplete="off" />
+                </label>
+                <label class="coach-field">
+                  <span>加密方式</span>
+                  <select id="emailSecure"><option value="ssl">SSL 465</option><option value="starttls">STARTTLS 587</option><option value="none">不加密</option></select>
+                </label>
+                <label class="coach-field">
+                  <span>发件邮箱</span>
+                  <input id="emailUser" type="email" placeholder="your@qq.com" autocomplete="off" />
+                </label>
+                <label class="coach-field">
+                  <span>SMTP 授权码</span>
+                  <input id="emailPassword" type="password" placeholder="邮箱授权码，不是登录密码" autocomplete="off" />
+                </label>
+                <label class="coach-field wide-field">
+                  <span>收件人</span>
+                  <input id="emailTo" type="text" placeholder="多个邮箱用逗号分隔" autocomplete="off" />
+                </label>
+                <label class="coach-field">
+                  <span>发件显示名</span>
+                  <input id="emailFromName" type="text" placeholder="Sakura 做题集" autocomplete="off" />
+                </label>
+                <label class="coach-field">
                   <span>公网地址</span>
                   <input id="notifyAppPublicUrl" type="url" placeholder="例如：https://your-domain.example" />
                 </label>
@@ -499,6 +531,7 @@
               </div>
               <div class="remind-actions">
                 <button id="saveNotifySettings" class="ghost"><i data-lucide="save"></i>保存推送配置</button>
+                <button id="testEmailBtn" class="ghost"><i data-lucide="mail-check"></i>测试邮箱</button>
                 <span id="notifySettingsHint" class="coach-hint">不填写的密钥会保留原值，不会被清空。</span>
               </div>
             </div>
@@ -647,7 +680,7 @@
       <p class="lightbox-tip">滚轮缩放 · 拖拽移动 · 双击复位 · Esc 关闭</p>
     </dialog>
 
-    <script src="/static/app.js?v=20260607-profile-memory-archive"></script>
+    <script src="/static/app.js?v=20260608-email-notify"></script>
     
     <script>
       lucide.createIcons();

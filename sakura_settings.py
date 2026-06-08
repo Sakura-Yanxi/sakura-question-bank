@@ -27,6 +27,20 @@ def mask_public_url(value: str) -> str:
     return mask_secret(value)
 
 
+def mask_email(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if "@" not in value:
+        return mask_secret(value)
+    name, domain = value.split("@", 1)
+    if len(name) <= 2:
+        masked_name = name[:1] + "x"
+    else:
+        masked_name = name[:2] + "xxxx"
+    return f"{masked_name}@{domain}"
+
+
 def llm_settings_view(api_key: str, base_url: str, model: str) -> dict:
     return {
         "has_key": bool(api_key),
@@ -37,7 +51,13 @@ def llm_settings_view(api_key: str, base_url: str, model: str) -> dict:
     }
 
 
-def notification_settings_view(wework_webhook: str, pushplus_token: str, app_public_url: str) -> dict:
+def notification_settings_view(
+    wework_webhook: str,
+    pushplus_token: str,
+    app_public_url: str,
+    email_settings: dict | None = None,
+) -> dict:
+    email_settings = email_settings or {}
     return {
         "has_wework": bool(wework_webhook),
         "masked_wework": mask_secret(wework_webhook),
@@ -45,6 +65,7 @@ def notification_settings_view(wework_webhook: str, pushplus_token: str, app_pub
         "masked_pushplus": mask_secret(pushplus_token),
         "app_public_url": "",
         "masked_app_public_url": mask_public_url(app_public_url),
+        **email_settings,
     }
 
 

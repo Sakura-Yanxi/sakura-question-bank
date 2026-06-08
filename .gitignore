@@ -7,6 +7,7 @@ data/
 sample_gaoshu.pdf
 
 .env
+.deploy_keys/
 *.log
 *.zip
 gitdb/
