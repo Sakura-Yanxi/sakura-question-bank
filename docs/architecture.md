@@ -88,6 +88,9 @@ This project is intentionally local-first and lightweight, but new features shou
 - `static/question_detail.js`
   - Question detail modal, AI hint/analysis/variation actions, crop tool and image lightbox.
   - Loaded after `app.js`; exposes `openDetail()` and `openLightbox()` for shared card/list interactions.
+- `static/archives.js`
+  - Profile archive and teacher-memory archive dialog helpers.
+  - Loaded after `app.js` and before `coach.js`; exposes archive dialog functions used by the coach panel.
 - `static/ai_chat.js`
   - AI chat, LLM settings, teacher-memory and mentor-experience UI helpers.
   - Loaded after `app.js` so shared render/API helpers are initialized; exposes `loadAiChatPanel()` for view navigation.
