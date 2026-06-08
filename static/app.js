@@ -193,7 +193,8 @@ async function loadDocuments() {
   state.documents = data.documents;
   state.subjects = data.subjects;
   renderDocumentFilters();
-  renderDocuments();
+  if (window.SakuraDocuments) window.SakuraDocuments.render();
+  else if (window.renderDocuments) window.renderDocuments();
 }
 
 async function loadQuestions() {
@@ -478,101 +479,9 @@ function renderStats(target, stats, labelKey, emptyText) {
       .join("") || `<p>${emptyText}</p>`;
 }
 
-function renderDocuments() {
-  const books = state.documents.filter((doc) => documentKind(doc) !== "模拟卷");
-  const mocks = state.documents.filter((doc) => documentKind(doc) === "模拟卷");
-  renderDocumentGrid("#documentGrid", books, "还没有做题本。先在上方导入章节练习 PDF。");
-  renderDocumentGrid("#mockDocumentGrid", mocks, "还没有模拟卷。先在上方导入整卷 PDF。");
-}
-
-function renderDocumentGrid(target, docs, emptyText) {
-  const node = $(target);
-  if (!node) return;
-  node.innerHTML =
-    docs
-      .map((doc) => documentCard(doc))
-      .join("") || `<p class="empty-note">${emptyText}</p>`;
-}
-
-function documentCard(doc) {
-  const kind = documentKind(doc);
-  const rescanLabel = kind === "模拟卷" ? "重扫整卷" : "重扫章节";
-  return `
-        <article class="document-card">
-          <div>
-            <h3>${doc.title || doc.filename}</h3>
-            <p>${doc.subject} · ${kind} · ${doc.question_count || 0} 题 · 错题 ${doc.wrong_count || 0} · 需复习 ${doc.review_count || 0}</p>
-            <span class="tag kind ${kind === "模拟卷" ? "mock" : "paper"}">${kind}</span>
-            <p>${doc.filename}</p>
-          </div>
-          <div class="doc-actions">
-            <button data-view-doc="${doc.id}">查看</button>
-            <button class="ghost" data-edit-doc="${doc.id}">编辑</button>
-            <button class="ghost" data-stats-doc="${doc.id}">统计</button>
-            <button class="ghost" data-rescan-doc="${doc.id}">${rescanLabel}</button>
-            <button class="danger" data-delete-doc="${doc.id}">删除</button>
-          </div>
-        </article>`;
-}
+// Document card rendering and management actions live in /static/documents.js
 
 // Textbook intensive-reading helpers live in /static/textbook.js
-
-async function editDocument(id) {
-  const doc = state.documents.find((item) => item.id === id);
-  if (!doc) return;
-  const kind = documentKind(doc);
-  const dialog = $("#detailDialog");
-  $("#detailContent").innerHTML = `
-    <form class="document-editor" id="documentEditForm">
-      <div class="panel-head">
-        <div>
-          <h2>编辑${kind}</h2>
-          <p>只修改显示名称和科目，不会影响已导入题目、错题和复习记录。</p>
-        </div>
-        <button type="button" class="ghost" id="closeDocumentEdit">关闭</button>
-      </div>
-      <label>
-        资料名称
-        <input id="editDocumentTitle" value="${doc.title || doc.filename || ""}" maxlength="120" required />
-      </label>
-      <label>
-        科目/分类
-        <input id="editDocumentSubject" value="${doc.subject || "未分类"}" maxlength="60" list="subjectSuggestions" />
-      </label>
-      <label>
-        资料类型
-        <select id="editDocumentKind">
-          <option value="做题本" ${doc.document_kind !== "模拟卷" ? "selected" : ""}>做题本</option>
-          <option value="模拟卷" ${doc.document_kind === "模拟卷" ? "selected" : ""}>模拟卷</option>
-        </select>
-      </label>
-      <p class="edit-file-name">原始文件：${doc.filename}</p>
-      <div class="detail-actions">
-        <button type="submit">保存修改</button>
-        <button type="button" class="ghost" id="cancelDocumentEdit">取消</button>
-      </div>
-    </form>`;
-  dialog.showModal();
-  $("#closeDocumentEdit").onclick = () => dialog.close();
-  $("#cancelDocumentEdit").onclick = () => dialog.close();
-  $("#documentEditForm").onsubmit = async (event) => {
-    event.preventDefault();
-    try {
-      await api(`/api/documents/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          title: $("#editDocumentTitle").value.trim(),
-          subject: $("#editDocumentSubject").value.trim() || "未分类",
-          document_kind: $("#editDocumentKind").value,
-        }),
-      });
-      dialog.close();
-      await refresh();
-    } catch (error) {
-      alert(error.message);
-    }
-  };
-}
 
 function renderQuestionGrid(target, questions, emptyText = "还没有题目。先从左侧上传 PDF，或清空筛选条件。", options = {}) {
   $(target).innerHTML =
@@ -634,32 +543,6 @@ async function deleteQuestion(id) {
       state.dashboardDocumentId = "";
     }
   }
-  await refresh();
-}
-
-async function deleteDocument(id) {
-  const doc = state.documents.find((item) => item.id === id);
-  const name = doc ? doc.title || doc.filename : "这套做题本";
-  const kind = doc ? documentKind(doc) : "做题本";
-  if (!confirm(`确定删除「${name}」吗？这会删除整套${kind}、题目记录和页面图片。`)) return;
-  await api(`/api/documents/${id}`, { method: "DELETE" });
-  if (state.documentId === id) {
-    state.documentId = "";
-    state.category = "";
-    state.chapter = "";
-  }
-  if (state.dashboardDocumentId === id) state.dashboardDocumentId = "";
-  await refresh();
-}
-
-async function rescanDocument(id) {
-  const doc = state.documents.find((item) => item.id === id);
-  const name = doc ? doc.title || doc.filename : "这套做题本";
-  const kind = doc ? documentKind(doc) : "做题本";
-  const scanLabel = kind === "模拟卷" ? "整卷" : "章节";
-  if (!confirm(`重新扫描「${name}」的页眉/右上角${scanLabel}吗？这不会调用 AI，也不会消耗 token。`)) return;
-  const result = await api(`/api/documents/${id}/rescan-chapters`, { method: "POST", body: "{}" });
-  alert(`已重扫 ${result.pages} 页，更新 ${result.updated} 条题目记录。`);
   await refresh();
 }
 
@@ -986,12 +869,12 @@ document.body.addEventListener("click", async (event) => {
 
   const deleteDocBtn = event.target.closest("[data-delete-doc]");
   if (deleteDocBtn) {
-    await deleteDocument(deleteDocBtn.dataset.deleteDoc);
+    if (window.SakuraDocuments) await window.SakuraDocuments.deleteDocument(deleteDocBtn.dataset.deleteDoc);
   }
 
   const editDocBtn = event.target.closest("[data-edit-doc]");
   if (editDocBtn) {
-    await editDocument(editDocBtn.dataset.editDoc);
+    if (window.SakuraDocuments) await window.SakuraDocuments.edit(editDocBtn.dataset.editDoc);
   }
 
   const viewDocBtn = event.target.closest("[data-view-doc]");
@@ -1009,7 +892,7 @@ document.body.addEventListener("click", async (event) => {
 
   const rescanDocBtn = event.target.closest("[data-rescan-doc]");
   if (rescanDocBtn) {
-    await rescanDocument(rescanDocBtn.dataset.rescanDoc);
+    if (window.SakuraDocuments) await window.SakuraDocuments.rescan(rescanDocBtn.dataset.rescanDoc);
   }
 });
 

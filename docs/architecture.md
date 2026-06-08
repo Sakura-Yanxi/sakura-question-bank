@@ -81,13 +81,16 @@ This project is intentionally local-first and lightweight, but new features shou
 - `static/index.html`
   - Stable DOM shell and ID-bound controls.
 - `static/app.js`
-  - Browser state, API calls, rendering and event binding.
+  - Browser state, shared API/render helpers, route/view switching and cross-feature event binding.
 - `static/reminders.js`
   - Reminder/check-in/weather/notification settings UI helpers.
   - Loaded before `app.js`; functions execute after shared browser helpers are initialized.
 - `static/question_detail.js`
   - Question detail modal, AI hint/analysis/variation actions, crop tool and image lightbox.
   - Loaded after `app.js`; exposes `openDetail()` and `openLightbox()` for shared card/list interactions.
+- `static/documents.js`
+  - Book/mock-paper document cards plus edit, delete and chapter-rescan actions.
+  - Loaded after `app.js`; exposes `SakuraDocuments.render()` so shared refresh can update document grids.
 - `static/archives.js`
   - Profile archive and teacher-memory archive dialog helpers.
   - Loaded after `app.js` and before `coach.js`; exposes archive dialog functions used by the coach panel.
