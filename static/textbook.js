@@ -217,7 +217,7 @@
     on("#textbookPageImage", "dblclick", () => {
       const img = $("#textbookPageImage");
       if (!img || img.classList.contains("hidden") || !img.src) return;
-      openLightbox(img.src, img.dataset.caption || "教材页截图");
+      if (window.openLightbox) window.openLightbox(img.src, img.dataset.caption || "教材页截图");
     });
     on("#askTextbookAi", "click", () => askTextbookAi());
     on("#explainSelectedParagraph", "click", () => {
