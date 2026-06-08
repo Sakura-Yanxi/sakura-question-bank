@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260608-email-notify" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260608-notify-guide" />
     <script>
       window.MathJax = {
         tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] },
@@ -442,7 +442,7 @@
           <section id="remind" class="view">
             <div class="panel">
               <div class="panel-head">
-                <div class="panel-title"><span class="panel-icon"><i data-lucide="check-circle-2"></i></span><div><h2>今日打卡</h2><p>做完今天的复习后记录一次；云端模式会和服务器提醒联动。</p></div></div>
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="check-circle-2"></i></span><div><h2>今日打卡</h2><p>做完今天的复习后记录一次；企业微信或 PushPlus 的打卡链接会同步到服务器。</p></div></div>
                 <span id="checkinBadge" class="section-count">未打卡</span>
               </div>
               <div class="checkin-row">
@@ -453,7 +453,7 @@
 
             <div class="panel">
               <div class="panel-head">
-                <div class="panel-title"><span class="panel-icon"><i data-lucide="bell-ring"></i></span><div><h2>微信提醒设置</h2><p>配置企业微信群机器人或 PushPlus 后，可把励志语、错题提醒和打卡链接推到微信。</p></div></div>
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="bell-ring"></i></span><div><h2>提醒与打卡设置</h2><p>选择主要打卡入口，并设置早晚提醒、天气推送的时间。</p></div></div>
                 <span id="pushConfigBadge" class="tag">检测中…</span>
               </div>
               <div class="remind-grid">
@@ -462,7 +462,7 @@
                 <label class="coach-field"><span>晚间时间</span><input id="remindNightTime" type="time" value="20:00" /></label>
                 <label class="coach-field"><span>天气推送</span><select id="remindWeatherOn"><option value="1">开启</option><option value="0">关闭</option></select></label>
                 <label class="coach-field"><span>天气时间</span><input id="remindWeatherTime" type="time" value="22:30" /></label>
-                <label class="coach-field"><span>打卡方式</span><select id="checkinMode"><option value="cloud">云端打卡（公网/微信链接）</option><option value="local">本地打卡（当前浏览器按钮）</option></select></label>
+                <label class="coach-field"><span>打卡入口</span><select id="checkinMode"><option value="wework">企业微信打卡</option><option value="pushplus">PushPlus 打卡</option><option value="local">本地按钮打卡</option></select></label>
               </div>
               <div class="remind-actions">
                 <button id="saveRemindSettings"><i data-lucide="save"></i>保存提醒设置</button>
@@ -478,56 +478,95 @@
                   <span class="panel-icon"><i data-lucide="settings-2"></i></span>
                   <div>
                     <h2>推送通道配置</h2>
-                    <p>企业微信机器人、PushPlus 和公网访问地址统一保存在本地 .env；页面只显示脱敏状态。</p>
+                    <p>日常优先用企业微信机器人；PushPlus 和邮箱只是备用通道。不填写的密钥会保留原值。</p>
                   </div>
                 </div>
                 <span id="notifySettingsBadge" class="tag">检测中...</span>
               </div>
-              <div class="notify-settings-grid">
-                <label class="coach-field">
-                  <span>邮箱推送</span>
-                  <select id="emailEnabled"><option value="0">关闭</option><option value="1">开启</option></select>
-                </label>
-                <label class="coach-field">
-                  <span>SMTP Host</span>
-                  <input id="emailHost" type="text" placeholder="smtp.qq.com" autocomplete="off" />
-                </label>
-                <label class="coach-field">
-                  <span>SMTP Port</span>
-                  <input id="emailPort" type="number" min="1" max="65535" placeholder="465" autocomplete="off" />
-                </label>
-                <label class="coach-field">
-                  <span>加密方式</span>
-                  <select id="emailSecure"><option value="ssl">SSL 465</option><option value="starttls">STARTTLS 587</option><option value="none">不加密</option></select>
-                </label>
-                <label class="coach-field">
-                  <span>发件邮箱</span>
-                  <input id="emailUser" type="email" placeholder="your@qq.com" autocomplete="off" />
-                </label>
-                <label class="coach-field">
-                  <span>SMTP 授权码</span>
-                  <input id="emailPassword" type="password" placeholder="邮箱授权码，不是登录密码" autocomplete="off" />
-                </label>
-                <label class="coach-field wide-field">
-                  <span>收件人</span>
-                  <input id="emailTo" type="text" placeholder="多个邮箱用逗号分隔" autocomplete="off" />
-                </label>
-                <label class="coach-field">
-                  <span>发件显示名</span>
-                  <input id="emailFromName" type="text" placeholder="Sakura 做题集" autocomplete="off" />
-                </label>
-                <label class="coach-field">
-                  <span>公网地址</span>
-                  <input id="notifyAppPublicUrl" type="url" placeholder="例如：https://your-domain.example" />
-                </label>
-                <label class="coach-field">
-                  <span>企业微信机器人 Webhook</span>
-                  <input id="weworkWebhook" type="password" placeholder="未保存" autocomplete="off" />
-                </label>
-                <label class="coach-field">
-                  <span>PushPlus Token</span>
-                  <input id="pushplusToken" type="password" placeholder="未保存" autocomplete="off" />
-                </label>
+              <div class="notify-quick-guide">
+                <div><i data-lucide="bot"></i><strong>只用企业微信时</strong><span>填“公网地址”和“企业微信机器人 Webhook”，保存后回到上方点测试推送。</span></div>
+                <div><i data-lucide="lock-keyhole"></i><strong>已保存的密钥</strong><span>输入框显示“已保存”就不用重复填；空着保存不会清空原值。</span></div>
+              </div>
+              <div class="notify-sections">
+                <div class="notify-section recommended">
+                  <div class="notify-section-head">
+                    <span class="notify-step">1</span>
+                    <div><h3>企业微信机器人（推荐）</h3><p>你现在主要走这个通道。手机要能打开打卡链接时，需要填写公网地址。</p></div>
+                  </div>
+                  <div class="notify-settings-grid compact">
+                    <label class="coach-field">
+                      <span>公网地址</span>
+                      <input id="notifyAppPublicUrl" type="url" placeholder="例如：https://xiaoyinghua.dpdns.org" />
+                    </label>
+                    <label class="coach-field wide-field">
+                      <span>企业微信机器人 Webhook</span>
+                      <input id="weworkWebhook" type="password" placeholder="未保存" autocomplete="off" />
+                    </label>
+                  </div>
+                </div>
+
+                <div class="notify-section optional">
+                  <div class="notify-section-head">
+                    <span class="notify-step">2</span>
+                    <div><h3>PushPlus（可选备用）</h3><p>只有当“打卡入口”选择 PushPlus 时才会使用；企业微信模式不会再误调用它。</p></div>
+                  </div>
+                  <div class="notify-settings-grid compact">
+                    <label class="coach-field">
+                      <span>PushPlus Token</span>
+                      <input id="pushplusToken" type="password" placeholder="未保存" autocomplete="off" />
+                    </label>
+                  </div>
+                </div>
+
+                <details class="notify-section optional email-section">
+                  <summary><span class="notify-step">3</span><div><h3>邮箱推送（备用）</h3><p>不需要邮箱提醒时保持关闭即可。</p></div><i data-lucide="chevron-down"></i></summary>
+                  <div class="email-help-box">
+                    <h4><i data-lucide="list-checks"></i>QQ 邮箱配置步骤</h4>
+                    <ol>
+                      <li>先登录网页版 QQ 邮箱，进入“设置”里的“账号与安全”。</li>
+                      <li>找到 POP3/IMAP/SMTP 服务，开启 SMTP 服务。</li>
+                      <li>按页面提示发送短信验证，复制生成的“授权码”。注意不是 QQ 密码。</li>
+                      <li>回到这里：邮箱推送选“开启”，Host 填 <code>smtp.qq.com</code>，Port 填 <code>465</code>，加密方式选 <code>SSL 465</code>。</li>
+                      <li>发件邮箱填你的 QQ 邮箱，SMTP 授权码粘贴刚才复制的授权码，收件人填要接收提醒的邮箱。</li>
+                      <li>点“保存推送配置”，再点“测试邮箱”。收到测试邮件就说明配置成功。</li>
+                    </ol>
+                    <p>163/126 邮箱也类似：到邮箱设置里开启 SMTP，拿“授权码”，Host 通常是 <code>smtp.163.com</code> 或 <code>smtp.126.com</code>。</p>
+                  </div>
+                  <div class="notify-settings-grid email-grid">
+                    <label class="coach-field">
+                      <span>邮箱推送</span>
+                      <select id="emailEnabled"><option value="0">关闭</option><option value="1">开启</option></select>
+                    </label>
+                    <label class="coach-field">
+                      <span>SMTP Host</span>
+                      <input id="emailHost" type="text" placeholder="smtp.qq.com" autocomplete="off" />
+                    </label>
+                    <label class="coach-field">
+                      <span>SMTP Port</span>
+                      <input id="emailPort" type="number" min="1" max="65535" placeholder="465" autocomplete="off" />
+                    </label>
+                    <label class="coach-field">
+                      <span>加密方式</span>
+                      <select id="emailSecure"><option value="ssl">SSL 465</option><option value="starttls">STARTTLS 587</option><option value="none">不加密</option></select>
+                    </label>
+                    <label class="coach-field">
+                      <span>发件邮箱</span>
+                      <input id="emailUser" type="email" placeholder="your@qq.com" autocomplete="off" />
+                    </label>
+                    <label class="coach-field">
+                      <span>SMTP 授权码</span>
+                      <input id="emailPassword" type="password" placeholder="邮箱授权码，不是登录密码" autocomplete="off" />
+                    </label>
+                    <label class="coach-field wide-field">
+                      <span>收件人</span>
+                      <input id="emailTo" type="text" placeholder="多个邮箱用逗号分隔" autocomplete="off" />
+                    </label>
+                    <label class="coach-field">
+                      <span>发件显示名</span>
+                      <input id="emailFromName" type="text" placeholder="Sakura 做题集" autocomplete="off" />
+                    </label>
+                  </div>
+                </details>
               </div>
               <div class="remind-actions">
                 <button id="saveNotifySettings" class="ghost"><i data-lucide="save"></i>保存推送配置</button>
@@ -680,23 +719,23 @@
       <p class="lightbox-tip">滚轮缩放 · 拖拽移动 · 双击复位 · Esc 关闭</p>
     </dialog>
 
-    <script src="/static/reminders.js?v=20260608-library-module"></script>
-    <script src="/static/app.js?v=20260608-library-module"></script>
-    <script src="/static/dashboard.js?v=20260608-library-module"></script>
-    <script src="/static/documents.js?v=20260608-library-module"></script>
-    <script src="/static/library.js?v=20260608-library-module"></script>
-    <script src="/static/question_detail.js?v=20260608-library-module"></script>
-    <script src="/static/archives.js?v=20260608-library-module"></script>
-    <script src="/static/chapter_stats.js?v=20260608-library-module"></script>
-    <script src="/static/upload.js?v=20260608-library-module"></script>
-    <script src="/static/mistakes.js?v=20260608-library-module"></script>
-    <script src="/static/ai_chat.js?v=20260608-library-module"></script>
-    <script src="/static/reflection.js?v=20260608-library-module"></script>
-    <script src="/static/textbook.js?v=20260608-library-module"></script>
-    <script src="/static/daily.js?v=20260608-library-module"></script>
-    <script src="/static/coach.js?v=20260608-library-module"></script>
-    <script src="/static/mistake_export.js?v=20260608-library-module"></script>
-    <script src="/static/backup.js?v=20260608-library-module"></script>
+    <script src="/static/js/system/reminders.js?v=20260608-module-folders"></script>
+    <script src="/static/js/core/app.js?v=20260608-module-folders"></script>
+    <script src="/static/js/content/dashboard.js?v=20260608-module-folders"></script>
+    <script src="/static/js/content/documents.js?v=20260608-module-folders"></script>
+    <script src="/static/js/content/library.js?v=20260608-module-folders"></script>
+    <script src="/static/js/content/question_detail.js?v=20260608-module-folders"></script>
+    <script src="/static/js/review/archives.js?v=20260608-module-folders"></script>
+    <script src="/static/js/review/chapter_stats.js?v=20260608-module-folders"></script>
+    <script src="/static/js/content/upload.js?v=20260608-module-folders"></script>
+    <script src="/static/js/review/mistakes.js?v=20260608-module-folders"></script>
+    <script src="/static/js/ai/ai_chat.js?v=20260608-module-folders"></script>
+    <script src="/static/js/review/reflection.js?v=20260608-module-folders"></script>
+    <script src="/static/js/content/textbook.js?v=20260608-module-folders"></script>
+    <script src="/static/js/review/daily.js?v=20260608-module-folders"></script>
+    <script src="/static/js/ai/coach.js?v=20260608-module-folders"></script>
+    <script src="/static/js/review/mistake_export.js?v=20260608-module-folders"></script>
+    <script src="/static/js/system/backup.js?v=20260608-module-folders"></script>
     
     <script>
       lucide.createIcons();

@@ -108,7 +108,7 @@ REMIND_NIGHT_ON = os.getenv("REMIND_NIGHT_ON", "1")
 REMIND_NIGHT_TIME = os.getenv("REMIND_NIGHT_TIME", "20:00")
 REMIND_WEATHER_ON = os.getenv("REMIND_WEATHER_ON", "1")
 REMIND_WEATHER_TIME = os.getenv("REMIND_WEATHER_TIME", "22:30")
-REMIND_CHECKIN_MODE = os.getenv("REMIND_CHECKIN_MODE", "cloud")
+REMIND_CHECKIN_MODE = sakura_reminders.normalize_checkin_mode(os.getenv("REMIND_CHECKIN_MODE", "wework"))
 DEFAULT_SUBJECT = "未分类"
 DEFAULT_CATEGORY = "待归类"
 DEFAULT_CHAPTER = "未识别章节"
@@ -388,7 +388,12 @@ def current_email_settings() -> sakura_email.EmailSettings:
     )
 
 
-def notification_channels_configured() -> bool:
+def notification_channels_configured(checkin_mode: str | None = None) -> bool:
+    mode = sakura_reminders.normalize_checkin_mode(checkin_mode or REMIND_CHECKIN_MODE)
+    if mode == "wework":
+        return bool(WEWORK_BOT_WEBHOOK)
+    if mode == "pushplus":
+        return bool(PUSHPLUS_TOKEN)
     return bool(
         WEWORK_BOT_WEBHOOK
         or PUSHPLUS_TOKEN
@@ -971,7 +976,61 @@ def build_weather_reminder(conn: sqlite3.Connection, city: str | None = None) ->
     )
 
 
-def send_notification(title: str, content: str) -> dict:
+def send_notification(title: str, content: str, checkin_mode: str | None = None) -> dict:
+    mode = sakura_reminders.normalize_checkin_mode(checkin_mode or REMIND_CHECKIN_MODE)
+    if mode == "wework":
+        if not WEWORK_BOT_WEBHOOK:
+            return {
+                "ok": False,
+                "configured": False,
+                "selected_channel": mode,
+                "detail": "未配置企业微信机器人 Webhook。",
+                "results": [],
+            }
+        result = sakura_notifications.send_notification(
+            title,
+            content,
+            wework_webhook=WEWORK_BOT_WEBHOOK,
+        )
+    elif mode == "pushplus":
+        if not PUSHPLUS_TOKEN:
+            return {
+                "ok": False,
+                "configured": False,
+                "selected_channel": mode,
+                "detail": "未配置 PushPlus Token。",
+                "results": [],
+            }
+        result = sakura_notifications.send_notification(
+            title,
+            content,
+            pushplus_token=PUSHPLUS_TOKEN,
+        )
+    else:
+        result = sakura_notifications.send_notification(
+            title,
+            content,
+            wework_webhook=WEWORK_BOT_WEBHOOK,
+            pushplus_token=PUSHPLUS_TOKEN,
+            email_settings=current_email_settings(),
+        )
+    result["selected_channel"] = mode
+    return result
+
+
+def notification_mode_from_payload(payload: dict) -> str:
+    return sakura_reminders.normalize_checkin_mode(payload.get("checkin_mode", REMIND_CHECKIN_MODE))
+
+
+def notification_response_detail(result: dict) -> object:
+    return result.get("detail") or result.get("resp") or result.get("error")
+
+
+def notification_response_configured(result: dict, mode: str) -> bool:
+    return result.get("configured", notification_channels_configured(mode))
+
+
+def send_notification_all_channels(title: str, content: str) -> dict:
     return sakura_notifications.send_notification(
         title,
         content,
@@ -2229,58 +2288,67 @@ class DemoHandler(BaseHTTPRequestHandler):
         return json_response(self, {"ok": True, "question": result})
 
     def handle_push_daily(self) -> None:
+        payload_in = self.read_json()
+        mode = notification_mode_from_payload(payload_in)
         with connect() as conn:
             reminder = build_daily_reminder(conn)
-        result = send_notification(reminder["title"], reminder["content"])
+        result = send_notification(reminder["title"], reminder["content"], mode)
         status = 200 if result["ok"] else 400
         return json_response(self, {
             "ok": result["ok"],
+            "selected_channel": mode,
             "title": reminder["title"],
             "due_total": reminder["due_total"],
             "days_left": reminder["days_left"],
             "batch_id": reminder.get("batch_id", ""),
             "practice_url": reminder.get("practice_url", ""),
-            "detail": result.get("detail") or result.get("resp") or result.get("error"),
-            "configured": result.get("configured", notification_channels_configured()),
+            "detail": notification_response_detail(result),
+            "configured": notification_response_configured(result, mode),
         }, status)
 
     def handle_push_morning(self) -> None:
+        payload_in = self.read_json()
+        mode = notification_mode_from_payload(payload_in)
         with connect() as conn:
             reminder = build_morning_reminder(conn)
-        result = send_notification(reminder["title"], reminder["content"])
+        result = send_notification(reminder["title"], reminder["content"], mode)
         status = 200 if result["ok"] else 400
         return json_response(self, {
-            "ok": result["ok"], "kind": "morning", "title": reminder["title"],
+            "ok": result["ok"], "kind": "morning", "selected_channel": mode, "title": reminder["title"],
             "batch_id": reminder.get("batch_id", ""), "practice_url": reminder.get("practice_url", ""),
-            "detail": result.get("detail") or result.get("resp") or result.get("error"),
-            "configured": result.get("configured", notification_channels_configured()),
+            "detail": notification_response_detail(result),
+            "configured": notification_response_configured(result, mode),
         }, status)
 
     def handle_push_night(self) -> None:
+        payload_in = self.read_json()
+        mode = notification_mode_from_payload(payload_in)
         with connect() as conn:
             checked = is_checked_in(conn)
             payload = build_night_check(conn)
-        result = send_notification(payload["title"], payload["content"])
+        result = send_notification(payload["title"], payload["content"], mode)
         status = 200 if result["ok"] else 400
         return json_response(self, {
-            "ok": result["ok"], "kind": "night", "checked_in": checked, "title": payload["title"],
-            "detail": result.get("detail") or result.get("resp") or result.get("error"),
-            "configured": result.get("configured", notification_channels_configured()),
+            "ok": result["ok"], "kind": "night", "selected_channel": mode, "checked_in": checked, "title": payload["title"],
+            "detail": notification_response_detail(result),
+            "configured": notification_response_configured(result, mode),
         }, status)
 
     def handle_push_weather(self) -> None:
         payload_in = self.read_json()
+        mode = notification_mode_from_payload(payload_in)
         with connect() as conn:
             payload = build_weather_reminder(conn, str(payload_in.get("city", "")).strip() or None)
-        result = send_notification(payload["title"], payload["content"])
+        result = send_notification(payload["title"], payload["content"], mode)
         status = 200 if result["ok"] else 400
         return json_response(self, {
             "ok": result["ok"],
             "kind": "weather",
+            "selected_channel": mode,
             "title": payload["title"],
             "weather": payload["weather"],
-            "detail": result.get("detail") or result.get("resp") or result.get("error"),
-            "configured": result.get("configured", notification_channels_configured()),
+            "detail": notification_response_detail(result),
+            "configured": notification_response_configured(result, mode),
         }, status)
 
     def handle_today_done(self) -> None:

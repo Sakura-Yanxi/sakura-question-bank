@@ -245,9 +245,9 @@ function renderDocumentFilters() {
     .join("");
 }
 
-// Dashboard filters, cards and distribution stats live in /static/dashboard.js
+// Dashboard filters, cards and distribution stats live in /static/js/content/dashboard.js
 
-// Library filters, search, locate controls and question grids live in /static/library.js
+// Library filters, search, locate controls and question grids live in /static/js/content/library.js
 
 function updateSearchBoxState() {
   if (window.SakuraLibrary) window.SakuraLibrary.updateSearchBoxState();
@@ -261,13 +261,13 @@ function renderMistakeSelectionHint() {
   if (window.SakuraMistakes) window.SakuraMistakes.renderSelectionHint();
 }
 
-// Profile and teacher-memory archive dialogs live in /static/archives.js
+// Profile and teacher-memory archive dialogs live in /static/js/review/archives.js
 
-// Mistake filters, focused wrong/review toggles and mistake grid live in /static/mistakes.js
+// Mistake filters, focused wrong/review toggles and mistake grid live in /static/js/review/mistakes.js
 
-// Document card rendering and management actions live in /static/documents.js
+// Document card rendering and management actions live in /static/js/content/documents.js
 
-// Textbook intensive-reading helpers live in /static/textbook.js
+// Textbook intensive-reading helpers live in /static/js/content/textbook.js
 
 function renderQuestionGrid(target, questions, emptyText = "还没有题目。先从左侧上传 PDF，或清空筛选条件。", options = {}) {
   if (window.SakuraLibrary) window.SakuraLibrary.renderGrid(target, questions, emptyText, options);
@@ -281,19 +281,19 @@ async function deleteQuestion(id) {
   if (window.SakuraLibrary) await window.SakuraLibrary.deleteQuestion(id);
 }
 
-// Question detail, crop tool and image lightbox live in /static/question_detail.js
+// Question detail, crop tool and image lightbox live in /static/js/content/question_detail.js
 
 // ==========================================================================
 // 提醒打卡
 // ==========================================================================
-// Reminder/check-in/weather helpers live in /static/reminders.js
-// AI chat/settings/memory helpers live in /static/ai_chat.js
+// Reminder/check-in/weather helpers live in /static/js/system/reminders.js
+// AI chat/settings/memory helpers live in /static/js/ai/ai_chat.js
 
-// Chapter statistics and wrong-reason radar chart live in /static/chapter_stats.js
+// Chapter statistics and wrong-reason radar chart live in /static/js/review/chapter_stats.js
 
-// Reflection summary/history helpers live in /static/reflection.js
+// Reflection summary/history helpers live in /static/js/review/reflection.js
 
-// Daily practice and custom-rule helpers live in /static/daily.js
+// Daily practice and custom-rule helpers live in /static/js/review/daily.js
 
 function setSelectOptions(selector, values, allLabel, current = "") {
   const el = $(selector);
@@ -327,11 +327,11 @@ function selectedOptionText(selector, fallback) {
   return el.selectedOptions?.[0]?.textContent?.trim() || fallback;
 }
 
-// Daily practice rule form/rendering lives in /static/daily.js
+// Daily practice rule form/rendering lives in /static/js/review/daily.js
 
-// Backup/migration helpers live in /static/backup.js
+// Backup/migration helpers live in /static/js/system/backup.js
 
-// Learning profile / AI coach helpers live in /static/coach.js
+// Learning profile / AI coach helpers live in /static/js/ai/coach.js
 
 function escapeHtml(text) {
   return String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -377,10 +377,10 @@ function setView(view) {
   updateSearchBoxState();
 }
 
-// Book/mock upload form bindings live in /static/upload.js
-// Library filters, search, locate controls and question grids live in /static/library.js
-// Dashboard filter bindings live in /static/dashboard.js
-// Mistake filter bindings live in /static/mistakes.js
+// Book/mock upload form bindings live in /static/js/content/upload.js
+// Library filters, search, locate controls and question grids live in /static/js/content/library.js
+// Dashboard filter bindings live in /static/js/content/dashboard.js
+// Mistake filter bindings live in /static/js/review/mistakes.js
 
 // 回到顶部悬浮按钮
 (function setupBackToTop() {
@@ -393,7 +393,7 @@ function setView(view) {
   btn.addEventListener("click", () => scroller.scrollTo({ top: 0, behavior: "smooth" }));
 })();
 
-// Learning profile / coach bindings live in /static/coach.js
+// Learning profile / coach bindings live in /static/js/ai/coach.js
 
 // 提醒打卡
 on("#checkinBtn", "click", doCheckin);
@@ -410,10 +410,10 @@ on("#previewWeather", "click", previewWeather);
 on("#sendWeatherPreview", "click", previewWeatherPush);
 on("#testWeatherPush", "click", testWeatherPush);
 
-// Mistake PDF export and selection bindings live in /static/mistake_export.js
+// Mistake PDF export and selection bindings live in /static/js/review/mistake_export.js
 
-// Daily practice bindings live in /static/daily.js
-// Backup/migration bindings live in /static/backup.js
+// Daily practice bindings live in /static/js/review/daily.js
+// Backup/migration bindings live in /static/js/system/backup.js
 
 document.body.addEventListener("click", async (event) => {
   const nav = event.target.closest(".nav-btn");

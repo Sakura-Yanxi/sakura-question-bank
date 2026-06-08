@@ -19,7 +19,7 @@ class ReminderSettings:
     night_time: str = "20:00"
     weather_on: str = "1"
     weather_time: str = "22:30"
-    checkin_mode: str = "cloud"
+    checkin_mode: str = "wework"
 
     def as_env(self) -> dict[str, str]:
         return {
@@ -64,9 +64,15 @@ def normalize_time(value: str, default: str) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
-def normalize_checkin_mode(value: str, default: str = "cloud") -> str:
-    text = str(value or "").strip()
-    return text if text in {"cloud", "local"} else default
+def normalize_checkin_mode(value: str, default: str = "wework") -> str:
+    text = str(value or "").strip().lower()
+    if text in {"button", "local"}:
+        return "local"
+    if text in {"push", "pushplus"}:
+        return "pushplus"
+    if text in {"wework", "wechatwork", "enterprise_wechat", "cloud", "link"}:
+        return "wework"
+    return default
 
 
 def settings_from_env(env: dict[str, str] | None = None) -> ReminderSettings:
@@ -78,7 +84,7 @@ def settings_from_env(env: dict[str, str] | None = None) -> ReminderSettings:
         night_time=normalize_time(env.get("REMIND_NIGHT_TIME", "20:00"), "20:00"),
         weather_on=normalize_onoff(env.get("REMIND_WEATHER_ON", "1")),
         weather_time=normalize_time(env.get("REMIND_WEATHER_TIME", "22:30"), "22:30"),
-        checkin_mode=normalize_checkin_mode(env.get("REMIND_CHECKIN_MODE", "cloud")),
+        checkin_mode=normalize_checkin_mode(env.get("REMIND_CHECKIN_MODE", "wework")),
     )
 
 

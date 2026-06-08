@@ -1,12 +1,56 @@
 // Reminder/check-in/weather helpers for Sakura.
 // Loaded before app.js; uses shared global helpers such as $, api and escapeHtml.
 
-const REMIND_DEFAULTS = { morningOn: "1", morningTime: "10:00", nightOn: "1", nightTime: "20:00", weatherOn: "1", weatherTime: "22:30", checkinMode: "cloud" };
+const REMIND_DEFAULTS = { morningOn: "1", morningTime: "10:00", nightOn: "1", nightTime: "20:00", weatherOn: "1", weatherTime: "22:30", checkinMode: "wework" };
 
 function normalizeCheckinMode(value) {
-  if (value === "button") return "local";
-  if (value === "link") return "cloud";
-  return value === "local" ? "local" : "cloud";
+  const text = String(value || "").trim().toLowerCase();
+  if (text === "button" || text === "local") return "local";
+  if (text === "push" || text === "pushplus") return "pushplus";
+  if (text === "wework" || text === "wechatwork" || text === "enterprise_wechat") return "wework";
+  if (text === "cloud" || text === "link") return "wework";
+  return REMIND_DEFAULTS.checkinMode;
+}
+
+function checkinModeMeta(value) {
+  const mode = normalizeCheckinMode(value);
+  const map = {
+    wework: {
+      label: "企业微信打卡",
+      channelText: "企业微信机器人",
+      desc: "企业微信机器人消息里会带打卡链接；手机点开后直接记录到服务器。",
+      note: "企业微信需要先在下方保存机器人 Webhook。公网地址要能从手机访问。",
+    },
+    pushplus: {
+      label: "PushPlus 打卡",
+      channelText: "PushPlus 微信通道",
+      desc: "PushPlus 微信消息里会带打卡链接；手机点开后直接记录到服务器。",
+      note: "PushPlus 需要先在下方保存 Token，并完成 PushPlus 账号认证。公网地址要能从手机访问。",
+    },
+    local: {
+      label: "本地按钮打卡",
+      channelText: "本地按钮",
+      desc: "只在当前浏览器点击上方按钮记录打卡，适合本机开发和离线使用。",
+      note: "本地按钮不依赖公网地址；但推送消息里的链接不会替你完成本机按钮打卡。",
+    },
+  };
+  return map[mode] || map.wework;
+}
+
+function currentCheckinMode() {
+  return normalizeCheckinMode($("#checkinMode")?.value || REMIND_DEFAULTS.checkinMode);
+}
+
+function notificationDetailText(detail) {
+  if (!detail) return "";
+  if (Array.isArray(detail)) {
+    const firstFailed = detail.find((item) => item && item.ok === false) || detail[0];
+    return notificationDetailText(firstFailed);
+  }
+  if (detail.resp) return notificationDetailText(detail.resp);
+  if (detail.code === 905) return "PushPlus 已读到 token，但账号未实名认证。你当前如果用企业微信，请切换到企业微信打卡后再测试。";
+  if (detail.errcode !== undefined && detail.errcode !== 0) return detail.errmsg || JSON.stringify(detail);
+  return detail.msg || detail.error || detail.detail || JSON.stringify(detail);
 }
 
 function normalizeRemindSettings(data = {}) {
@@ -106,45 +150,21 @@ function setCheckinUI(done) {
 }
 
 function renderRemindGuide(s, statusText = "") {
-  {
-    const mode = normalizeCheckinMode(s.checkinMode);
-    const morning = s.morningTime.split(":");
-    const night = s.nightTime.split(":");
-    const weather = (s.weatherTime || "22:30").split(":");
-    const modeText = mode === "cloud" ? "云端打卡" : "本地打卡";
-    const modeDesc = mode === "cloud"
-      ? "微信/企业微信推送里的链接会打开云端 Sakura 并记录服务器打卡，适合阿里云部署，电脑关机也不影响提醒。"
-      : "只在当前本地浏览器点击上方按钮记录打卡，适合本机开发和离线使用；微信里的链接不会自动连到本机。";
-    const guide = `
-      ${statusText ? `<p class="remind-note"><b>同步状态：</b>${escapeHtml(statusText)}</p>` : ""}
-      <p class="remind-note"><b>当前模式：</b>${modeText}。${modeDesc}</p>
-      <p>早间提醒：${s.morningOn === "1" ? `每天 ${s.morningTime}` : "已关闭"}；晚间检查：${s.nightOn === "1" ? `每天 ${s.nightTime}` : "已关闭"}；天气推送：${s.weatherOn === "1" ? `每天 ${s.weatherTime}` : "已关闭"}。</p>
-      <p><b>云端模式</b>：保存后服务器会自动重写 Sakura 专属 crontab，不需要手动进服务器改。</p>
-      <pre class="remind-code"># 当前将同步到服务器
+  const mode = normalizeCheckinMode(s.checkinMode);
+  const morning = s.morningTime.split(":");
+  const night = s.nightTime.split(":");
+  const weather = (s.weatherTime || "22:30").split(":");
+  const modeInfo = checkinModeMeta(mode);
+  const guide = `
+    ${statusText ? `<p class="remind-note"><b>同步状态：</b>${escapeHtml(statusText)}</p>` : ""}
+    <p class="remind-note"><b>当前打卡入口：</b>${modeInfo.label}。${modeInfo.desc}</p>
+    <p>早间提醒：${s.morningOn === "1" ? `每天 ${s.morningTime}` : "已关闭"}；晚间检查：${s.nightOn === "1" ? `每天 ${s.nightTime}` : "已关闭"}；天气推送：${s.weatherOn === "1" ? `每天 ${s.weatherTime}` : "已关闭"}。</p>
+    <p><b>服务器定时</b>：保存后服务器会自动重写 Sakura 专属 crontab，不需要手动进服务器改。</p>
+    <pre class="remind-code"># 当前将同步到服务器
 ${s.morningOn === "1" ? `${morning[1] || "00"} ${morning[0] || "10"} * * * notify_daily.py --morning` : "# 早间提醒已关闭"}
 ${s.nightOn === "1" ? `${night[1] || "00"} ${night[0] || "20"} * * * notify_daily.py --night` : "# 晚间检查已关闭"}
 ${s.weatherOn === "1" ? `${weather[1] || "30"} ${weather[0] || "22"} * * * notify_daily.py --weather` : "# 天气推送已关闭"}</pre>
-      <p><b>本地模式</b>：只在本页面点击“今日打卡”按钮；服务器提醒时间仍按上面配置执行。</p>
-    `;
-    $("#remindGuide").innerHTML = guide;
-    return;
-  }
-  const morning = s.morningTime.split(":");
-  const night = s.nightTime.split(":");
-  const guide = `
-    <p class="remind-note"><b>重要：</b>定时推送需要这台电脑<b>开机</b>（Windows 计划任务 / 青龙都跑在本机）。关机就不会推送，想关机也能推得把服务放到一直开机的云服务器。</p>
-    <p>① 打开 PushPlus 拿 token：<a href="https://www.pushplus.plus" target="_blank">pushplus.plus</a> 微信扫码登录 → 复制 token。</p>
-    <p>② 启动服务时带上 token（PowerShell）：</p>
-    <pre class="remind-code">$env:PUSHPLUS_TOKEN="你的token"
-python app.py</pre>
-    <p>③ <b>Windows 计划任务</b>（任务计划程序 → 创建基本任务 → 每天）建两个：</p>
-    <pre class="remind-code"># 早安 ${s.morningTime}：程序填 python，参数填
-notify_daily.py --morning
-# 晚间 ${s.nightTime}：程序填 python，参数填
-notify_daily.py --night</pre>
-    <p>“起始位置”填项目文件夹路径。${s.morningOn === "0" ? "（早安提醒当前关闭，可不建早安任务）" : ""}${s.nightOn === "0" ? "（晚间检查当前关闭，可不建晚间任务）" : ""}</p>
-    <p>④ <b>青龙面板</b>：环境变量加 <code>PUSHPLUS_TOKEN</code>，定时任务命令 <code>task notify_daily.py --morning</code>（cron <code>0 ${morning[1]||0} ${morning[0]||10} * * *</code>）与 <code>task notify_daily.py --night</code>（cron <code>0 ${night[1]||0} ${night[0]||20} * * *</code>）。</p>
-    <p class="remind-note">打卡方式：当前选「${s.checkinMode === "link" ? "微信里点链接" : "App 里点按钮"}」。${s.checkinMode === "link" ? "手机点链接需 app 能被手机访问（同 WiFi 用电脑局域网 IP，或公网地址）。" : "在本页点上方按钮即可打卡，不需要公网。"}</p>
+    <p><b>配置提示</b>：${modeInfo.note}</p>
   `;
   $("#remindGuide").innerHTML = guide;
 }
@@ -160,27 +180,30 @@ async function doCheckin() {
 
 async function testPush(kind) {
   const hint = $("#pushTestHint");
-  hint.textContent = "正在发送测试推送…";
+  const mode = currentCheckinMode();
+  const modeInfo = checkinModeMeta(mode);
+  hint.textContent = `正在发送${modeInfo.label}测试推送…`;
   try {
     const res = await fetch(`/api/push/${kind}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{}",
+      body: JSON.stringify({ checkin_mode: mode }),
     });
     const r = await res.json();
     if (r.configured === false) {
-      hint.textContent = "未配置推送通道：请先配置企业微信、PushPlus 或邮箱 SMTP。";
+      hint.textContent = mode === "wework"
+        ? "未配置企业微信机器人 Webhook：请在下方推送通道配置里保存企业微信机器人。"
+        : mode === "pushplus"
+          ? "未配置 PushPlus Token：请在下方推送通道配置里保存 PushPlus Token。"
+          : "未配置推送通道：请先配置企业微信、PushPlus 或邮箱 SMTP。";
       $("#pushConfigBadge").textContent = "未配置推送";
       $("#pushConfigBadge").className = "tag status wrong";
     } else if (r.ok) {
-      hint.textContent = "已发送，请到企业微信、PushPlus 或邮箱收件箱查看。";
+      hint.textContent = `已发送，请到${modeInfo.channelText}查看。`;
       $("#pushConfigBadge").textContent = "推送已配置";
       $("#pushConfigBadge").className = "tag status";
     } else {
-      const detail = r.detail || {};
-      hint.textContent = detail.code === 905
-        ? "PushPlus 已读到 token，但账号未实名认证，需先完成实名认证。"
-        : "发送失败：" + (detail.msg || JSON.stringify(detail || ""));
+      hint.textContent = "发送失败：" + notificationDetailText(r.detail || r);
     }
   } catch (e) {
     hint.textContent = "请求失败：" + e.message;
@@ -250,7 +273,9 @@ async function loadNotificationSettings() {
         data.has_pushplus ? "PushPlus" : "",
         data.has_email ? "邮箱" : "",
       ].filter(Boolean).join("、");
-      $("#notifySettingsHint").textContent = channels ? `当前通道：${channels}。不填写的密钥会保留原值。` : "还没有推送通道；填写企业微信 Webhook、PushPlus Token 或邮箱 SMTP 后保存。";
+      $("#notifySettingsHint").textContent = channels
+        ? `当前已保存：${channels}。只用企业微信时，第一块保持已保存即可；空着保存不会清空原值。`
+        : "还没有推送通道；推荐先填写第一块的公网地址和企业微信机器人 Webhook。";
     }
   } catch (error) {
     $("#notifySettingsBadge").textContent = "配置读取失败";
@@ -377,20 +402,22 @@ async function previewWeatherPush() {
 async function testWeatherPush() {
   const city = $("#weatherCity")?.value.trim();
   const box = $("#weatherPreviewBox");
-  box.textContent = "正在发送天气测试推送...";
+  const mode = currentCheckinMode();
+  const modeInfo = checkinModeMeta(mode);
+  box.textContent = `正在发送${modeInfo.label}天气测试推送...`;
   try {
     const data = await api("/api/push/weather", {
       method: "POST",
-      body: JSON.stringify({ city }),
+      body: JSON.stringify({ city, checkin_mode: mode }),
     });
     if (data.ok) {
-      box.textContent = `已发送天气推送：${data.title}\n\n请到企业微信、PushPlus 或邮箱通道查看。`;
+      box.textContent = `已发送天气推送：${data.title}\n\n请到${modeInfo.channelText}查看。`;
       if ($("#pushConfigBadge")) {
         $("#pushConfigBadge").textContent = "推送已配置";
         $("#pushConfigBadge").className = "tag status";
       }
     } else {
-      box.textContent = "发送失败：" + JSON.stringify(data.detail || data, null, 2);
+      box.textContent = "发送失败：" + notificationDetailText(data.detail || data);
     }
   } catch (error) {
     box.textContent = error.message;
