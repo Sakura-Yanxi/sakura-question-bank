@@ -97,6 +97,9 @@ This project is intentionally local-first and lightweight, but new features shou
 - `static/daily.js`
   - Daily practice rendering and custom practice-rule form/list UI helpers.
   - Loaded after `app.js`; exposes `SakuraDaily.load()` and `SakuraDaily.populateFilters()` for refresh and view navigation.
+- `static/coach.js`
+  - Learning-profile settings, profile refresh, plan generation and AI-coach plan rendering.
+  - Loaded after `app.js`; exposes `SakuraCoach.load()` for view navigation.
 - `static/backup.js`
   - Backup export/import and migration-panel bindings.
   - Loaded after `app.js` so shared helpers and refresh hooks are available.
