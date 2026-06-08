@@ -91,6 +91,9 @@ This project is intentionally local-first and lightweight, but new features shou
 - `static/reflection.js`
   - Reflection preview, AI-generated reflection output and history archive UI helpers.
   - Loaded after `app.js`; exposes `SakuraReflection.load()` for view navigation.
+- `static/textbook.js`
+  - Textbook upload, page navigation, paragraph selection, page-image lightbox and textbook AI chat UI helpers.
+  - Loaded after `app.js`; exposes `SakuraTextbook.load()` for refresh and view navigation.
 - `static/backup.js`
   - Backup export/import and migration-panel bindings.
   - Loaded after `app.js` so shared helpers and refresh hooks are available.
