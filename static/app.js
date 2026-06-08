@@ -671,82 +671,7 @@ async function rescanDocument(id) {
 // Reminder/check-in/weather helpers live in /static/reminders.js
 // AI chat/settings/memory helpers live in /static/ai_chat.js
 
-async function loadChapterStats(documentId) {
-  const explicitDoc = documentId ? state.documents.find((doc) => doc.id === documentId) : null;
-  if (explicitDoc && documentKind(explicitDoc) === "模拟卷") {
-    $("#chapterStatsGrid").innerHTML = "<p>章节统计仅支持做题本，模拟卷请到题库或模拟卷页面查看。</p>";
-    return;
-  }
-  const id =
-    documentId ||
-    $("#statsDocumentSelect").value ||
-    state.documents.find((doc) => documentKind(doc) !== "模拟卷")?.id;
-  if (!id) {
-    $("#chapterStatsGrid").innerHTML = "<p>还没有做题本。先上传 PDF。</p>";
-    return;
-  }
-  $("#statsDocumentSelect").value = id;
-  const data = await api(`/api/documents/${id}/chapter-stats`);
-  $("#chapterStatsGrid").innerHTML =
-    `<article class="chapter-card radar-card">
-      <h3>错因雷达图</h3>
-      ${renderRadar(data.meta_tags || [])}
-    </article>` +
-    data.chapters
-      .map((chapter) => {
-        const deg = Math.round((chapter.correct_rate / 100) * 360);
-        return `
-        <article class="chapter-card">
-          <h3>${chapter.chapter}</h3>
-          <div class="pie" data-label="${chapter.correct_rate}%" style="background: conic-gradient(var(--accent) 0deg ${deg}deg, var(--accent-2) ${deg}deg 360deg)"></div>
-          <div class="legend">
-            <span>共 ${chapter.total} 题</span>
-            <span>做对 ${chapter.correct || 0} · 做错 ${chapter.wrong || 0}</span>
-            <span>需复习 ${chapter.review || 0} · 未做 ${chapter.todo || 0}</span>
-          </div>
-        </article>`;
-      })
-      .join("") || "<p>这套做题本还没有章节数据。</p>";
-  typesetMath($("#chapterStatsGrid"));
-}
-
-function renderRadar(items) {
-  const size = 260; // 适当放动画布，给文字留出呼吸空间
-  const center = size / 2;
-  const radius = 80;
-  const points = items.map((item, index) => {
-    const angle = -Math.PI / 2 + (index * 2 * Math.PI) / items.length;
-    const value = item.ratio || 0;
-    
-    // 🌸 动态文字排版算法：根据角度决定向外推的方向
-    let anchor = "middle";
-    if (Math.cos(angle) < -0.1) anchor = "end";   // 左半边的字靠右对齐（向左推）
-    if (Math.cos(angle) > 0.1) anchor = "start";  // 右半边的字靠左对齐（向右推）
-
-    let dy = "0.3em";
-    if (Math.sin(angle) < -0.1) dy = "-0.5em"; // 顶部的字往上推
-    if (Math.sin(angle) > 0.1) dy = "1em";     // 底部的字往下推
-
-    return {
-      ...item,
-      x: center + Math.cos(angle) * radius * value,
-      y: center + Math.sin(angle) * radius * value,
-      ax: center + Math.cos(angle) * radius,
-      ay: center + Math.sin(angle) * radius,
-      lx: center + Math.cos(angle) * (radius + 15), // 距离顶点的缓冲距离
-      ly: center + Math.sin(angle) * (radius + 15),
-      anchor, dy
-    };
-  });
-  const polygon = points.map((p) => `${p.x},${p.y}`).join(" ");
-  return `
-    <svg class="radar" viewBox="0 0 ${size} ${size}" role="img" aria-label="错因雷达图">
-      <polygon class="radar-grid" points="${points.map((p) => `${p.ax},${p.ay}`).join(" ")}"></polygon>
-      ${points.map((p) => `<line class="radar-axis" x1="${center}" y1="${center}" x2="${p.ax}" y2="${p.ay}"></line>`).join("")}
-      <polygon class="radar-area" points="${polygon}"></polygon>
-      ${points.map((p) => `<text x="${p.lx}" y="${p.ly}" text-anchor="${p.anchor}" dy="${p.dy}">${p.tag} ${p.count}</text>`).join("")}
-    </svg>`;
-}
+// Chapter statistics and wrong-reason radar chart live in /static/chapter_stats.js
 
 // Reflection summary/history helpers live in /static/reflection.js
 
@@ -833,7 +758,7 @@ function setView(view) {
   $("#viewTitle").textContent = titles[view][0];
   $("#viewSubtitle").textContent = titles[view][1];
   if (view === "daily" && window.SakuraDaily) window.SakuraDaily.load();
-  if (view === "chapterStats") loadChapterStats();
+  if (view === "chapterStats" && window.SakuraChapterStats) window.SakuraChapterStats.load();
   if (view === "reflection" && window.SakuraReflection) window.SakuraReflection.load();
   if (view === "coach" && window.SakuraCoach) window.SakuraCoach.load();
   if (view === "aiChat" && window.loadAiChatPanel) window.loadAiChatPanel();
@@ -953,10 +878,6 @@ $("#mistakeCategoryFilter").addEventListener("change", async (event) => {
 $("#mistakeChapterFilter").addEventListener("change", async (event) => {
   state.mistakeChapter = event.target.value;
   await loadMistakes();
-});
-
-$("#statsDocumentSelect").addEventListener("change", async (event) => {
-  await loadChapterStats(event.target.value);
 });
 
 $("#statusFilter").addEventListener("change", async (event) => {
@@ -1116,7 +1037,7 @@ document.body.addEventListener("click", async (event) => {
   const statsDocBtn = event.target.closest("[data-stats-doc]");
   if (statsDocBtn) {
     setView("chapterStats");
-    await loadChapterStats(statsDocBtn.dataset.statsDoc);
+    if (window.SakuraChapterStats) await window.SakuraChapterStats.load(statsDocBtn.dataset.statsDoc);
   }
 
   const rescanDocBtn = event.target.closest("[data-rescan-doc]");

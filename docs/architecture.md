@@ -91,6 +91,9 @@ This project is intentionally local-first and lightweight, but new features shou
 - `static/archives.js`
   - Profile archive and teacher-memory archive dialog helpers.
   - Loaded after `app.js` and before `coach.js`; exposes archive dialog functions used by the coach panel.
+- `static/chapter_stats.js`
+  - Chapter correct-rate cards and wrong-reason radar chart rendering.
+  - Loaded after `app.js`; exposes `SakuraChapterStats.load()` for view navigation and document-card stats links.
 - `static/ai_chat.js`
   - AI chat, LLM settings, teacher-memory and mentor-experience UI helpers.
   - Loaded after `app.js` so shared render/API helpers are initialized; exposes `loadAiChatPanel()` for view navigation.
