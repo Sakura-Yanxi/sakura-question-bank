@@ -103,6 +103,9 @@ This project is intentionally local-first and lightweight, but new features shou
 - `static/coach.js`
   - Learning-profile settings, profile refresh, plan generation and AI-coach plan rendering.
   - Loaded after `app.js`; exposes `SakuraCoach.load()` for view navigation.
+- `static/mistake_export.js`
+  - Mistake selection controls and filtered/selected PDF export UI helpers.
+  - Loaded after `app.js`; exposes `SakuraMistakeExport.exportPdf()` for future export entry points.
 - `static/backup.js`
   - Backup export/import and migration-panel bindings.
   - Loaded after `app.js` so shared helpers and refresh hooks are available.
