@@ -94,6 +94,9 @@ This project is intentionally local-first and lightweight, but new features shou
 - `static/documents.js`
   - Book/mock-paper document cards plus edit, delete and chapter-rescan actions.
   - Loaded after `app.js`; exposes `SakuraDocuments.render()` so shared refresh can update document grids.
+- `static/library.js`
+  - Library question loading, scoped filters, search, question cards, quick locate and question update/delete actions.
+  - Loaded after `app.js` and before `mistakes.js`; exposes compatibility functions used by question detail, coach and export modules.
 - `static/archives.js`
   - Profile archive and teacher-memory archive dialog helpers.
   - Loaded after `app.js` and before `coach.js`; exposes archive dialog functions used by the coach panel.

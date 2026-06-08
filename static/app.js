@@ -198,30 +198,7 @@ async function loadDocuments() {
 }
 
 async function loadQuestions() {
-  if (state.view === "library" && !hasActiveLibraryFilter()) {
-    state.questions = [];
-    state.stats = {};
-    state.subjectStats = {};
-    state.categories = [];
-    state.chapters = [];
-    renderAll();
-    return;
-  }
-  const params = new URLSearchParams();
-  if (state.category) params.set("category", state.category);
-  if (state.status) params.set("status", state.status);
-  if (state.documentId) params.set("document_id", state.documentId);
-  if (state.subject) params.set("subject", state.subject);
-  if (state.chapter) params.set("chapter", state.chapter);
-  if (state.search) params.set("search", state.search);
-  const data = await api(`/api/questions?${params}`);
-  state.questions = data.questions;
-  state.stats = data.stats;
-  state.subjectStats = data.subject_stats;
-  state.categories = data.categories;
-  state.chapters = data.chapters;
-  state.subjects = data.subjects;
-  renderAll();
+  if (window.SakuraLibrary) await window.SakuraLibrary.load();
 }
 
 async function refresh() {
@@ -234,10 +211,12 @@ async function refresh() {
 }
 
 function hasActiveLibraryFilter() {
+  if (window.SakuraLibrary) return window.SakuraLibrary.hasActiveFilter();
   return Boolean(state.category || state.status || state.documentId || state.subject || state.chapter || (canSearchLibrary() && state.search));
 }
 
 function canSearchLibrary() {
+  if (window.SakuraLibrary) return window.SakuraLibrary.canSearch();
   return Boolean(state.documentId || state.subject || state.status);
 }
 
@@ -255,18 +234,7 @@ function hasActiveMistakeFilter() {
 }
 
 function renderAll() {
-  renderQuestionFilters();
-  if (window.SakuraDashboard) window.SakuraDashboard.render();
-  const regularQuestions = state.questions.filter((q) => questionKind(q) !== "模拟卷");
-  const mockQuestions = state.questions.filter((q) => questionKind(q) === "模拟卷");
-  $("#questionCountBadge").textContent = `${regularQuestions.length} 题`;
-  $("#mockCountBadge").textContent = `${mockQuestions.length} 题`;
-  const libraryEmptyText = hasActiveLibraryFilter()
-    ? "当前筛选下没有题目。可以换一个科目、资料或清空筛选条件。"
-    : "请先选择科目、资料或掌握状态后查看题目。";
-  renderQuestionGrid("#questionGrid", regularQuestions, libraryEmptyText);
-  renderQuestionGrid("#mockQuestionGrid", mockQuestions, "还没有模拟卷题目。先上传整卷 PDF。");
-  if (state.view === "mistakes") renderMistakeGrid();
+  if (window.SakuraLibrary) window.SakuraLibrary.render();
 }
 
 function renderDocumentFilters() {
@@ -279,46 +247,10 @@ function renderDocumentFilters() {
 
 // Dashboard filters, cards and distribution stats live in /static/dashboard.js
 
-function renderQuestionFilters() {
-  const docs = state.documents.filter((doc) => !state.subject || doc.subject === state.subject);
-  const scopedReady = Boolean(state.subject || state.documentId);
-  updateSearchBoxState();
-  $("#documentFilter").innerHTML = `<option value="">请选择资料</option>${docs
-    .map((doc) => `<option value="${doc.id}" ${doc.id === state.documentId ? "selected" : ""}>${documentLabel(doc)}</option>`)
-    .join("")}`;
-  $("#subjectFilter").innerHTML = `<option value="">请选择科目</option>${state.subjects
-    .map((subject) => `<option ${subject === state.subject ? "selected" : ""}>${subject}</option>`)
-    .join("")}`;
-  if (scopedReady) {
-    unlockSelect("#categoryFilter");
-    unlockSelect("#chapterFilter");
-    $("#categoryFilter").innerHTML = `<option value="">全部知识点</option>${state.categories
-      .map((category) => `<option ${category === state.category ? "selected" : ""}>${category}</option>`)
-      .join("")}`;
-    $("#chapterFilter").innerHTML = `<option value="">全部章节</option>${state.chapters
-      .map((chapter) => `<option ${chapter === state.chapter ? "selected" : ""}>${chapter}</option>`)
-      .join("")}`;
-  } else {
-    state.category = "";
-    state.chapter = "";
-    setSelectLocked("#categoryFilter", "请先选择科目或资料");
-    setSelectLocked("#chapterFilter", "请先选择科目或资料");
-  }
-  const statusEmptyOption = $("#statusFilter option[value='']");
-  if (statusEmptyOption) statusEmptyOption.textContent = "请选择掌握状态";
-  $("#statusFilter").value = state.status;
-}
+// Library filters, search, locate controls and question grids live in /static/library.js
 
 function updateSearchBoxState() {
-  const input = $("#searchInput");
-  if (!input) return;
-  const enabled = state.view === "library" && canSearchLibrary();
-  input.disabled = !enabled;
-  input.placeholder = enabled ? "在当前范围内搜题号、章节、错因或备注..." : "先选科目或资料后，在当前范围内搜索...";
-  if (!enabled && state.search) {
-    state.search = "";
-    input.value = "";
-  }
+  if (window.SakuraLibrary) window.SakuraLibrary.updateSearchBoxState();
 }
 
 function renderMistakeGrid() {
@@ -338,66 +270,15 @@ function renderMistakeSelectionHint() {
 // Textbook intensive-reading helpers live in /static/textbook.js
 
 function renderQuestionGrid(target, questions, emptyText = "还没有题目。先从左侧上传 PDF，或清空筛选条件。", options = {}) {
-  $(target).innerHTML =
-    questions.length
-      ? questions
-          .map(
-            (q) => `
-        <article class="question-card ${options.selectable ? "selectable-question" : ""}" id="qcard-${q.id}">
-          ${options.selectable ? `
-          <label class="question-select">
-            <input type="checkbox" data-select-mistake="${q.id}" ${state.selectedMistakes.has(q.id) ? "checked" : ""} />
-            <span></span>
-          </label>` : ""}
-          <div class="thumb" data-open="${q.id}">
-            <img src="${q.image_url}" alt="第 ${q.page_number} 页题目" loading="lazy" />
-          </div>
-          <div class="card-body">
-            <div class="meta">
-              <span><b class="qno">第${q.seq_no || q.page_number}题</b> · ${q.document_title || q.filename || "做题本"}${q.question_no ? ` · 原题${q.question_no}` : ""}</span>
-              <span class="tag status ${statusClass(q.status)}">${q.status}</span>
-            </div>
-            <strong>${q.category}</strong>
-            <span class="tag">${q.subject || "未分类"} · ${q.chapter || "未识别章节"}</span>
-            <span class="tag kind ${questionKind(q) === "模拟卷" ? "mock" : "paper"}">${questionKind(q)}</span>
-            ${reviewTag(q)}
-            <p class="snippet">${snippet(q.ocr_text)}</p>
-            <div class="actions">
-              <button data-status="做对" data-id="${q.id}">做对</button>
-              <button data-status="做错" data-id="${q.id}">做错</button>
-              <button class="danger" data-delete-question="${q.id}">删除</button>
-            </div>
-          </div>
-        </article>`
-          )
-          .join("")
-      : `<p class="empty-note">${emptyText}</p>`;
+  if (window.SakuraLibrary) window.SakuraLibrary.renderGrid(target, questions, emptyText, options);
 }
 
 async function updateQuestion(id, payload) {
-  try {
-    await api(`/api/questions/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-    await refresh();
-  } catch (error) {
-    alert(error.message);
-    throw error;
-  }
+  if (window.SakuraLibrary) await window.SakuraLibrary.update(id, payload);
 }
 
 async function deleteQuestion(id) {
-  if (!confirm("确定删除这道题吗？这个操作会移除题目记录和对应页面图片。")) return;
-  const result = await api(`/api/questions/${id}`, { method: "DELETE" });
-  if (result.document_deleted && result.document_id) {
-    if (state.documentId === result.document_id) {
-      state.documentId = "";
-      state.category = "";
-      state.chapter = "";
-    }
-    if (state.dashboardDocumentId === result.document_id) {
-      state.dashboardDocumentId = "";
-    }
-  }
-  await refresh();
+  if (window.SakuraLibrary) await window.SakuraLibrary.deleteQuestion(id);
 }
 
 // Question detail, crop tool and image lightbox live in /static/question_detail.js
@@ -460,17 +341,7 @@ function escapeAttr(text) {
 }
 
 async function gotoLibraryFilter(filter) {
-  state.status = filter.status || "";
-  state.category = filter.category || "";
-  state.subject = filter.subject || "";
-  state.chapter = "";
-  state.documentId = "";
-  setView("library");
-  // 同步下拉框显示
-  if ($("#statusFilter")) $("#statusFilter").value = state.status;
-  if ($("#subjectFilter")) $("#subjectFilter").value = state.subject;
-  if ($("#categoryFilter")) $("#categoryFilter").value = state.category;
-  await loadQuestions();
+  if (window.SakuraLibrary) await window.SakuraLibrary.gotoFilter(filter);
 }
 
 function setView(view) {
@@ -507,87 +378,9 @@ function setView(view) {
 }
 
 // Book/mock upload form bindings live in /static/upload.js
-
-$("#documentFilter").addEventListener("change", async (event) => {
-  state.documentId = event.target.value;
-  const doc = state.documents.find((item) => item.id === state.documentId);
-  if (doc) state.subject = doc.subject || state.subject;
-  state.category = "";
-  state.chapter = "";
-  await loadQuestions();
-});
-
+// Library filters, search, locate controls and question grids live in /static/library.js
 // Dashboard filter bindings live in /static/dashboard.js
-
-$("#subjectFilter").addEventListener("change", async (event) => {
-  state.subject = event.target.value;
-  const docs = state.documents.filter((doc) => !state.subject || doc.subject === state.subject);
-  if (state.documentId && !docs.some((doc) => doc.id === state.documentId)) {
-    state.documentId = "";
-  }
-  state.category = "";
-  state.chapter = "";
-  await loadQuestions();
-});
-
-$("#categoryFilter").addEventListener("change", async (event) => {
-  state.category = event.target.value;
-  state.chapter = "";
-  await loadQuestions();
-});
-
-$("#chapterFilter").addEventListener("change", async (event) => {
-  state.chapter = event.target.value;
-  await loadQuestions();
-});
-
 // Mistake filter bindings live in /static/mistakes.js
-
-$("#statusFilter").addEventListener("change", async (event) => {
-  state.status = event.target.value;
-  await loadQuestions();
-});
-
-$("#searchInput").addEventListener("input", async (event) => {
-  if (event.target.disabled) return;
-  state.search = event.target.value.trim();
-  clearTimeout(window.searchTimer);
-  window.searchTimer = setTimeout(loadQuestions, 250);
-});
-
-function locateQuestionByNo(raw) {
-  const hint = $("#locateHint");
-  const value = String(raw || "").trim().replace(/^0+/, "");
-  if (!value) { if (hint) hint.textContent = ""; return; }
-  // 先按每本序号定位，再按手填的原书题号
-  let matches = (state.questions || []).filter((q) => String(q.seq_no || "") === value);
-  let byPrinted = false;
-  if (!matches.length) {
-    matches = (state.questions || []).filter((q) => String(q.question_no || "") === value);
-    byPrinted = matches.length > 0;
-  }
-  if (!matches.length) {
-    if (hint) hint.textContent = `当前筛选下没有第 ${value} 题`;
-    return;
-  }
-  const target = matches[0];
-  const card = document.getElementById(`qcard-${target.id}`);
-  if (card) {
-    card.scrollIntoView({ behavior: "smooth", block: "center" });
-    card.classList.remove("qcard-flash");
-    void card.offsetWidth; // 重置动画
-    card.classList.add("qcard-flash");
-  }
-  if (hint) hint.textContent = byPrinted ? `按原书题号定位` : (matches.length > 1 ? `共 ${matches.length} 题命中，已定位第一题` : "");
-}
-
-$("#questionLocate").addEventListener("keydown", (event) => {
-  if (event.key === "Enter") locateQuestionByNo(event.target.value);
-});
-$("#questionLocate").addEventListener("input", (event) => {
-  clearTimeout(window.locateTimer);
-  window.locateTimer = setTimeout(() => locateQuestionByNo(event.target.value), 350);
-});
 
 // 回到顶部悬浮按钮
 (function setupBackToTop() {
@@ -618,33 +411,6 @@ on("#sendWeatherPreview", "click", previewWeatherPush);
 on("#testWeatherPush", "click", testWeatherPush);
 
 // Mistake PDF export and selection bindings live in /static/mistake_export.js
-
-$("#showAllQuestions").addEventListener("click", async () => {
-  state.documentId = "";
-  state.subject = "";
-  state.category = "";
-  state.chapter = "";
-  state.status = "";
-  state.search = "";
-  $("#searchInput").value = "";
-  clearTimeout(window.searchTimer);
-  setView("library");
-  await loadQuestions();
-});
-
-$("#showMockQuestions").addEventListener("click", async () => {
-  state.documentId = "";
-  state.subject = "";
-  state.category = "";
-  state.chapter = "";
-  state.status = "";
-  state.search = "";
-  $("#searchInput").value = "";
-  clearTimeout(window.searchTimer);
-  setView("library");
-  await loadQuestions();
-  $("#mockQuestionGrid").scrollIntoView({ behavior: "smooth", block: "start" });
-});
 
 // Daily practice bindings live in /static/daily.js
 // Backup/migration bindings live in /static/backup.js
