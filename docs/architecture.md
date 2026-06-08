@@ -85,6 +85,9 @@ This project is intentionally local-first and lightweight, but new features shou
 - `static/reminders.js`
   - Reminder/check-in/weather/notification settings UI helpers.
   - Loaded before `app.js`; functions execute after shared browser helpers are initialized.
+- `static/ai_chat.js`
+  - AI chat, LLM settings, teacher-memory and mentor-experience UI helpers.
+  - Loaded after `app.js` so shared render/API helpers are initialized; exposes `loadAiChatPanel()` for view navigation.
 - `static/backup.js`
   - Backup export/import and migration-panel bindings.
   - Loaded after `app.js` so shared helpers and refresh hooks are available.
