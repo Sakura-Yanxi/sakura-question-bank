@@ -94,6 +94,9 @@ This project is intentionally local-first and lightweight, but new features shou
 - `static/chapter_stats.js`
   - Chapter correct-rate cards and wrong-reason radar chart rendering.
   - Loaded after `app.js`; exposes `SakuraChapterStats.load()` for view navigation and document-card stats links.
+- `static/upload.js`
+  - Book and mock-paper PDF upload form bindings.
+  - Loaded after `app.js`; refreshes shared document/question state after imports.
 - `static/ai_chat.js`
   - AI chat, LLM settings, teacher-memory and mentor-experience UI helpers.
   - Loaded after `app.js` so shared render/API helpers are initialized; exposes `loadAiChatPanel()` for view navigation.
