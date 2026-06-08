@@ -6,7 +6,7 @@ import urllib.request
 from datetime import date, datetime
 from typing import Callable
 
-import sakura_email
+from sakura.system import email as sakura_email
 
 
 PUSHPLUS_URL = "https://www.pushplus.plus/send"

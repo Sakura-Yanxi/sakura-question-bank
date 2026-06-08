@@ -15,19 +15,19 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import sakura_backup
-import sakura_ai
-import sakura_classify
-import sakura_coach
-import sakura_documents
-import sakura_email
-import sakura_http
-import sakura_import
-import sakura_pdf
-import sakura_questions
-import sakura_routes
-import sakura_teacher_memory
-import sakura_textbook
+from sakura.ai import client as sakura_ai
+from sakura.ai import coach as sakura_coach
+from sakura.ai import teacher_memory as sakura_teacher_memory
+from sakura.content import classify as sakura_classify
+from sakura.content import documents as sakura_documents
+from sakura.content import importer as sakura_import
+from sakura.content import pdf as sakura_pdf
+from sakura.content import questions as sakura_questions
+from sakura.content import textbook as sakura_textbook
+from sakura.core import http as sakura_http
+from sakura.core import routes as sakura_routes
+from sakura.system import backup as sakura_backup
+from sakura.system import email as sakura_email
 
 import app
 

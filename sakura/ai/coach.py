@@ -7,7 +7,7 @@ import traceback
 from datetime import date, datetime, timedelta
 from typing import Callable
 
-import sakura_profile
+from sakura.ai import profile as sakura_profile
 
 
 COACH_STATE_ALLOWED_FIELDS = {

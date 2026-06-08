@@ -3,9 +3,9 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-import sakura_classify
-import sakura_pdf
-import sakura_questions
+from sakura.content import classify as sakura_classify
+from sakura.content import pdf as sakura_pdf
+from sakura.content import questions as sakura_questions
 
 
 def process_question_slice(

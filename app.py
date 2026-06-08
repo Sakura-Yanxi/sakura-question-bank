@@ -23,43 +23,44 @@ warnings.filterwarnings("ignore", message="'cgi' is deprecated.*", category=Depr
 import cgi
 
 import fitz
-from sakura_pdf import (
+from sakura.content.pdf import (
     PreviousQuestionState,
     crop_image_by_ratio,
     page_range,
     render_page_image,
     save_uploaded_pdf,
 )
-import sakura_notifications
-import sakura_email
-import sakura_weather
-import sakura_reminders
-import sakura_config
-import sakura_settings
-import sakura_ai
-import sakura_profile
-import sakura_coach
-import sakura_migration
-import sakura_export
-import sakura_backup
-import sakura_reflection
-import sakura_daily
-import sakura_textbook
-import sakura_filters
-import sakura_documents
-import sakura_retention
-import sakura_models
-import sakura_auth
-import sakura_db
-import sakura_classify
-import sakura_http
-import sakura_parse
-import sakura_questions
-import sakura_insights
-import sakura_hints
-import sakura_teacher_memory
-import sakura_import
-import sakura_routes
+from sakura.ai import client as sakura_ai
+from sakura.ai import coach as sakura_coach
+from sakura.ai import profile as sakura_profile
+from sakura.ai import teacher_memory as sakura_teacher_memory
+from sakura.content import classify as sakura_classify
+from sakura.content import documents as sakura_documents
+from sakura.content import filters as sakura_filters
+from sakura.content import importer as sakura_import
+from sakura.content import models as sakura_models
+from sakura.content import pdf as sakura_pdf
+from sakura.content import questions as sakura_questions
+from sakura.content import textbook as sakura_textbook
+from sakura.core import auth as sakura_auth
+from sakura.core import config as sakura_config
+from sakura.core import db as sakura_db
+from sakura.core import http as sakura_http
+from sakura.core import parse as sakura_parse
+from sakura.core import routes as sakura_routes
+from sakura.review import daily as sakura_daily
+from sakura.review import export as sakura_export
+from sakura.review import hints as sakura_hints
+from sakura.review import insights as sakura_insights
+from sakura.review import reflection as sakura_reflection
+from sakura.review import retention as sakura_retention
+from sakura.system import backup as sakura_backup
+from sakura.system import email as sakura_email
+from sakura.system import migration as sakura_migration
+from sakura.system import notifications as sakura_notifications
+from sakura.system import reminders as sakura_reminders
+from sakura.system import settings as sakura_settings
+from sakura.system import weather as sakura_weather
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"

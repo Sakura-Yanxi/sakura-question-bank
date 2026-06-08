@@ -1,161 +1,109 @@
 # Sakura Study OS Architecture Notes
 
-This project is intentionally local-first and lightweight, but new features should not keep growing the two largest files forever.
+Sakura 做题集是一个本地优先的个人学习工作台。当前代码结构的目标是保持轻量，但避免所有功能继续堆在根目录或单个大文件里。
 
-## Current Boundaries
+## Backend Layout
 
-- `app.py`
-  - HTTP routes and legacy orchestration.
-  - Database migrations and query helpers.
-  - AI coach, question import, daily practice, reminders, textbooks and exports.
-- `sakura_config.py`
-  - Local `.env` loading and in-place secret/config updates.
-- `sakura_settings.py`
-  - Runtime settings payload shaping, secret masking and public URL validation.
-- `sakura_ai.py`
-  - OpenAI-compatible chat client and JSON response extraction.
-  - AI teacher protocol, intent routing, strategy selection and memory compression.
-- `sakura_profile.py`
-  - Learner-profile statistics, local profile synthesis and optional AI profile polishing.
-  - Pure study-phase, capacity-estimation and local-plan narrative calculations.
-- `sakura_coach.py`
-  - AI-coach settings state, review backlog, weak-point ranking, daily action planning and optional AI narrative.
-  - AI-teacher context assembly and recent wrong/review evidence queries.
-- `sakura_export.py`
-  - Mistake-export filter SQL, selected-row loading and printable PDF rendering.
-  - Cover generation, image compression and CJK title rasterization.
-- `sakura_backup.py`
-  - Migration ZIP export/restore filesystem operations and archive safety checks.
-- `sakura_migration.py`
-  - In-memory migration job status tracking and background restore-job orchestration.
-- `sakura_reflection.py`
-  - Weekly/monthly reflection statistics, local narrative, AI prompt assembly and persistence.
-- `sakura_daily.py`
-  - Daily-practice rules, due-review grouping, practice batches and quick feedback updates.
-- `sakura_textbook.py`
-  - Textbook PDF import, page-image rendering orchestration and paragraph indexing.
-  - Textbook page context assembly and AI explanation prompt construction.
-- `sakura_filters.py`
-  - Question/document filter SQL assembly and scoped dropdown option queries.
-- `sakura_documents.py`
-  - Document listing, document metadata updates and question/document deletion cleanup.
-  - Safe data-directory file deletion and empty-document pruning.
-- `sakura_questions.py`
-  - Question index/detail SQL queries and category/subject aggregate statistics.
-- `sakura_retention.py`
-  - Review interval constants, wrong-status detection and meta-tag normalization.
-- `sakura_models.py`
-  - Question/document JSON shaping, document-kind normalization and meta-tag statistics.
-- `sakura_auth.py`
-  - Password-gated login page rendering and signed browser session tokens.
-- `sakura_http.py`
-  - Minimal JSON, text and redirect response helpers for `BaseHTTPRequestHandler`.
-- `sakura_parse.py`
-  - Small request/form parsing helpers for integers, boolean flags and bounded values.
-- `sakura_db.py`
-  - Data directory setup, SQLite connection creation, schema bootstrap and additive migrations.
-- `sakura_classify.py`
-  - Local keyword classification, chapter cleanup, duplicate chapter normalization and PDF-page chapter extraction.
-- `sakura_insights.py`
-  - Wrong-question insight fallback, AI insight normalization, analysis prompt assembly and insight persistence.
-- `sakura_hints.py`
-  - Scaffolding hints, full-solution prompt assembly and progressive variant generation.
-- `sakura_teacher_memory.py`
-  - AI teacher memory CRUD, mentor-experience parsing and relevance ranking.
-- `sakura_reminders.py`
-  - Reminder settings normalization.
-  - Sakura-managed crontab block generation and installation.
-- `sakura_pdf.py`
-  - PDF page rendering.
-  - Simulated-exam question-number slicing.
-  - Cross-page question continuation stitching.
-- `sakura_notifications.py`
-  - PushPlus and WeCom robot HTTP senders.
-  - Notification channel fan-out and normalized send result.
-  - Daily, weather, morning and night-check reminder payload builders.
-- `sakura_weather.py`
-  - Weather location normalization and geocoding.
-  - Tomorrow forecast retrieval with Open-Meteo and wttr.in fallback.
-- `notify_daily.py`
-  - CLI entry point for scheduled reminder jobs.
-- `static/index.html`
-  - Stable DOM shell and ID-bound controls.
-- `static/app.js`
-  - Browser state, shared API/render helpers, route/view switching and cross-feature event binding.
-- `static/reminders.js`
-  - Reminder/check-in/weather/notification settings UI helpers.
-  - Loaded before `app.js`; functions execute after shared browser helpers are initialized.
-- `static/dashboard.js`
-  - Dashboard subject/document filters, overview metrics and distribution-stat rendering.
-  - Loaded after `app.js`; exposes `SakuraDashboard.load()` for shared refresh.
-- `static/question_detail.js`
-  - Question detail modal, AI hint/analysis/variation actions, crop tool and image lightbox.
-  - Loaded after `app.js`; exposes `openDetail()` and `openLightbox()` for shared card/list interactions.
-- `static/documents.js`
-  - Book/mock-paper document cards plus edit, delete and chapter-rescan actions.
-  - Loaded after `app.js`; exposes `SakuraDocuments.render()` so shared refresh can update document grids.
-- `static/library.js`
-  - Library question loading, scoped filters, search, question cards, quick locate and question update/delete actions.
-  - Loaded after `app.js` and before `mistakes.js`; exposes compatibility functions used by question detail, coach and export modules.
-- `static/archives.js`
-  - Profile archive and teacher-memory archive dialog helpers.
-  - Loaded after `app.js` and before `coach.js`; exposes archive dialog functions used by the coach panel.
-- `static/chapter_stats.js`
-  - Chapter correct-rate cards and wrong-reason radar chart rendering.
-  - Loaded after `app.js`; exposes `SakuraChapterStats.load()` for view navigation and document-card stats links.
-- `static/upload.js`
-  - Book and mock-paper PDF upload form bindings.
-  - Loaded after `app.js`; refreshes shared document/question state after imports.
-- `static/mistakes.js`
-  - Mistake-page filters, focused wrong/review toggles, mistake grid and selection hint rendering.
-  - Loaded after `app.js` and before `mistake_export.js`; exposes compatibility functions used by export controls.
-- `static/ai_chat.js`
-  - AI chat, LLM settings, teacher-memory and mentor-experience UI helpers.
-  - Loaded after `app.js` so shared render/API helpers are initialized; exposes `loadAiChatPanel()` for view navigation.
-- `static/reflection.js`
-  - Reflection preview, AI-generated reflection output and history archive UI helpers.
-  - Loaded after `app.js`; exposes `SakuraReflection.load()` for view navigation.
-- `static/textbook.js`
-  - Textbook upload, page navigation, paragraph selection, page-image lightbox and textbook AI chat UI helpers.
-  - Loaded after `app.js`; exposes `SakuraTextbook.load()` for refresh and view navigation.
-- `static/daily.js`
-  - Daily practice rendering and custom practice-rule form/list UI helpers.
-  - Loaded after `app.js`; exposes `SakuraDaily.load()` and `SakuraDaily.populateFilters()` for refresh and view navigation.
-- `static/coach.js`
-  - Learning-profile settings, profile refresh, plan generation and AI-coach plan rendering.
-  - Loaded after `app.js`; exposes `SakuraCoach.load()` for view navigation.
-- `static/mistake_export.js`
-  - Mistake selection controls and filtered/selected PDF export UI helpers.
-  - Loaded after `app.js`; exposes `SakuraMistakeExport.exportPdf()` for future export entry points.
-- `static/backup.js`
-  - Backup export/import and migration-panel bindings.
-  - Loaded after `app.js` so shared helpers and refresh hooks are available.
-- `static/styles.css`
-  - Shared visual system and component styles.
+后端入口仍然是 `app.py`。它负责启动 HTTP 服务、承载历史 Handler、装配配置和调用各领域模块。领域逻辑放在 `sakura/` 包内。
 
-## Refactor Rules
+```text
+sakura/
+├── core/
+├── content/
+├── review/
+├── ai/
+└── system/
+```
 
-- Keep `id` and `data-view` compatibility unless the JavaScript binding changes in the same patch.
-- Move pure backend helpers out of `app.py` when they do not need request state.
-- Prefer small service modules over another large class.
-- Keep modules dependency-light:
-  - Service modules may import standard library and receive paths/settings as parameters.
-  - Avoid importing `DemoHandler` or web response helpers from service modules.
-- Frontend feature sections should expose a small set of functions:
-  - load
-  - render
-  - save/update
-  - bind
-- Avoid adding new global event listeners when a scoped helper such as `on()` or event delegation can handle it.
+### `sakura/core`
+
+基础设施层，尽量不放具体学习业务。
+
+- `auth.py`：登录页面、会话签名、登录保护。
+- `config.py`：本地 `.env` 读取和写回。
+- `db.py`：数据目录、SQLite 连接、schema 初始化和增量迁移。
+- `http.py`：JSON、文本、重定向、静态文件响应。
+- `parse.py`：请求参数解析、整数和布尔值规范化。
+- `routes.py`：API 路由表、动态路由匹配和 Handler 名称检查。
+
+### `sakura/content`
+
+题库、资料、PDF、教材等内容域。
+
+- `classify.py`：章节清洗、章节识别、导入分类。
+- `documents.py`：做题本、模拟卷和资料元数据管理。
+- `filters.py`：题库筛选 SQL 和下拉选项。
+- `importer.py`：PDF 导入流程中的单页和切片处理。
+- `models.py`：题目、资料、错因统计等 JSON shaping。
+- `pdf.py`：PDF 渲染、题目切片、跨页续题处理。
+- `questions.py`：题目增删改查、章节统计、OCR 文本追加。
+- `textbook.py`：教材导入、页面上下文、教材 AI 问答。
+
+### `sakura/review`
+
+复习、错题和周期反思域。
+
+- `daily.py`：每日练习规则、批次生成、手机端反馈。
+- `export.py`：错题筛选导出 PDF。
+- `hints.py`：启发式提示、完整解析 prompt、变式生成。
+- `insights.py`：错题洞察、本地 fallback、AI 洞察归一化。
+- `reflection.py`：周/月复盘统计、AI 反思和历史记录。
+- `retention.py`：复习间隔、错题状态、元认知标签。
+
+### `sakura/ai`
+
+AI 教练和老师记忆域。
+
+- `client.py`：OpenAI-compatible 调用、JSON 提取、AI 老师 turn 构造。
+- `coach.py`：学习教练状态、薄弱点、今日任务、AI 计划。
+- `profile.py`：学习档案统计、阶段估计、本地画像和 AI polish。
+- `teacher_memory.py`：老师记忆、外部经验库、对话回合持久化。
+
+### `sakura/system`
+
+运行时配置、推送、备份和迁移域。
+
+- `backup.py`：备份导出、恢复、安全路径检查。
+- `email.py`：SMTP 配置、邮件发送、公开配置视图。
+- `migration.py`：迁移任务状态和后台恢复任务。
+- `notifications.py`：企业微信、PushPlus、邮箱推送和提醒正文生成。
+- `reminders.py`：提醒配置、打卡入口规范化、crontab 安装。
+- `settings.py`：运行时设置视图、密钥脱敏、公网地址规范化。
+- `weather.py`：天气地区解析、明日天气查询和 fallback。
+
+## Frontend Layout
+
+前端入口仍是 `static/index.html`，样式在 `static/styles.css`，功能脚本按域放入 `static/js/`。
+
+```text
+static/js/
+├── core/
+├── content/
+├── review/
+├── ai/
+└── system/
+```
+
+- `core/app.js`：全局状态、公共 API、视图切换、共享渲染工具。
+- `content/`：上传、题库、题目详情、做题本、模拟卷、教材精读。
+- `review/`：错题本、每日练习、章节统计、错题导出、周期反思。
+- `ai/`：AI 对话测试、学习教练、老师记忆、外部经验库。
+- `system/`：提醒推送、天气、打卡、数据备份和迁移。
+
+## Boundaries
+
+- `app.py` 可以继续作为轻量装配层，但新增复杂逻辑应优先进入对应 `sakura/` 子包。
+- 前端新增功能应放在 `static/js/<domain>/` 下，不再回到 `static/` 根目录。
+- 公开部署必须保护 `.env`、数据库、上传文件、日志、导出包和部署密钥。
+- UI 改动要保留现有 DOM `id` 和 `data-view`，因为前端事件绑定依赖这些标识。
 
 ## Validation
 
-- Run `python tests\smoke_refactor.py` after backend refactors that touch PDF import, question updates, backup options or AI teacher persistence.
-- Run Python `py_compile` and `node --check static\app.js` before each safety commit.
+重构或移动模块后至少运行：
 
-## Next Good Splits
-
-- `app.py`: PDF import orchestration and route dispatch remain the largest backend areas.
-- Continue splitting `static/app.js` by feature, using `static/reminders.js` as the first lightweight module pattern.
-
-Do these incrementally. Each split should include syntax checks and a server smoke test.
+```powershell
+python -m py_compile app.py notify_daily.py
+Get-ChildItem -Path sakura -Recurse -Filter *.py | ForEach-Object { python -m py_compile $_.FullName }
+Get-ChildItem -Path static\js -Recurse -Filter *.js | ForEach-Object { node --check $_.FullName }
+python tests\smoke_refactor.py
+```
