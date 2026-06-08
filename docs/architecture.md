@@ -85,6 +85,9 @@ This project is intentionally local-first and lightweight, but new features shou
 - `static/reminders.js`
   - Reminder/check-in/weather/notification settings UI helpers.
   - Loaded before `app.js`; functions execute after shared browser helpers are initialized.
+- `static/dashboard.js`
+  - Dashboard subject/document filters, overview metrics and distribution-stat rendering.
+  - Loaded after `app.js`; exposes `SakuraDashboard.load()` for shared refresh.
 - `static/question_detail.js`
   - Question detail modal, AI hint/analysis/variation actions, crop tool and image lightbox.
   - Loaded after `app.js`; exposes `openDetail()` and `openLightbox()` for shared card/list interactions.

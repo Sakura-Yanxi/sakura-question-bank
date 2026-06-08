@@ -277,24 +277,12 @@ function hasActiveMistakeFilter() {
 }
 
 async function loadDashboardData() {
-  const docs = dashboardDocuments().filter((doc) => !state.dashboardSubject || doc.subject === state.dashboardSubject);
-  if (state.dashboardDocumentId && !docs.some((doc) => doc.id === state.dashboardDocumentId)) {
-    state.dashboardDocumentId = "";
-  }
-  const params = new URLSearchParams();
-  if (state.dashboardSubject) params.set("subject", state.dashboardSubject);
-  if (state.dashboardDocumentId) params.set("document_id", state.dashboardDocumentId);
-  const data = await api(`/api/questions?${params}`);
-  state.dashboardQuestions = data.questions;
-  state.dashboardStats = data.stats;
-  state.dashboardSubjectStats = data.subject_stats;
-  renderDashboardFilters();
-  renderDashboard();
+  if (window.SakuraDashboard) await window.SakuraDashboard.load();
 }
 
 function renderAll() {
   renderQuestionFilters();
-  renderDashboard();
+  if (window.SakuraDashboard) window.SakuraDashboard.render();
   const regularQuestions = state.questions.filter((q) => questionKind(q) !== "模拟卷");
   const mockQuestions = state.questions.filter((q) => questionKind(q) === "模拟卷");
   $("#questionCountBadge").textContent = `${regularQuestions.length} 题`;
@@ -315,30 +303,7 @@ function renderDocumentFilters() {
     .join("");
 }
 
-function firstUploadDocuments() {
-  const sorted = [...state.documents].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
-  const seen = new Set();
-  return sorted.filter((doc) => {
-    const key = `${doc.subject}::${doc.document_kind || "做题本"}::${doc.title || doc.filename}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function dashboardDocuments() {
-  return firstUploadDocuments().filter((doc) => documentKind(doc) !== "模拟卷");
-}
-
-function renderDashboardFilters() {
-  $("#dashboardSubjectFilter").innerHTML = `<option value="">请选择科目</option>${state.subjects
-    .map((subject) => `<option ${subject === state.dashboardSubject ? "selected" : ""}>${subject}</option>`)
-    .join("")}`;
-  const docs = dashboardDocuments().filter((doc) => !state.dashboardSubject || doc.subject === state.dashboardSubject);
-  $("#dashboardDocumentFilter").innerHTML = `<option value="">请选择做题本</option>${docs
-    .map((doc) => `<option value="${doc.id}" ${doc.id === state.dashboardDocumentId ? "selected" : ""}>${documentLabel(doc)}</option>`)
-    .join("")}`;
-}
+// Dashboard filters, cards and distribution stats live in /static/dashboard.js
 
 function renderQuestionFilters() {
   const docs = state.documents.filter((doc) => !state.subject || doc.subject === state.subject);
@@ -433,50 +398,6 @@ function renderMistakeSelectionHint() {
     return;
   }
   $("#mistakeSelectHint").textContent = selected ? `已选择 ${selected}/${total} 题` : `未勾选时导出当前 ${total} 道错题`;
-}
-
-function renderDashboard() {
-  const dashboardReady = Boolean(state.dashboardSubject && state.dashboardDocumentId);
-  const source = dashboardReady ? state.dashboardQuestions : [];
-  const stats = dashboardReady ? state.dashboardStats : [];
-  const total = source.length;
-  const done = source.filter((q) => q.status && q.status !== "未做").length;
-  const progress = total ? Math.round((done / total) * 100) : 0;
-  const wrong = source.filter((q) => q.status === "做错").length;
-  const review = source.filter((q) => ["需复习", "半会"].includes(q.status)).length;
-  const weak = [...stats].sort((a, b) => (b.wrong || 0) - (a.wrong || 0))[0];
-
-  $("#totalCount").textContent = total;
-  if ($("#doneCount")) $("#doneCount").textContent = done;
-  if ($("#progressRate")) $("#progressRate").textContent = `${progress}%`;
-  if ($("#wrongCount")) $("#wrongCount").textContent = wrong;
-  if ($("#reviewCount")) $("#reviewCount").textContent = review;
-  if ($("#weakCategory")) {
-    $("#weakCategory").textContent = dashboardReady ? (weak && weak.wrong ? weak.category : "暂无") : "请选择科目";
-  }
-
-  renderStats("#statsList", stats, "category", "选择科目和做题本后会显示对应知识点分布。");
-  renderStats(
-    "#subjectStatsList",
-    dashboardReady ? state.dashboardSubjectStats : [],
-    "subject",
-    "选择科目和做题本后会显示科目分布。"
-  );
-}
-
-function renderStats(target, stats, labelKey, emptyText) {
-  const max = Math.max(...stats.map((item) => item.total), 1);
-  $(target).innerHTML =
-    stats
-      .map(
-        (item) => `
-        <div class="stat-row">
-          <strong>${item[labelKey]}</strong>
-          <div class="bar"><span style="width: ${(item.total / max) * 100}%"></span></div>
-          <span>${item.total} 题</span>
-        </div>`
-      )
-      .join("") || `<p>${emptyText}</p>`;
 }
 
 // Document card rendering and management actions live in /static/documents.js
@@ -663,19 +584,7 @@ $("#documentFilter").addEventListener("change", async (event) => {
   await loadQuestions();
 });
 
-$("#dashboardSubjectFilter").addEventListener("change", async (event) => {
-  state.dashboardSubject = event.target.value;
-  const docs = dashboardDocuments().filter((doc) => !state.dashboardSubject || doc.subject === state.dashboardSubject);
-  if (state.dashboardDocumentId && !docs.some((doc) => doc.id === state.dashboardDocumentId)) {
-    state.dashboardDocumentId = "";
-  }
-  await loadDashboardData();
-});
-
-$("#dashboardDocumentFilter").addEventListener("change", async (event) => {
-  state.dashboardDocumentId = event.target.value;
-  await loadDashboardData();
-});
+// Dashboard filter bindings live in /static/dashboard.js
 
 $("#subjectFilter").addEventListener("change", async (event) => {
   state.subject = event.target.value;
