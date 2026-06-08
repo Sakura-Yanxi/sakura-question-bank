@@ -224,37 +224,6 @@ async function loadQuestions() {
   renderAll();
 }
 
-async function loadMistakes() {
-  if (!hasActiveMistakeFilter()) {
-    state.mistakeQuestions = [];
-    state.mistakeCategories = [];
-    state.mistakeChapters = [];
-    state.mistakeSubjects = [];
-    state.selectedMistakes.clear();
-    renderMistakeFilters();
-    renderMistakeGrid();
-    return;
-  }
-  const params = new URLSearchParams();
-  if (state.mistakeCategory) params.set("category", state.mistakeCategory);
-  if (state.mistakeDocumentId) params.set("document_id", state.mistakeDocumentId);
-  if (state.mistakeSubject) params.set("subject", state.mistakeSubject);
-  if (state.mistakeChapter) params.set("chapter", state.mistakeChapter);
-  const data = await api(`/api/questions?${params}`);
-  state.mistakeQuestions = data.questions.filter(isActiveMistake).filter((q) => {
-    if (state.mistakeStatus === "做错") return q.status === "做错";
-    if (state.mistakeStatus === "review") return ["需复习", "半会"].includes(q.status) || (q.ever_wrong && !q.mastered_at);
-    return true;
-  });
-  state.mistakeCategories = data.categories;
-  state.mistakeChapters = data.chapters;
-  state.mistakeSubjects = data.subjects;
-  const visibleIds = new Set(state.mistakeQuestions.map((q) => q.id));
-  state.selectedMistakes = new Set([...state.selectedMistakes].filter((id) => visibleIds.has(id)));
-  renderMistakeFilters();
-  renderMistakeGrid();
-}
-
 async function refresh() {
   await loadDocuments();
   if ($("#textbookList") && window.SakuraTextbook) await window.SakuraTextbook.load();
@@ -272,12 +241,17 @@ function canSearchLibrary() {
   return Boolean(state.documentId || state.subject || state.status);
 }
 
-function hasActiveMistakeFilter() {
-  return Boolean(state.mistakeDocumentId || state.mistakeSubject || state.mistakeCategory || state.mistakeChapter);
-}
-
 async function loadDashboardData() {
   if (window.SakuraDashboard) await window.SakuraDashboard.load();
+}
+
+async function loadMistakes() {
+  if (window.SakuraMistakes) await window.SakuraMistakes.load();
+}
+
+function hasActiveMistakeFilter() {
+  if (window.SakuraMistakes) return window.SakuraMistakes.hasActiveFilter();
+  return Boolean(state.mistakeDocumentId || state.mistakeSubject || state.mistakeCategory || state.mistakeChapter);
 }
 
 function renderAll() {
@@ -347,58 +321,17 @@ function updateSearchBoxState() {
   }
 }
 
-// Profile and teacher-memory archive dialogs live in /static/archives.js
-
-function renderMistakeFilters() {
-  const docs = state.documents.filter((doc) => !state.mistakeSubject || doc.subject === state.mistakeSubject);
-  const doc = docs.find((item) => item.id === state.mistakeDocumentId);
-  if (state.mistakeDocumentId && !doc) state.mistakeDocumentId = "";
-  if (doc?.subject && !state.mistakeSubject) state.mistakeSubject = doc.subject;
-  const subjects = state.mistakeSubjects.length ? state.mistakeSubjects : state.subjects;
-  const scopedReady = Boolean(state.mistakeSubject && state.mistakeDocumentId);
-  $("#mistakeDocumentFilter").innerHTML = `<option value="">请选择资料</option>${docs
-    .map((doc) => `<option value="${doc.id}" ${doc.id === state.mistakeDocumentId ? "selected" : ""}>${documentLabel(doc)}</option>`)
-    .join("")}`;
-  $("#mistakeSubjectFilter").innerHTML = `<option value="">请选择科目</option>${subjects
-    .map((subject) => `<option ${subject === state.mistakeSubject ? "selected" : ""}>${subject}</option>`)
-    .join("")}`;
-  if (scopedReady) {
-    unlockSelect("#mistakeCategoryFilter");
-    unlockSelect("#mistakeChapterFilter");
-    $("#mistakeCategoryFilter").innerHTML = `<option value="">全部知识点</option>${state.mistakeCategories
-      .map((category) => `<option ${category === state.mistakeCategory ? "selected" : ""}>${category}</option>`)
-      .join("")}`;
-    $("#mistakeChapterFilter").innerHTML = `<option value="">全部章节</option>${state.mistakeChapters
-      .map((chapter) => `<option ${chapter === state.mistakeChapter ? "selected" : ""}>${chapter}</option>`)
-      .join("")}`;
-  } else {
-    state.mistakeCategory = "";
-    state.mistakeChapter = "";
-    setSelectLocked("#mistakeCategoryFilter", "请先选择科目和资料");
-    setSelectLocked("#mistakeChapterFilter", "请先选择科目和资料");
-  }
-}
-
 function renderMistakeGrid() {
-  $("#mistakeCountBadge").textContent = `${state.mistakeQuestions.length} 题`;
-  const emptyText = hasActiveMistakeFilter()
-    ? "当前筛选范围没有错题。"
-    : "请先选择科目或资料，再按知识点、章节或错题状态导出。";
-  renderQuestionGrid("#mistakeGrid", state.mistakeQuestions, emptyText, { selectable: true });
-  renderMistakeSelectionHint();
+  if (window.SakuraMistakes) window.SakuraMistakes.renderGrid();
 }
 
 function renderMistakeSelectionHint() {
-  const selected = state.selectedMistakes.size;
-  const total = state.mistakeQuestions.length;
-  $("#focusWrong").classList.toggle("filter-active", state.mistakeStatus === "做错");
-  $("#focusReview").classList.toggle("filter-active", state.mistakeStatus === "review");
-  if (!hasActiveMistakeFilter()) {
-    $("#mistakeSelectHint").textContent = "先选择科目或资料后再导出";
-    return;
-  }
-  $("#mistakeSelectHint").textContent = selected ? `已选择 ${selected}/${total} 题` : `未勾选时导出当前 ${total} 道错题`;
+  if (window.SakuraMistakes) window.SakuraMistakes.renderSelectionHint();
 }
+
+// Profile and teacher-memory archive dialogs live in /static/archives.js
+
+// Mistake filters, focused wrong/review toggles and mistake grid live in /static/mistakes.js
 
 // Document card rendering and management actions live in /static/documents.js
 
@@ -608,36 +541,7 @@ $("#chapterFilter").addEventListener("change", async (event) => {
   await loadQuestions();
 });
 
-$("#mistakeDocumentFilter").addEventListener("change", async (event) => {
-  state.mistakeDocumentId = event.target.value;
-  const doc = state.documents.find((item) => item.id === state.mistakeDocumentId);
-  if (doc) state.mistakeSubject = doc.subject || state.mistakeSubject;
-  state.mistakeCategory = "";
-  state.mistakeChapter = "";
-  await loadMistakes();
-});
-
-$("#mistakeSubjectFilter").addEventListener("change", async (event) => {
-  state.mistakeSubject = event.target.value;
-  const docs = state.documents.filter((doc) => !state.mistakeSubject || doc.subject === state.mistakeSubject);
-  if (state.mistakeDocumentId && !docs.some((doc) => doc.id === state.mistakeDocumentId)) {
-    state.mistakeDocumentId = "";
-  }
-  state.mistakeCategory = "";
-  state.mistakeChapter = "";
-  await loadMistakes();
-});
-
-$("#mistakeCategoryFilter").addEventListener("change", async (event) => {
-  state.mistakeCategory = event.target.value;
-  state.mistakeChapter = "";
-  await loadMistakes();
-});
-
-$("#mistakeChapterFilter").addEventListener("change", async (event) => {
-  state.mistakeChapter = event.target.value;
-  await loadMistakes();
-});
+// Mistake filter bindings live in /static/mistakes.js
 
 $("#statusFilter").addEventListener("change", async (event) => {
   state.status = event.target.value;
@@ -696,11 +600,6 @@ $("#questionLocate").addEventListener("input", (event) => {
   btn.addEventListener("click", () => scroller.scrollTo({ top: 0, behavior: "smooth" }));
 })();
 
-$("#focusWrong").addEventListener("click", async () => {
-  state.mistakeStatus = state.mistakeStatus === "做错" ? "" : "做错";
-  await loadMistakes();
-});
-
 // Learning profile / coach bindings live in /static/coach.js
 
 // 提醒打卡
@@ -717,11 +616,6 @@ on("#saveWeatherCity", "click", saveWeatherCity);
 on("#previewWeather", "click", previewWeather);
 on("#sendWeatherPreview", "click", previewWeatherPush);
 on("#testWeatherPush", "click", testWeatherPush);
-
-$("#focusReview").addEventListener("click", async () => {
-  state.mistakeStatus = state.mistakeStatus === "review" ? "" : "review";
-  await loadMistakes();
-});
 
 // Mistake PDF export and selection bindings live in /static/mistake_export.js
 

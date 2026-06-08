@@ -103,6 +103,9 @@ This project is intentionally local-first and lightweight, but new features shou
 - `static/upload.js`
   - Book and mock-paper PDF upload form bindings.
   - Loaded after `app.js`; refreshes shared document/question state after imports.
+- `static/mistakes.js`
+  - Mistake-page filters, focused wrong/review toggles, mistake grid and selection hint rendering.
+  - Loaded after `app.js` and before `mistake_export.js`; exposes compatibility functions used by export controls.
 - `static/ai_chat.js`
   - AI chat, LLM settings, teacher-memory and mentor-experience UI helpers.
   - Loaded after `app.js` so shared render/API helpers are initialized; exposes `loadAiChatPanel()` for view navigation.
