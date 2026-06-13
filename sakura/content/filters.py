@@ -47,6 +47,10 @@ def build_question_filters(query: dict, keys: tuple[str, ...]) -> tuple[str, lis
     if subject and "subject" in keys:
         clauses.append("d.subject = ?")
         params.append(subject)
+    document_kind = query.get("document_kind", [""])[0]
+    if document_kind and "document_kind" in keys:
+        clauses.append("d.document_kind = ?")
+        params.append(document_kind)
     search = query.get("search", [""])[0].strip()
     if search and "search" in keys:
         clauses.append(
@@ -77,7 +81,7 @@ def get_scoped_filter_options(conn, query: dict) -> dict:
     ]
     category_where, category_params = build_question_filters(
         query,
-        ("status", "document_id", "chapter", "subject", "search"),
+        ("status", "document_id", "chapter", "subject", "document_kind", "search"),
     )
     category_where = f"{category_where} AND q.category <> ''" if category_where else "WHERE q.category <> ''"
     categories = [
@@ -96,7 +100,7 @@ def get_scoped_filter_options(conn, query: dict) -> dict:
     ]
     chapter_where, chapter_params = build_question_filters(
         query,
-        ("category", "status", "document_id", "subject", "search"),
+        ("category", "status", "document_id", "subject", "document_kind", "search"),
     )
     chapter_where = f"{chapter_where} AND q.chapter <> ''" if chapter_where else "WHERE q.chapter <> ''"
     chapters = [

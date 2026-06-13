@@ -10,7 +10,12 @@
   }
 
   async function loadQuestions() {
+    const loadMockArchive = async () => {
+      const data = await api("/api/questions?document_kind=%E6%A8%A1%E6%8B%9F%E5%8D%B7");
+      state.mockQuestions = data.questions || [];
+    };
     if (state.view === "library" && !hasActiveLibraryFilter()) {
+      await loadMockArchive();
       state.questions = [];
       state.stats = {};
       state.subjectStats = {};
@@ -33,6 +38,8 @@
     state.categories = data.categories;
     state.chapters = data.chapters;
     state.subjects = data.subjects;
+    state.mockQuestions = state.view === "library" ? state.questions.filter((q) => questionKind(q) === "模拟卷") : [];
+    if (state.view === "mockPapers") state.mockQuestions = state.questions.filter((q) => questionKind(q) === "模拟卷");
     renderAll();
   }
 
@@ -40,7 +47,7 @@
     renderQuestionFilters();
     if (window.SakuraDashboard) window.SakuraDashboard.render();
     const regularQuestions = state.questions.filter((q) => questionKind(q) !== "模拟卷");
-    const mockQuestions = state.questions.filter((q) => questionKind(q) === "模拟卷");
+    const mockQuestions = state.mockQuestions || state.questions.filter((q) => questionKind(q) === "模拟卷");
     $("#questionCountBadge").textContent = `${regularQuestions.length} 题`;
     $("#mockCountBadge").textContent = `${mockQuestions.length} 题`;
     const libraryEmptyText = hasActiveLibraryFilter()
@@ -135,8 +142,9 @@
       await api(`/api/questions/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) });
       await refresh();
     } catch (error) {
+      // The alert already informs the user; don't re-throw — the callers (e.g. the body click
+      // handler in app.js) don't await this, so re-throwing only surfaces an unhandled rejection.
       alert(error.message);
-      throw error;
     }
   }
 

@@ -20,6 +20,9 @@ class ReminderSettings:
     weather_on: str = "1"
     weather_time: str = "22:30"
     checkin_mode: str = "wework"
+    daily_scope: str = "due"
+    daily_limit: str = "20"
+    send_pdf: str = "1"
 
     def as_env(self) -> dict[str, str]:
         return {
@@ -30,6 +33,9 @@ class ReminderSettings:
             "REMIND_WEATHER_ON": self.weather_on,
             "REMIND_WEATHER_TIME": self.weather_time,
             "REMIND_CHECKIN_MODE": self.checkin_mode,
+            "REMIND_DAILY_SCOPE": self.daily_scope,
+            "REMIND_DAILY_LIMIT": self.daily_limit,
+            "REMIND_SEND_PDF": self.send_pdf,
         }
 
     def as_payload(self, cron_status: dict | None = None) -> dict:
@@ -41,6 +47,9 @@ class ReminderSettings:
             "weather_on": self.weather_on,
             "weather_time": self.weather_time,
             "checkin_mode": self.checkin_mode,
+            "daily_scope": self.daily_scope,
+            "daily_limit": self.daily_limit,
+            "send_pdf": self.send_pdf,
             "cron": cron_status or {},
         }
 
@@ -70,9 +79,31 @@ def normalize_checkin_mode(value: str, default: str = "wework") -> str:
         return "local"
     if text in {"push", "pushplus"}:
         return "pushplus"
+    if text in {"mail", "email", "smtp"}:
+        return "email"
     if text in {"wework", "wechatwork", "enterprise_wechat", "cloud", "link"}:
         return "wework"
     return default
+
+
+def normalize_daily_scope(value: str, default: str = "due") -> str:
+    text = str(value or "").strip().lower()
+    if text in {"due", "ebbinghaus", "retention"}:
+        return "due"
+    if text in {"wrong", "active_wrong", "current_wrong"}:
+        return "active_wrong"
+    if text in {"all", "all_wrong", "all_wrong_history", "history"}:
+        return "all_wrong_history"
+    return default
+
+
+def normalize_daily_limit(value: str | int, default: str = "20") -> str:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    parsed = max(1, min(80, parsed))
+    return str(parsed)
 
 
 def settings_from_env(env: dict[str, str] | None = None) -> ReminderSettings:
@@ -85,6 +116,9 @@ def settings_from_env(env: dict[str, str] | None = None) -> ReminderSettings:
         weather_on=normalize_onoff(env.get("REMIND_WEATHER_ON", "1")),
         weather_time=normalize_time(env.get("REMIND_WEATHER_TIME", "22:30"), "22:30"),
         checkin_mode=normalize_checkin_mode(env.get("REMIND_CHECKIN_MODE", "wework")),
+        daily_scope=normalize_daily_scope(env.get("REMIND_DAILY_SCOPE", "due")),
+        daily_limit=normalize_daily_limit(env.get("REMIND_DAILY_LIMIT", "20")),
+        send_pdf=normalize_onoff(env.get("REMIND_SEND_PDF", "1")),
     )
 
 
@@ -97,6 +131,9 @@ def merge_settings(current: ReminderSettings, payload: dict) -> ReminderSettings
         weather_on=normalize_onoff(payload.get("weather_on", current.weather_on), current.weather_on),
         weather_time=normalize_time(str(payload.get("weather_time", current.weather_time)), current.weather_time),
         checkin_mode=normalize_checkin_mode(str(payload.get("checkin_mode", current.checkin_mode)), current.checkin_mode),
+        daily_scope=normalize_daily_scope(str(payload.get("daily_scope", current.daily_scope)), current.daily_scope),
+        daily_limit=normalize_daily_limit(payload.get("daily_limit", current.daily_limit), current.daily_limit),
+        send_pdf=normalize_onoff(payload.get("send_pdf", current.send_pdf), current.send_pdf),
     )
 
 

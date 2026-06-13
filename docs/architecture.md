@@ -67,7 +67,8 @@ AI 教练和老师记忆域。
 - `email.py`：SMTP 配置、邮件发送、公开配置视图。
 - `migration.py`：迁移任务状态和后台恢复任务。
 - `notifications.py`：企业微信、PushPlus、邮箱推送和提醒正文生成。
-- `reminders.py`：提醒配置、打卡入口规范化、crontab 安装。
+- `reminders.py`：提醒配置、打卡入口规范化、推送范围和 PDF 开关。
+- `practice_pages.py`：手机端快速回填页和打卡成功页渲染。
 - `settings.py`：运行时设置视图、密钥脱敏、公网地址规范化。
 - `weather.py`：天气地区解析、明日天气查询和 fallback。
 

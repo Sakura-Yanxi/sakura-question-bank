@@ -4,6 +4,13 @@ import uuid
 from datetime import date, datetime
 
 
+STATUS_WRONG = "\u505a\u9519"
+STATUS_REVIEW = "\u9700\u590d\u4e60"
+STATUS_HALF = "\u534a\u4f1a"
+STATUS_RIGHT = "\u505a\u5bf9"
+WRONGISH_STATUSES = (STATUS_WRONG, STATUS_REVIEW, STATUS_HALF)
+
+
 def parse_positive_int(value: str, fallback: int | None = None) -> int | None:
     try:
         parsed = int(str(value).strip())
@@ -100,6 +107,7 @@ def daily_rule_where(rule: dict, today_iso: str) -> tuple[str, list[str]]:
     if rule.get("chapter"):
         clauses.append("q.chapter = ?")
         params.append(rule["chapter"])
+
     status_group = rule.get("status_group") or "active_wrong"
     if status_group == "due":
         clauses.append(
@@ -107,32 +115,47 @@ def daily_rule_where(rule: dict, today_iso: str) -> tuple[str, list[str]]:
         )
         params.append(today_iso)
     elif status_group == "wrong":
-        clauses.append("q.status = '做错'")
+        clauses.append("q.status = ?")
+        params.append(STATUS_WRONG)
     elif status_group == "review":
-        clauses.append("q.status IN ('需复习', '半会')")
+        clauses.append("q.status IN (?, ?)")
+        params.extend([STATUS_REVIEW, STATUS_HALF])
     elif status_group == "all_wrong_history":
         clauses.append("q.ever_wrong = 1")
     else:
         clauses.append(
-            "(q.status IN ('做错', '需复习', '半会') OR (q.ever_wrong = 1 AND q.mastered_at IS NULL AND q.next_review_at IS NOT NULL AND date(q.next_review_at) <= date(?)))"
+            "(q.status IN (?, ?, ?) OR (q.ever_wrong = 1 AND q.mastered_at IS NULL AND q.next_review_at IS NOT NULL AND date(q.next_review_at) <= date(?)))"
         )
+        params.extend(WRONGISH_STATUSES)
         params.append(today_iso)
     return " AND ".join(clauses), params
-
 
 def select_daily_questions_for_rule(conn, rule: dict, today_iso: str, used_ids: set[str], row_to_dict) -> list[dict]:
     where, params = daily_rule_where(rule, today_iso)
     if used_ids:
         where += f" AND q.id NOT IN ({','.join('?' for _ in used_ids)})"
         params.extend(list(used_ids))
+
+    broad_scope = not rule.get("category") and not rule.get("chapter")
+    weak_order = "COALESCE(chapter_accuracy, 0.5) ASC, ABS(RANDOM()) ASC," if broad_scope else ""
+    attempted = f"'{STATUS_RIGHT}', '{STATUS_WRONG}', '{STATUS_REVIEW}', '{STATUS_HALF}'"
     rows = conn.execute(
         f"""
-        SELECT q.*, d.filename, d.title document_title, d.subject, d.document_kind
+        SELECT
+            q.*, d.filename, d.title document_title, d.subject, d.document_kind,
+            (
+                SELECT SUM(CASE WHEN qs.status = '{STATUS_RIGHT}' THEN 1 ELSE 0 END) * 1.0
+                       / NULLIF(SUM(CASE WHEN qs.status IN ({attempted}) THEN 1 ELSE 0 END), 0)
+                FROM questions qs
+                WHERE qs.document_id = q.document_id
+                  AND COALESCE(qs.chapter, '') = COALESCE(q.chapter, '')
+            ) chapter_accuracy
         FROM questions q
         JOIN documents d ON d.id = q.document_id
         WHERE {where}
         ORDER BY
-            CASE q.status WHEN '做错' THEN 0 WHEN '需复习' THEN 1 WHEN '半会' THEN 2 ELSE 3 END,
+            {weak_order}
+            CASE q.status WHEN '{STATUS_WRONG}' THEN 0 WHEN '{STATUS_REVIEW}' THEN 1 WHEN '{STATUS_HALF}' THEN 2 ELSE 3 END,
             q.review_stage ASC,
             COALESCE(q.next_review_at, q.last_reviewed_at, q.created_at) ASC,
             q.page_number ASC
@@ -145,9 +168,9 @@ def select_daily_questions_for_rule(conn, rule: dict, today_iso: str, used_ids: 
         item = row_to_dict(row)
         item["daily_kind"] = "custom"
         item["daily_rule_id"] = rule["id"]
+        item["chapter_accuracy"] = row["chapter_accuracy"]
         result.append(item)
     return result
-
 
 def build_custom_daily_groups(conn, row_to_dict) -> tuple[list[dict], list[dict]]:
     today_iso = date.today().isoformat()
@@ -259,45 +282,79 @@ def build_daily_payload(
     find_foundation_questions,
     default_subject: str,
     default_document_kind: str,
+    daily_scope: str = "active_wrong",
+    daily_limit: int = 20,
 ) -> dict:
     today = date.today().isoformat()
+    daily_limit = max(1, min(80, int(daily_limit or 20)))
     custom_groups, custom_rules = build_custom_daily_groups(conn, row_to_dict)
     if custom_rules:
         groups = custom_groups
+        plan = [question for group in groups for question in group["questions"]]
+        message = (
+            f"\u5df2\u542f\u7528\u81ea\u5b9a\u4e49\u6bcf\u65e5\u7ec3\u4e60\u89c4\u5219\uff1b\u672c\u6b21\u6309\u89c4\u5219\u5408\u5e76\u63a8\u9001 {len(plan)} \u9053\u3002"
+            if plan
+            else "\u5df2\u542f\u7528\u81ea\u5b9a\u4e49\u6bcf\u65e5\u7ec3\u4e60\u89c4\u5219\uff0c\u4f46\u4eca\u65e5\u6ca1\u6709\u5339\u914d\u9898\u76ee\uff1b\u53ef\u4ee5\u6362\u7ae0\u8282\u3001\u53d6\u6d88\u7ae0\u8282\u9650\u5236\uff0c\u6216\u628a\u63a8\u9001\u8303\u56f4\u6539\u6210\u201c\u5386\u53f2\u66fe\u9519\u9898\u201d\u3002"
+        )
         return {
             "date": today,
             "groups": groups,
-            "plan": [question for group in groups for question in group["questions"]],
+            "plan": plan,
             "custom_rules": custom_rules,
-            "message": "已启用自定义每日练习规则；系统会按做题本、科目、知识点和章节筛选错题。",
+            "scope": "custom_rules",
+            "limit": len(plan),
+            "message": message,
         }
 
-    rows = conn.execute(
+    if daily_scope == "due":
+        where_clause = """
+        q.ever_wrong = 1
+        AND q.mastered_at IS NULL
+        AND q.next_review_at IS NOT NULL
+        AND date(q.next_review_at) <= date(?)
         """
+        params = (today,)
+        scope_message = "\u672c\u6b21\u63a8\u9001\u4ec5\u5305\u542b\u827e\u5bbe\u6d69\u65af\u5230\u671f\u590d\u4e60\u9898\u3002"
+    elif daily_scope == "all_wrong_history":
+        where_clause = "q.ever_wrong = 1"
+        params = ()
+        scope_message = "\u672c\u6b21\u63a8\u9001\u5305\u542b\u5386\u53f2\u66fe\u9519\u9898\uff0c\u9002\u5408\u5468\u672b\u6216\u96c6\u4e2d\u590d\u76d8\u3002"
+    else:
+        daily_scope = "active_wrong"
+        where_clause = """
+        q.status IN ('\u505a\u9519', '\u9700\u590d\u4e60', '\u534a\u4f1a')
+        OR (
+            q.ever_wrong = 1
+            AND q.mastered_at IS NULL
+            AND q.next_review_at IS NOT NULL
+            AND date(q.next_review_at) <= date(?)
+        )
+        """
+        params = (today,)
+        scope_message = "\u672c\u6b21\u63a8\u9001\u5305\u542b\u5f53\u524d\u9519\u9898\u3001\u9700\u590d\u4e60\u9898\u548c\u5230\u671f\u9898\u3002"
+
+    rows = conn.execute(
+        f"""
         SELECT q.*, d.filename, d.title document_title, d.subject, d.document_kind
         FROM questions q
         JOIN documents d ON d.id = q.document_id
-        WHERE q.status IN ('做错', '需复习', '半会')
-           OR (
-               q.ever_wrong = 1
-               AND q.mastered_at IS NULL
-               AND q.next_review_at IS NOT NULL
-               AND date(q.next_review_at) <= date(?)
-           )
+        WHERE {where_clause}
         ORDER BY
             d.subject ASC,
             COALESCE(NULLIF(d.title, ''), d.filename) ASC,
             CASE q.status
-                WHEN '做错' THEN 0
-                WHEN '需复习' THEN 1
-                WHEN '半会' THEN 2
-                WHEN '做对' THEN 3
+                WHEN '\u505a\u9519' THEN 0
+                WHEN '\u9700\u590d\u4e60' THEN 1
+                WHEN '\u534a\u4f1a' THEN 2
+                WHEN '\u505a\u5bf9' THEN 3
                 ELSE 4
             END,
             q.review_stage ASC,
-            COALESCE(q.next_review_at, q.last_reviewed_at, q.created_at) ASC
+            COALESCE(q.next_review_at, q.last_reviewed_at, q.created_at) ASC,
+            q.page_number ASC
+        LIMIT ?
         """,
-        (today,),
+        (*params, daily_limit),
     ).fetchall()
     dependency_map = weak_chapter_dependencies(conn)
     groups_map: dict[str, dict] = {}
@@ -306,14 +363,15 @@ def build_daily_payload(
         item = row_to_dict(row)
         item["daily_kind"] = "review"
         used_ids.add(item["id"])
-        book_name = item.get("document_title") or item.get("filename") or "做题本"
+        book_name = item.get("document_title") or item.get("filename") or "\u505a\u9898\u672c"
         group_key = f"{item.get('subject') or default_subject} / {item.get('document_kind') or default_document_kind} / {book_name}"
         if group_key not in groups_map:
             groups_map[group_key] = {"title": group_key, "questions": []}
-        if len(groups_map[group_key]["questions"]) < 4:
-            groups_map[group_key]["questions"].append(item)
+        groups_map[group_key]["questions"].append(item)
     for group_key, dependencies in dependency_map.items():
-        if group_key not in groups_map or len(groups_map[group_key]["questions"]) >= 5:
+        if daily_scope == "all_wrong_history" or len(used_ids) >= daily_limit:
+            continue
+        if group_key not in groups_map:
             continue
         subject = group_key.split(" / ", 1)[0]
         foundations = find_foundation_questions(conn, subject, dependencies, used_ids)
@@ -321,13 +379,15 @@ def build_daily_payload(
             groups_map[group_key]["questions"].append(foundations[0])
             used_ids.add(foundations[0]["id"])
     groups = [group for group in groups_map.values() if group["questions"]]
+    plan = [question for group in groups for question in group["questions"]][:daily_limit]
     return {
         "date": today,
         "groups": groups,
-        "plan": [question for group in groups for question in group["questions"]],
-        "message": "每日练习由当前错题、到期复习题和低正确率章节的前置基础题组成；每组最多 5 道，其中约 20% 用于补基础。",
+        "plan": plan,
+        "scope": daily_scope,
+        "limit": daily_limit,
+        "message": f"{scope_message} \u6700\u591a\u63a8\u9001 {daily_limit} \u9053\uff1b\u82e5\u9009\u62e9\u4f01\u4e1a\u5fae\u4fe1\u6216\u90ae\u7bb1\uff0c\u4f1a\u968f\u63a8\u9001\u9644\u5e26 PDF\u3002",
     }
-
 
 def create_practice_batch(conn, payload_builder, source: str = "push") -> dict:
     payload = payload_builder(conn)

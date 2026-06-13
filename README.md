@@ -187,6 +187,7 @@ APP_PUBLIC_URL=http://127.0.0.1:8000
 SAKURA_ADMIN_PASSWORD=Change-this-Strong#2026
 SAKURA_AUTH_SECRET=replace-with-a-long-random-string
 SAKURA_DEMO_MODE=0
+SAKURA_UPDATE_REPO=Sakura-Yanxi/-
 
 LLM_API_KEY=
 LLM_BASE_URL=https://api.deepseek.com/v1
@@ -204,8 +205,10 @@ EMAIL_USER=
 EMAIL_PASSWORD=
 EMAIL_TO=
 EMAIL_FROM=
-EMAIL_FROM_NAME=Sakura 做题集
+EMAIL_FROM_NAME=Sakura ???
 
+SAKURA_INTERNAL_SCHEDULER=1
+SAKURA_SCHEDULER_POLL_SECONDS=30
 REMIND_MORNING_ON=0
 REMIND_MORNING_TIME=10:00
 REMIND_NIGHT_ON=0
@@ -213,7 +216,10 @@ REMIND_NIGHT_TIME=20:00
 REMIND_WEATHER_ON=0
 REMIND_WEATHER_TIME=22:30
 REMIND_CHECKIN_MODE=wework
-WEATHER_CITY=北京
+REMIND_DAILY_SCOPE=due
+REMIND_DAILY_LIMIT=20
+REMIND_SEND_PDF=1
+WEATHER_CITY=??
 ```
 
 说明：
@@ -227,10 +233,13 @@ WEATHER_CITY=北京
 - `APP_PUBLIC_URL`：公网访问地址，用于生成手机端回填链接和推送链接。
 - `WEWORK_BOT_WEBHOOK`：企业微信群机器人 Webhook。
 - `PUSHPLUS_TOKEN`：PushPlus Token。
-- `EMAIL_PASSWORD`：邮箱授权码，不是邮箱登录密码。
-- `REMIND_CHECKIN_MODE`：可选 `wework`、`pushplus`、`local`。
-
-兼容历史配置时，模型密钥读取优先级为：
+- `EMAIL_PASSWORD`????????????????
+- `SAKURA_INTERNAL_SCHEDULER`??????????????? `1`??????????????????? crontab ???????
+- `SAKURA_SCHEDULER_POLL_SECONDS`????????????? `30`???? `10` ???
+- `REMIND_CHECKIN_MODE`??? `wework`?`pushplus`?`email`?`local`?
+- `REMIND_DAILY_SCOPE`???????????? `due`?`active_wrong`?`all_wrong_history`?
+- `REMIND_DAILY_LIMIT`?????????????? `20`?
+- `REMIND_SEND_PDF`??????????????? PDF?`1` ????`0` ????
 
 ```text
 LLM_API_KEY > MIMO_API_KEY > DEEPSEEK_API_KEY
@@ -326,6 +335,43 @@ python tests\smoke_refactor.py
 ```
 
 如果只改 README 或文档，不一定需要跑完整测试；如果移动模块、改 API、改前端 JS，建议至少跑上面的烟测。
+
+## 更新与发版
+
+Sakura 是本地优先、自托管的工具：每个人把它部署在自己的机器上。代码更新走 Git，数据始终留在本地。
+
+### 使用者：如何更新到新版本
+
+代码（`.py` / `.js` / `.html`）由 Git 管理；你的题库、数据库、题图（`data/`）和密钥配置（`.env`）都在 `.gitignore` 里，**更新代码不会动它们**。
+
+- 用 Git（推荐）：在项目目录执行 `git pull`，依赖有变动时再 `pip install -r requirements.txt`，然后重启服务。
+- 一键脚本：Windows 双击 `update.bat`，Linux/macOS 运行 `bash update.sh`——它会自动 `git pull` + 更新依赖，完成后提示你重启。
+- 不用 Git：去仓库下载最新 zip，解压后**覆盖代码文件**即可，覆盖时**不要动 `data/` 和 `.env`**。
+
+更新后重启服务（`python app.py`），启动时会自动运行幂等的数据库迁移，给你已有的库补上新字段，不会丢数据。
+
+页面顶部会在检测到新版本时弹出「有新版本，建议更新」横幅（见下「版本提示」）。
+
+### 维护者：如何发布一个新版本
+
+1. 改完代码后，把 `sakura/__init__.py` 里的 `__version__` 往上加一档（如 `1.0.0` → `1.0.1`）。
+2. `git commit` 并 `git push`。
+3. 在 GitHub 上 **Create a new release**，tag 填成对应版本（如 `v1.0.1`，`v` 前缀可有可无）。
+4. 各部署在下次检查（缓存过期后）就会看到更新提示。
+
+发版纪律（务必遵守，否则会坑到 `git pull` 的老用户）：
+
+- `__version__` 必须和 release tag 对应着**单调递增**（版本号按数字段比较：`1.0.1 < 1.1.0`）。
+- 数据库迁移**只用幂等的 `ADD COLUMN` + 启动时迁移**，绝不写删列、改类型、清数据这类破坏性迁移，保证老用户更新后数据不炸。
+
+### 版本提示（in-app 更新通知）
+
+程序会调用 GitHub Releases API 比对最新 tag，有新版时在页面顶部提示并给出下载链接。它**只提示、不自动改代码**。
+
+- 开启方式：在 `.env` 设 `SAKURA_UPDATE_REPO=你的GitHub用户名/仓库名`（如 `Sakura-Yanxi/sakura-tiku`）。
+- 默认值是占位仓库 `Sakura-Yanxi/-`，**未配置真实仓库前检查处于关闭状态**，不会弹窗。
+- 检查带超时、结果缓存约 6 小时，断网/限流/私有库等任何失败都会静默跳过，不影响使用。
+- 用户点「关闭」后，同一版本不再重复提示。
 
 ## 部署说明
 

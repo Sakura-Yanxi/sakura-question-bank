@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sakura做题集 · Study OS</title>
+    <link rel="icon" type="image/png" href="/static/assets/sakura-logo-demo.png?v=20260613-demo-logo" />
     
     <script src="https://unpkg.com/lucide@latest"></script>
 
@@ -11,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260608-security-hardening" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260613-textbook-fluid-reader" />
     <script>
       window.MathJax = {
         tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] },
@@ -21,11 +22,12 @@
     <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
   </head>
   <body>
+    <div id="updateBanner" class="update-banner hidden" role="status"></div>
     <div class="app-container">
       
       <aside class="sidebar">
         <div class="brand">
-          <span class="brand-mark"><i data-lucide="sigma"></i></span>
+          <span class="brand-mark"><img src="/static/assets/sakura-logo-demo-160.png?v=20260613-demo-logo" alt="Sakura logo" /></span>
           <div class="brand-text">
             <strong>Sakura做题集</strong>
             <small>做题 · 错题 · 复盘</small>
@@ -59,6 +61,11 @@
               <div class="countdown-wrapper">
                 <p class="countdown-line"><i data-lucide="hourglass"></i><span id="countdownText">加载中...</span></p>
               </div>
+            </div>
+            <div id="dashboardMantra" class="topbar-mantra" aria-label="今日提醒">
+              <span>好好学习</span>
+              <span>好好吃饭</span>
+              <span>天天开心</span>
             </div>
             <div class="search-box">
               <i data-lucide="search"></i>
@@ -192,14 +199,38 @@
               <div class="panel textbook-page-panel">
                 <div class="panel-head">
                   <div class="panel-title"><span class="panel-icon"><i data-lucide="file-text"></i></span><div><h2>页面与段落</h2><p id="textbookPageMeta">先选择一本教材。</p></div></div>
-                  <div class="toolbar compact">
-                    <input id="textbookPageInput" type="number" min="1" value="1" />
-                    <button id="loadTextbookPage" class="ghost"><i data-lucide="search"></i>读取页</button>
+                  <div class="toolbar compact textbook-page-toolbar">
+                    <div class="page-stepper">
+                      <button id="prevTextbookPage" class="ghost icon-only" type="button" title="上一页"><i data-lucide="chevron-left"></i></button>
+                      <input id="textbookPageInput" type="number" min="1" value="1" />
+                      <button id="nextTextbookPage" class="ghost icon-only" type="button" title="下一页"><i data-lucide="chevron-right"></i></button>
+                    </div>
+                    <div class="textbook-action-row">
+                      <button id="loadTextbookPage" class="ghost"><i data-lucide="scan-text"></i>读取/OCR</button>
+                      <button id="readTextbookVision" class="ghost"><i data-lucide="scan-eye"></i>视觉读取</button>
+                      <button id="deleteTextbookPage" class="ghost danger"><i data-lucide="trash-2"></i>删除本页</button>
+                    </div>
                   </div>
+                </div>
+                <div id="textbookScanStatus" class="textbook-scan-status hidden" aria-live="polite">
+                  <div class="textbook-scan-row">
+                    <span id="textbookScanLabel">正在读取当前页...</span>
+                    <strong id="textbookScanPercent">0%</strong>
+                  </div>
+                  <div class="textbook-scan-track"><span id="textbookScanBar"></span></div>
                 </div>
                 <div class="textbook-page-layout">
                   <div class="textbook-image-wrap"><img id="textbookPageImage" class="hidden" alt="教材页截图" /></div>
-                  <div id="textbookParagraphs" class="textbook-paragraphs"></div>
+                  <div class="textbook-text-stack">
+                    <div id="textbookParagraphs" class="textbook-paragraphs"></div>
+                    <section id="textbookParagraphDetail" class="textbook-paragraph-detail hidden">
+                      <div class="detail-mini-head">
+                        <strong id="textbookParagraphDetailTitle">段落内容</strong>
+                        <button id="copyTextbookParagraph" class="ghost mini" type="button"><i data-lucide="copy"></i>复制</button>
+                      </div>
+                      <p id="textbookParagraphDetailText"></p>
+                    </section>
+                  </div>
                 </div>
               </div>
               <div class="panel textbook-chat-panel">
@@ -298,7 +329,7 @@
                 <label class="coach-field"><span>资料/做题本</span><select id="dailyRuleDocument"><option value="">全部资料</option></select></label>
                 <label class="coach-field"><span>知识点</span><select id="dailyRuleCategory"><option value="">全部知识点</option></select></label>
                 <label class="coach-field"><span>章节</span><select id="dailyRuleChapter"><option value="">全部章节</option></select></label>
-                <label class="coach-field"><span>推送范围</span><select id="dailyRuleStatus"><option value="active_wrong">当前错题+到期复习</option><option value="due">只看今天到期复习</option><option value="wrong">只看做错</option><option value="review">半会/需复习</option><option value="all_wrong_history">历史曾错题</option></select></label>
+                <label class="coach-field"><span>推送范围</span><select id="dailyRuleStatus"><option value="active_wrong">当前错题+艾宾浩斯到期</option><option value="due">只看艾宾浩斯到期</option><option value="wrong">只看做错</option><option value="review">半会/需复习</option><option value="all_wrong_history">历史曾错题</option></select></label>
                 <label class="coach-field"><span>每次题量</span><input id="dailyRuleLimit" type="number" min="1" max="30" value="5" /></label>
                 <label class="coach-field daily-rule-name-field"><span>规则名称</span><input id="dailyRuleName" type="text" readonly placeholder="将根据上方选择自动生成" /></label>
               </div>
@@ -462,7 +493,10 @@
                 <label class="coach-field"><span>晚间时间</span><input id="remindNightTime" type="time" value="20:00" /></label>
                 <label class="coach-field"><span>天气推送</span><select id="remindWeatherOn"><option value="1">开启</option><option value="0">关闭</option></select></label>
                 <label class="coach-field"><span>天气时间</span><input id="remindWeatherTime" type="time" value="22:30" /></label>
-                <label class="coach-field"><span>打卡入口</span><select id="checkinMode"><option value="wework">企业微信打卡</option><option value="pushplus">PushPlus 打卡</option><option value="local">本地按钮打卡</option></select></label>
+                <label class="coach-field"><span>打卡入口</span><select id="checkinMode"><option value="wework">企业微信打卡</option><option value="email">邮箱推送</option><option value="pushplus">PushPlus 打卡</option><option value="local">本地/全部通道</option></select></label>
+                <label class="coach-field"><span>复习范围</span><select id="remindDailyScope"><option value="due">艾宾浩斯到期</option><option value="active_wrong">当前错题</option><option value="all_wrong_history">全部错题历史</option></select></label>
+                <label class="coach-field"><span>最多题数</span><input id="remindDailyLimit" type="number" min="1" max="80" step="1" value="20" /></label>
+                <label class="coach-field"><span>PDF 附件</span><select id="remindSendPdf"><option value="1">发送 PDF</option><option value="0">只发文字</option></select></label>
               </div>
               <div class="remind-actions">
                 <button id="saveRemindSettings"><i data-lucide="save"></i>保存提醒设置</button>
@@ -707,6 +741,12 @@
                     <label class="coach-field"><span>Base URL</span><input id="llmBaseUrl" type="text" placeholder="https://api.deepseek.com" /></label>
                     <label class="coach-field"><span>模型名</span><input id="llmModel" type="text" placeholder="deepseek-chat" /></label>
                   </div>
+                  <p class="coach-hint">视觉模型（可选，用于读扫描件）。可与上面的文本模型不同家：DeepSeek 没有视觉模型，可在这里单独填通义千问等。Key/Base URL 留空则复用上面的文本配置。</p>
+                  <div class="llm-settings-grid">
+                    <label class="coach-field"><span>视觉 API Key</span><input id="llmVisionApiKey" type="password" placeholder="留空=复用上面的 Key" autocomplete="off" /></label>
+                    <label class="coach-field"><span>视觉 Base URL</span><input id="llmVisionBaseUrl" type="text" placeholder="如 https://dashscope.aliyuncs.com/compatible-mode/v1" /></label>
+                    <label class="coach-field"><span>视觉模型名</span><input id="llmVisionModel" type="text" placeholder="留空=不读图，如 qwen-vl-max / gpt-4o" /></label>
+                  </div>
                   <div class="ai-chat-actions">
                     <button id="saveLlmSettings" class="ghost"><i data-lucide="save"></i>保存 API 设置</button>
                     <span id="llmSettingsHint" class="coach-hint"></span>
@@ -747,23 +787,24 @@
       <p class="lightbox-tip">滚轮缩放 · 拖拽移动 · 双击复位 · Esc 关闭</p>
     </dialog>
 
-    <script src="/static/js/system/reminders.js?v=20260608-security-hardening"></script>
-    <script src="/static/js/core/app.js?v=20260608-security-hardening"></script>
+    <script src="/static/js/system/reminders.js?v=20260609-reminder-module-bindings"></script>
+    <script src="/static/js/core/app.js?v=20260609-core-binding-cleanup"></script>
     <script src="/static/js/content/dashboard.js?v=20260608-module-folders"></script>
     <script src="/static/js/content/documents.js?v=20260608-teacher-memory-subjects"></script>
-    <script src="/static/js/content/library.js?v=20260608-module-folders"></script>
+    <script src="/static/js/content/library.js?v=20260613-audit-fixes"></script>
     <script src="/static/js/content/question_detail.js?v=20260608-review-notes"></script>
     <script src="/static/js/review/archives.js?v=20260608-teacher-memory-subjects"></script>
     <script src="/static/js/review/chapter_stats.js?v=20260608-module-folders"></script>
     <script src="/static/js/content/upload.js?v=20260608-module-folders"></script>
-    <script src="/static/js/review/mistakes.js?v=20260608-module-folders"></script>
-    <script src="/static/js/ai/ai_chat.js?v=20260608-memory-compression"></script>
+    <script src="/static/js/review/mistakes.js?v=20260609-mistake-filter-reset"></script>
+    <script src="/static/js/ai/ai_chat.js?v=20260610-vision-provider"></script>
     <script src="/static/js/review/reflection.js?v=20260608-module-folders"></script>
-    <script src="/static/js/content/textbook.js?v=20260608-module-folders"></script>
-    <script src="/static/js/review/daily.js?v=20260608-module-folders"></script>
+    <script src="/static/js/content/textbook.js?v=20260613-textbook-async-guards"></script>
+    <script src="/static/js/review/daily.js?v=20260613-audit-fixes"></script>
     <script src="/static/js/ai/coach.js?v=20260608-module-folders"></script>
-    <script src="/static/js/review/mistake_export.js?v=20260608-module-folders"></script>
+    <script src="/static/js/review/mistake_export.js?v=20260613-audit-fixes"></script>
     <script src="/static/js/system/backup.js?v=20260608-module-folders"></script>
+    <script src="/static/js/system/update.js?v=20260610-update-check"></script>
     
     <script>
       lucide.createIcons();

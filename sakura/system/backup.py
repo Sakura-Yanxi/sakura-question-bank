@@ -252,6 +252,50 @@ def build_backup_zip_file(
     return target
 
 
+def _relocate_asset_path(old: str, target_dir: Path) -> str:
+    """Re-anchor a stored asset path onto this machine's data dir, keeping the file name.
+    Handles both Windows ('\\') and POSIX ('/') separators from the source machine."""
+    if not old:
+        return old
+    name = Path(str(old).replace("\\", "/")).name
+    if not name:
+        return old
+    return str(target_dir / name)
+
+
+def rewrite_asset_paths(db_path: Path, *, uploads_dir: Path, pages_dir: Path) -> dict:
+    """After a restore, the copied DB still holds the SOURCE machine's absolute asset paths.
+    Re-anchor them onto this machine's upload/page dirs (matched by file name) so images
+    resolve here and to_public_path()'s relative_to(ROOT) no longer raises ValueError."""
+    mapping = [
+        ("documents", "stored_path", uploads_dir),
+        ("textbooks", "stored_path", uploads_dir),
+        ("questions", "image_path", pages_dir),
+        ("textbook_pages", "image_path", pages_dir),
+    ]
+    counts: dict[str, int] = {}
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.row_factory = sqlite3.Row
+        for table, column, target_dir in mapping:
+            if target_dir is None or not _table_exists(conn, table):
+                continue
+            rows = conn.execute(
+                f"SELECT id, {column} value FROM {table} WHERE {column} IS NOT NULL AND {column} <> ''"
+            ).fetchall()
+            updated = 0
+            for row in rows:
+                new_value = _relocate_asset_path(row["value"], target_dir)
+                if new_value != row["value"]:
+                    conn.execute(f"UPDATE {table} SET {column} = ? WHERE id = ?", (new_value, row["id"]))
+                    updated += 1
+            counts[f"{table}.{column}"] = updated
+        conn.commit()
+    finally:
+        conn.close()
+    return counts
+
+
 def restore_backup_zip(
     zip_bytes: bytes,
     *,
@@ -292,7 +336,9 @@ def restore_backup_zip(
             extract_root = (tmp_path / "extract").resolve()
             for member in zf.infolist():
                 target = (extract_root / member.filename).resolve()
-                if not str(target).startswith(str(extract_root)):
+                try:
+                    target.relative_to(extract_root)
+                except ValueError:
                     raise ValueError("迁移包路径不安全，已拒绝导入。")
             zf.extractall(extract_root)
             print("[migration] archive extracted", flush=True)
@@ -313,5 +359,11 @@ def restore_backup_zip(
                 shutil.copytree(source, target, dirs_exist_ok=True)
             print(f"[migration] folder restored: {name}", flush=True)
     init_db()
+    rewritten = rewrite_asset_paths(
+        db_path,
+        uploads_dir=folders.get("uploads"),
+        pages_dir=folders.get("pages"),
+    )
+    print(f"[migration] asset paths re-anchored: {rewritten}", flush=True)
     print("[migration] restore done", flush=True)
-    return {"ok": True, "backup_path": str(current_backup)}
+    return {"ok": True, "backup_path": str(current_backup), "rewritten_paths": rewritten}

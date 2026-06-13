@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 import traceback
 import uuid
 import warnings
@@ -25,11 +26,8 @@ import cgi
 
 import fitz
 from sakura.content.pdf import (
-    PreviousQuestionState,
     crop_image_by_ratio,
-    page_range,
     render_page_image,
-    save_uploaded_pdf,
 )
 from sakura.ai import client as sakura_ai
 from sakura.ai import coach as sakura_coach
@@ -38,8 +36,8 @@ from sakura.ai import teacher_memory as sakura_teacher_memory
 from sakura.content import classify as sakura_classify
 from sakura.content import documents as sakura_documents
 from sakura.content import filters as sakura_filters
-from sakura.content import importer as sakura_import
 from sakura.content import models as sakura_models
+from sakura.content import ocr as sakura_ocr
 from sakura.content import pdf as sakura_pdf
 from sakura.content import questions as sakura_questions
 from sakura.content import textbook as sakura_textbook
@@ -60,9 +58,15 @@ from sakura.system import backup as sakura_backup
 from sakura.system import email as sakura_email
 from sakura.system import migration as sakura_migration
 from sakura.system import notifications as sakura_notifications
+from sakura.system import practice_pages as sakura_practice_pages
 from sakura.system import reminders as sakura_reminders
 from sakura.system import settings as sakura_settings
+from sakura.system import update as sakura_update
 from sakura.system import weather as sakura_weather
+
+from sakura import __version__ as APP_VERSION
+from sakura.api import document_runtime as sakura_document_runtime
+from sakura.api import textbook_runtime as sakura_textbook_runtime
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -71,7 +75,40 @@ PAGE_DIR = DATA_DIR / "pages"
 STATIC_DIR = ROOT / "static"
 DB_PATH = DATA_DIR / "gaoshu_demo.sqlite3"
 
-sakura_config.load_local_env(ROOT)
+LOCAL_SETTINGS_ENV_KEYS = {
+    "APP_PUBLIC_URL",
+    "EMAIL_ENABLED",
+    "EMAIL_FROM",
+    "EMAIL_FROM_NAME",
+    "EMAIL_HOST",
+    "EMAIL_PASSWORD",
+    "EMAIL_PORT",
+    "EMAIL_TO",
+    "EMAIL_USE_SSL",
+    "EMAIL_USE_STARTTLS",
+    "EMAIL_USER",
+    "LLM_API_KEY",
+    "LLM_BASE_URL",
+    "LLM_MODEL",
+    "LLM_VISION_API_KEY",
+    "LLM_VISION_BASE_URL",
+    "LLM_VISION_MODEL",
+    "PUSHPLUS_TOKEN",
+    "REMIND_CHECKIN_MODE",
+    "REMIND_DAILY_LIMIT",
+    "REMIND_DAILY_SCOPE",
+    "REMIND_MORNING_ON",
+    "REMIND_MORNING_TIME",
+    "REMIND_NIGHT_ON",
+    "REMIND_NIGHT_TIME",
+    "REMIND_SEND_PDF",
+    "REMIND_WEATHER_ON",
+    "REMIND_WEATHER_TIME",
+    "WEATHER_CITY",
+    "WEWORK_BOT_WEBHOOK",
+}
+
+sakura_config.load_local_env(ROOT, override_keys=LOCAL_SETTINGS_ENV_KEYS)
 
 PORT = int(os.getenv("PORT", "8000"))
 ADMIN_PASSWORD = os.getenv("SAKURA_ADMIN_PASSWORD") or os.getenv("APP_PASSWORD") or ""
@@ -87,6 +124,15 @@ DEMO_MODE = os.getenv("SAKURA_DEMO_MODE", "0").strip().lower() in {"1", "true", 
 LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("MIMO_API_KEY") or os.getenv("DEEPSEEK_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL") or os.getenv("DEEPSEEK_BASE_URL") or "https://api.xiaomimimo.com/v1"
 LLM_MODEL = os.getenv("LLM_MODEL") or os.getenv("DEEPSEEK_MODEL") or "mimo-v2.5-pro"
+# Optional multimodal (vision) model for scanned textbook pages that have no text layer.
+# Leave the model empty to disable image-based reading. Must accept image input
+# (e.g. qwen-vl-max, gpt-4o, gpt-4o-mini, doubao-vision).
+# The vision provider can be DIFFERENT from the text model (e.g. text=DeepSeek which has no
+# vision, vision=Qwen-VL): it has its own key/base_url, each falling back to the text LLM's
+# value when left blank (so a same-provider setup only needs to fill the model name).
+LLM_VISION_MODEL = os.getenv("LLM_VISION_MODEL", "").strip()
+LLM_VISION_API_KEY = os.getenv("LLM_VISION_API_KEY", "").strip()
+LLM_VISION_BASE_URL = os.getenv("LLM_VISION_BASE_URL", "").strip()
 
 # === 微信推送（PushPlus）===
 # 在 https://www.pushplus.plus 用微信扫码登录，复制 token 后设环境变量 PUSHPLUS_TOKEN。
@@ -112,6 +158,30 @@ REMIND_NIGHT_TIME = os.getenv("REMIND_NIGHT_TIME", "20:00")
 REMIND_WEATHER_ON = os.getenv("REMIND_WEATHER_ON", "1")
 REMIND_WEATHER_TIME = os.getenv("REMIND_WEATHER_TIME", "22:30")
 REMIND_CHECKIN_MODE = sakura_reminders.normalize_checkin_mode(os.getenv("REMIND_CHECKIN_MODE", "wework"))
+REMIND_DAILY_SCOPE = sakura_reminders.normalize_daily_scope(os.getenv("REMIND_DAILY_SCOPE", "due"))
+REMIND_DAILY_LIMIT = sakura_reminders.normalize_daily_limit(os.getenv("REMIND_DAILY_LIMIT", "20"))
+REMIND_SEND_PDF = sakura_reminders.normalize_onoff(os.getenv("REMIND_SEND_PDF", "1"))
+INTERNAL_SCHEDULER_ENABLED = os.getenv("SAKURA_INTERNAL_SCHEDULER", "1").strip().lower() not in {"0", "false", "no", "off"}
+# GitHub "owner/repo" used to check for a newer release (notify-only). Set this to your fork/repo;
+# the placeholder default keeps the check dormant until configured.
+UPDATE_REPO = os.getenv("SAKURA_UPDATE_REPO", "Sakura-Yanxi/-").strip()
+
+
+def env_int(name: str, default: int, minimum: int | None = None) -> int:
+    try:
+        value = int(str(os.getenv(name, str(default))).strip())
+    except (TypeError, ValueError):
+        value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    return value
+
+
+# Cap at 50s as well as a 10s floor: reminders match an exact HH:MM, so a poll gap >60s could
+# straddle and skip a whole target minute. <=50s guarantees at least one poll per minute.
+SCHEDULER_POLL_SECONDS = min(env_int("SAKURA_SCHEDULER_POLL_SECONDS", 30, minimum=10), 50)
+_scheduler_started = False
+_scheduler_lock = threading.Lock()
 DEFAULT_SUBJECT = "未分类"
 DEFAULT_CATEGORY = "待归类"
 DEFAULT_CHAPTER = "未识别章节"
@@ -234,7 +304,30 @@ def migrate_db(conn: sqlite3.Connection) -> None:
 
 def to_public_path(path: str | Path) -> str:
     absolute = Path(path).resolve()
-    return "/" + absolute.relative_to(ROOT).as_posix()
+    try:
+        return "/data/pages/" + absolute.relative_to(PAGE_DIR).as_posix()
+    except ValueError:
+        pass
+    try:
+        return "/static/" + absolute.relative_to(STATIC_DIR).as_posix()
+    except ValueError:
+        # Path resolves outside the project root — e.g. a stale absolute path from a backup
+        # restored on a different machine. Recover the data-relative URL by file name so the
+        # page still renders (image may 404) instead of 500-ing the whole list/detail view.
+        normalized = str(path).replace("\\", "/")
+        marker = normalized.rfind("/data/pages/")
+        if marker != -1:
+            return normalized[marker:]
+        name = Path(normalized).name
+        return "/data/pages/" + name if name else ""
+
+
+def public_file_base_for_path(path: str) -> Path | None:
+    if path.startswith("/static/"):
+        return STATIC_DIR
+    if path.startswith("/data/pages/"):
+        return PAGE_DIR
+    return None
 
 
 def extract_question_no(text: str) -> str:
@@ -434,7 +527,33 @@ def llm_enabled() -> bool:
 
 
 def llm_settings_view() -> dict:
-    return sakura_settings.llm_settings_view(LLM_API_KEY, LLM_BASE_URL, LLM_MODEL)
+    return sakura_settings.llm_settings_view(
+        LLM_API_KEY,
+        LLM_BASE_URL,
+        LLM_MODEL,
+        LLM_VISION_MODEL,
+        LLM_VISION_API_KEY,
+        LLM_VISION_BASE_URL,
+    )
+
+
+def vision_api_key() -> str:
+    return LLM_VISION_API_KEY or LLM_API_KEY
+
+
+def vision_base_url() -> str:
+    return LLM_VISION_BASE_URL or LLM_BASE_URL
+
+
+def vision_enabled() -> bool:
+    return bool(LLM_VISION_MODEL and vision_api_key())
+
+
+def call_llm_vision(messages: list[dict], temperature: float = 0.3) -> str:
+    """Vision-capable chat call (image + text) using the configured multimodal model.
+    The vision provider's key/base_url are independent from the text model's, falling back to
+    the text model's values when left blank."""
+    return sakura_ai.call_llm(vision_api_key(), vision_base_url(), LLM_VISION_MODEL, messages, temperature)
 
 
 def current_email_settings() -> sakura_email.EmailSettings:
@@ -458,6 +577,8 @@ def notification_channels_configured(checkin_mode: str | None = None) -> bool:
         return bool(WEWORK_BOT_WEBHOOK)
     if mode == "pushplus":
         return bool(PUSHPLUS_TOKEN)
+    if mode == "email":
+        return sakura_email.is_configured(current_email_settings())
     return bool(
         WEWORK_BOT_WEBHOOK
         or PUSHPLUS_TOKEN
@@ -474,8 +595,16 @@ def notification_settings_view() -> dict:
     )
 
 
-def update_llm_runtime_settings(api_key: str | None = None, base_url: str | None = None, model: str | None = None) -> dict:
+def update_llm_runtime_settings(
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
+    vision_model: str | None = None,
+    vision_api_key: str | None = None,
+    vision_base_url: str | None = None,
+) -> dict:
     global LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+    global LLM_VISION_MODEL, LLM_VISION_API_KEY, LLM_VISION_BASE_URL
     updates = {}
     if api_key is not None and api_key.strip():
         LLM_API_KEY = api_key.strip()
@@ -489,6 +618,20 @@ def update_llm_runtime_settings(api_key: str | None = None, base_url: str | None
         LLM_MODEL = model.strip()
         os.environ["LLM_MODEL"] = LLM_MODEL
         updates["LLM_MODEL"] = LLM_MODEL
+    # Vision fields are optional and clearable: an explicit empty string clears them (empty
+    # vision_model disables image reading; empty key/url falls back to the text model's value).
+    if vision_model is not None:
+        LLM_VISION_MODEL = vision_model.strip()
+        os.environ["LLM_VISION_MODEL"] = LLM_VISION_MODEL
+        updates["LLM_VISION_MODEL"] = LLM_VISION_MODEL
+    if vision_api_key is not None:
+        LLM_VISION_API_KEY = vision_api_key.strip()
+        os.environ["LLM_VISION_API_KEY"] = LLM_VISION_API_KEY
+        updates["LLM_VISION_API_KEY"] = LLM_VISION_API_KEY
+    if vision_base_url is not None:
+        LLM_VISION_BASE_URL = vision_base_url.strip().rstrip("/")
+        os.environ["LLM_VISION_BASE_URL"] = LLM_VISION_BASE_URL
+        updates["LLM_VISION_BASE_URL"] = LLM_VISION_BASE_URL
     if updates:
         sakura_config.write_local_env(ROOT, updates)
     return llm_settings_view()
@@ -575,7 +718,7 @@ def normalize_public_url(value: str) -> str:
 
 
 def reminder_settings_view(cron_status: dict | None = None) -> dict:
-    return sakura_reminders.ReminderSettings(
+    payload = sakura_reminders.ReminderSettings(
         morning_on=REMIND_MORNING_ON,
         morning_time=REMIND_MORNING_TIME,
         night_on=REMIND_NIGHT_ON,
@@ -583,12 +726,23 @@ def reminder_settings_view(cron_status: dict | None = None) -> dict:
         weather_on=REMIND_WEATHER_ON,
         weather_time=REMIND_WEATHER_TIME,
         checkin_mode=REMIND_CHECKIN_MODE,
+        daily_scope=REMIND_DAILY_SCOPE,
+        daily_limit=REMIND_DAILY_LIMIT,
+        send_pdf=REMIND_SEND_PDF,
     ).as_payload(cron_status)
+    payload["scheduler"] = {
+        "enabled": INTERNAL_SCHEDULER_ENABLED,
+        "poll_seconds": SCHEDULER_POLL_SECONDS,
+        "started": _scheduler_started,
+        "platform": os.name,
+    }
+    return payload
 
 
 def update_reminder_runtime_settings(payload: dict) -> dict:
     global REMIND_MORNING_ON, REMIND_MORNING_TIME, REMIND_NIGHT_ON, REMIND_NIGHT_TIME
     global REMIND_WEATHER_ON, REMIND_WEATHER_TIME, REMIND_CHECKIN_MODE
+    global REMIND_DAILY_SCOPE, REMIND_DAILY_LIMIT, REMIND_SEND_PDF
     current = sakura_reminders.ReminderSettings(
         morning_on=REMIND_MORNING_ON,
         morning_time=REMIND_MORNING_TIME,
@@ -597,6 +751,9 @@ def update_reminder_runtime_settings(payload: dict) -> dict:
         weather_on=REMIND_WEATHER_ON,
         weather_time=REMIND_WEATHER_TIME,
         checkin_mode=REMIND_CHECKIN_MODE,
+        daily_scope=REMIND_DAILY_SCOPE,
+        daily_limit=REMIND_DAILY_LIMIT,
+        send_pdf=REMIND_SEND_PDF,
     )
     settings = sakura_reminders.merge_settings(current, payload)
     REMIND_MORNING_ON = settings.morning_on
@@ -606,6 +763,9 @@ def update_reminder_runtime_settings(payload: dict) -> dict:
     REMIND_WEATHER_ON = settings.weather_on
     REMIND_WEATHER_TIME = settings.weather_time
     REMIND_CHECKIN_MODE = settings.checkin_mode
+    REMIND_DAILY_SCOPE = settings.daily_scope
+    REMIND_DAILY_LIMIT = settings.daily_limit
+    REMIND_SEND_PDF = settings.send_pdf
     updates = settings.as_env()
     for key, value in updates.items():
         os.environ[key] = value
@@ -1090,6 +1250,21 @@ def send_notification(title: str, content: str, checkin_mode: str | None = None)
             content,
             pushplus_token=PUSHPLUS_TOKEN,
         )
+    elif mode == "email":
+        email_settings = current_email_settings()
+        if not sakura_email.is_configured(email_settings):
+            return {
+                "ok": False,
+                "configured": False,
+                "selected_channel": mode,
+                "detail": "未配置邮箱 SMTP。",
+                "results": [],
+            }
+        result = sakura_notifications.send_notification(
+            title,
+            content,
+            email_settings=email_settings,
+        )
     else:
         result = sakura_notifications.send_notification(
             title,
@@ -1112,6 +1287,33 @@ def notification_response_detail(result: dict) -> object:
 
 def notification_response_configured(result: dict, mode: str) -> bool:
     return result.get("configured", notification_channels_configured(mode))
+
+
+def send_reminder_payload(reminder: dict, mode: str, attach_pdf: bool = True) -> tuple[dict, dict | None]:
+    result = send_notification(reminder["title"], reminder["content"], mode)
+    pdf_result = None
+    if attach_pdf:
+        pdf_result = send_practice_pdf_if_available(reminder, result.get("selected_channel", mode))
+        if pdf_result:
+            result["practice_pdf"] = pdf_result
+    return result, pdf_result
+
+
+def reminder_response_payload(kind: str, reminder: dict, result: dict, mode: str, **extra: object) -> dict:
+    selected_channel = result.get("selected_channel", mode)
+    payload = {
+        "ok": bool(result.get("ok")),
+        "kind": kind,
+        "selected_channel": selected_channel,
+        "title": reminder.get("title", ""),
+        "detail": notification_response_detail(result),
+        "configured": notification_response_configured(result, selected_channel),
+    }
+    for key in ("batch_id", "practice_url", "practice_pdf"):
+        if key in reminder or key in result:
+            payload[key] = result.get(key, reminder.get(key, ""))
+    payload.update(extra)
+    return payload
 
 
 def send_notification_all_channels(title: str, content: str) -> dict:
@@ -1155,6 +1357,134 @@ def build_night_check(conn: sqlite3.Connection) -> dict:
     )
 
 
+def reminder_kinds_for_minute(minute: str, schedules: list[tuple[str, str, str]]) -> list[str]:
+    return [kind for kind, enabled, target_minute in schedules if enabled == "1" and target_minute == minute]
+
+
+def scheduled_reminder_kinds(now: datetime | None = None) -> list[str]:
+    now = now or datetime.now()
+    return reminder_kinds_for_minute(
+        now.strftime("%H:%M"),
+        [
+            ("morning", REMIND_MORNING_ON, REMIND_MORNING_TIME),
+            ("night", REMIND_NIGHT_ON, REMIND_NIGHT_TIME),
+            ("weather", REMIND_WEATHER_ON, REMIND_WEATHER_TIME),
+        ],
+    )
+
+
+def claim_reminder_dispatch(conn: sqlite3.Connection, kind: str, now: datetime) -> bool:
+    day = now.date().isoformat()
+    minute_key = now.strftime("%Y-%m-%d %H:%M")
+    stamp = now.isoformat(timespec="seconds")
+    try:
+        conn.execute(
+            """
+            INSERT INTO reminder_dispatch_log (day, kind, minute_key, status, detail_json, created_at, updated_at)
+            VALUES (?, ?, ?, 'running', '{}', ?, ?)
+            """,
+            (day, kind, minute_key, stamp, stamp),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+def finish_reminder_dispatch(conn: sqlite3.Connection, kind: str, now: datetime, status: str, detail: dict) -> None:
+    conn.execute(
+        """
+        UPDATE reminder_dispatch_log
+        SET status = ?, detail_json = ?, updated_at = ?
+        WHERE day = ? AND kind = ? AND minute_key = ?
+        """,
+        (
+            status,
+            json.dumps(detail, ensure_ascii=False, default=str)[:4000],
+            datetime.now().isoformat(timespec="seconds"),
+            now.date().isoformat(),
+            kind,
+            now.strftime("%Y-%m-%d %H:%M"),
+        ),
+    )
+    conn.commit()
+
+
+def build_scheduled_reminder(conn: sqlite3.Connection, kind: str) -> dict:
+    if kind == "morning":
+        return build_morning_reminder(conn)
+    if kind == "night":
+        return build_night_check(conn)
+    if kind == "weather":
+        return build_weather_reminder(conn)
+    return build_daily_reminder(conn)
+
+
+def dispatch_scheduled_reminder(kind: str, mode: str | None = None) -> dict:
+    now = datetime.now()
+    conn = connect()
+    try:
+        if not claim_reminder_dispatch(conn, kind, now):
+            return {"ok": True, "skipped": True, "kind": kind, "detail": "already dispatched for this minute"}
+        try:
+            payload = build_scheduled_reminder(conn, kind)
+            conn.commit()
+            attach_pdf = kind in {"daily", "morning"}
+            result, _ = send_reminder_payload(payload, mode or REMIND_CHECKIN_MODE, attach_pdf=attach_pdf)
+        except Exception as exc:
+            traceback.print_exc()
+            result = {
+                "ok": False,
+                "selected_channel": mode or REMIND_CHECKIN_MODE,
+                "detail": str(exc),
+                "configured": notification_channels_configured(mode or REMIND_CHECKIN_MODE),
+            }
+            payload = {"title": f"{kind} reminder failed"}
+        finish_reminder_dispatch(
+            conn,
+            kind,
+            now,
+            "sent" if result.get("ok") else "failed",
+            {"title": payload.get("title"), "result": result},
+        )
+    finally:
+        conn.close()
+    return {
+        "ok": bool(result.get("ok")),
+        "kind": kind,
+        "selected_channel": result.get("selected_channel", mode or REMIND_CHECKIN_MODE),
+        "title": payload.get("title", ""),
+        "detail": notification_response_detail(result),
+        "configured": notification_response_configured(result, result.get("selected_channel", mode or REMIND_CHECKIN_MODE)),
+    }
+
+
+def reminder_scheduler_loop() -> None:
+    print("[sakura scheduler] internal reminder scheduler started", flush=True)
+    while True:
+        try:
+            if INTERNAL_SCHEDULER_ENABLED:
+                for kind in scheduled_reminder_kinds(datetime.now()):
+                    result = dispatch_scheduled_reminder(kind)
+                    print(f"[sakura scheduler] {kind}: {result}", flush=True)
+        except Exception:
+            traceback.print_exc()
+        time.sleep(SCHEDULER_POLL_SECONDS)
+
+
+def start_internal_scheduler() -> None:
+    global _scheduler_started
+    if not INTERNAL_SCHEDULER_ENABLED:
+        print("[sakura scheduler] disabled by SAKURA_INTERNAL_SCHEDULER=0", flush=True)
+        return
+    with _scheduler_lock:
+        if _scheduler_started:
+            return
+        worker = threading.Thread(target=reminder_scheduler_loop, name="sakura-reminder-scheduler", daemon=True)
+        worker.start()
+        _scheduler_started = True
+
+
 def build_mistakes_pdf(conn: sqlite3.Connection, query: dict, mistakes_only: bool = True) -> tuple[bytes, int]:
     return sakura_export.build_filtered_mistakes_pdf(
         conn,
@@ -1163,6 +1493,67 @@ def build_mistakes_pdf(conn: sqlite3.Connection, query: dict, mistakes_only: boo
         build_question_filters=build_question_filters,
         normalize_meta_tags=normalize_meta_tags,
     )
+
+
+def build_practice_batch_pdf(conn: sqlite3.Connection, batch_id: str) -> tuple[bytes, int]:
+    rows = conn.execute(
+        """
+        SELECT
+            q.*,
+            COALESCE(NULLIF(d.title, ''), d.filename) document_title,
+            d.subject,
+            d.stored_path
+        FROM practice_batch_items p
+        JOIN questions q ON q.id = p.question_id
+        JOIN documents d ON d.id = q.document_id
+        WHERE p.batch_id = ?
+        ORDER BY p.position ASC
+        """,
+        (batch_id,),
+    ).fetchall()
+    return sakura_export.build_mistakes_pdf(rows, normalize_meta_tags)
+
+
+def send_practice_pdf_if_available(reminder: dict, mode: str) -> dict | None:
+    if REMIND_SEND_PDF != "1":
+        return {"ok": True, "channel": "practice_pdf", "skipped": True, "detail": "PDF sending is disabled."}
+    if mode not in {"wework", "email", "local"}:
+        return None
+    batch_id = reminder.get("batch_id")
+    if not batch_id:
+        return None
+    try:
+        with connect() as conn:
+            pdf_bytes, count = build_practice_batch_pdf(conn, batch_id)
+        if count <= 0:
+            return {"ok": True, "channel": "practice_pdf", "skipped": True, "detail": "本次复习包没有匹配题目，未生成 PDF。"}
+        filename = f"sakura_daily_{date.today().isoformat()}_{count}q.pdf"
+        results = []
+        if mode in {"wework", "local"} and WEWORK_BOT_WEBHOOK:
+            results.append(sakura_notifications.send_wework_file(WEWORK_BOT_WEBHOOK, filename, pdf_bytes))
+        if mode in {"email", "local"}:
+            email_settings = current_email_settings()
+            if sakura_email.is_configured(email_settings):
+                results.append(
+                    sakura_email.send_email(
+                        email_settings,
+                        f"今日错题 PDF | {count} 道",
+                        "今日错题 PDF 已生成，附件中可直接查看或打印。",
+                        attachments=[(filename, pdf_bytes, "application/pdf")],
+                    )
+                )
+        if not results:
+            return {"ok": False, "channel": "practice_pdf", "error": "No file-capable channel is configured."}
+        return {
+            "ok": any(item.get("ok") for item in results),
+            "channel": "practice_pdf",
+            "filename": filename,
+            "bytes": len(pdf_bytes),
+            "results": results,
+        }
+    except Exception as exc:
+        traceback.print_exc()
+        return {"ok": False, "channel": "practice_pdf", "error": str(exc)}
 
 
 def load_daily_rules(conn: sqlite3.Connection, enabled_only: bool = False) -> list[dict]:
@@ -1185,6 +1576,8 @@ def build_daily_payload(conn: sqlite3.Connection) -> dict:
         find_foundation_questions=find_foundation_questions,
         default_subject=DEFAULT_SUBJECT,
         default_document_kind=DEFAULT_DOCUMENT_KIND,
+        daily_scope=REMIND_DAILY_SCOPE,
+        daily_limit=int(REMIND_DAILY_LIMIT),
     )
 
 
@@ -1218,61 +1611,62 @@ def apply_practice_feedback(conn: sqlite3.Connection, batch_id: str, q_id: str, 
     )
 
 
-def split_textbook_paragraphs(text: str) -> list[str]:
-    return sakura_textbook.split_textbook_paragraphs(text)
-
-
-def textbook_to_dict(row: sqlite3.Row) -> dict:
-    return sakura_textbook.textbook_to_dict(row)
-
-
-def textbook_page_to_dict(row: sqlite3.Row) -> dict:
-    return sakura_textbook.textbook_page_to_dict(row, to_public_path)
-
-
 def import_textbook_pdf(filename: str, pdf_bytes: bytes, title: str = "", subject: str = "") -> dict:
-    return sakura_textbook.import_textbook_pdf(
+    return sakura_textbook_runtime.import_textbook_pdf(
         filename,
         pdf_bytes,
         title=title,
         subject=subject,
         upload_dir=UPLOAD_DIR,
-        page_dir=PAGE_DIR,
         connect=connect,
-        render_page_image=render_page_image,
         normalize_label=normalize_label,
         default_subject=DEFAULT_SUBJECT,
     )
 
 
-def build_textbook_context(conn: sqlite3.Connection, textbook_id: str, page_number: int, paragraph_index: int = 0) -> tuple[dict, dict]:
-    return sakura_textbook.build_textbook_context(
+def build_textbook_context(
+    conn: sqlite3.Connection,
+    textbook_id: str,
+    page_number: int,
+    paragraph_index: int = 0,
+    *,
+    full_page_ocr: bool = True,
+) -> tuple[dict, dict]:
+    return sakura_textbook_runtime.build_textbook_context(
         conn,
         textbook_id,
         page_number,
         paragraph_index,
         to_public_path=to_public_path,
+        page_dir=PAGE_DIR,
+        render_page_image=render_page_image,
+        ocr_image_text=sakura_ocr.image_ocr_text,
+        full_page_ocr=full_page_ocr,
     )
 
 
 def explain_textbook_with_ai(book: dict, page: dict, message: str, history: list[dict]) -> str:
-    return sakura_textbook.explain_textbook(
+    return sakura_textbook_runtime.explain_textbook_with_ai(
         book,
         page,
         message,
         history,
         llm_enabled=llm_enabled(),
         call_llm_messages=call_llm_messages,
+        vision_enabled=vision_enabled(),
+        call_llm_vision=call_llm_vision,
+        image_to_data_url=sakura_ai.image_to_data_url,
     )
 
 
-def extract_text_and_chapters(pdf_path: Path, document_kind: str = DEFAULT_DOCUMENT_KIND) -> list[dict]:
-    return sakura_classify.extract_text_and_chapters(
-        pdf_path,
-        document_kind,
-        default_chapter=DEFAULT_CHAPTER,
-        mock_paper_kind=MOCK_PAPER_KIND,
-        mock_paper_chapter=MOCK_PAPER_CHAPTER,
+def explain_textbook_page_with_vision(book: dict, page: dict, message: str = "") -> str:
+    return sakura_textbook_runtime.explain_textbook_page_with_vision(
+        book,
+        page,
+        message,
+        vision_enabled=vision_enabled(),
+        call_llm_vision=call_llm_vision,
+        image_to_data_url=sakura_ai.image_to_data_url,
     )
 
 
@@ -1290,81 +1684,31 @@ def import_pdf(
     end_page: int | None = None,
     split_questions: bool = False,
 ) -> dict:
-    doc_id = uuid.uuid4().hex
-    pdf_path = save_uploaded_pdf(UPLOAD_DIR, doc_id, filename, pdf_bytes)
-    metadata = sakura_documents.import_metadata(
-        filename=filename,
+    return sakura_document_runtime.import_pdf(
+        filename,
+        pdf_bytes,
         title=title,
         subject=subject,
         document_kind=document_kind,
+        start_page=start_page,
+        end_page=end_page,
+        split_questions=split_questions,
+        upload_dir=UPLOAD_DIR,
+        page_dir=PAGE_DIR,
+        connect=connect,
         normalize_label=normalize_label,
         normalize_document_kind=normalize_document_kind,
+        classify_question=classify_question_locally,
+        new_chapter_state=new_chapter_state,
         default_subject=DEFAULT_SUBJECT,
-    )
-    title = metadata["title"]
-    subject = metadata["subject"]
-    document_kind = metadata["document_kind"]
-
-    now = datetime.now().isoformat(timespec="seconds")
-    inserted = []
-    pdf = fitz.open(pdf_path)
-    chapters = new_chapter_state()
-    try:
-        with connect() as conn:
-            sakura_documents.insert_document(
-                conn,
-                doc_id=doc_id,
-                title=title,
-                subject=subject,
-                document_kind=document_kind,
-                filename=filename,
-                stored_path=pdf_path,
-                page_count=pdf.page_count,
-                created_at=now,
-            )
-            page_start, page_end = page_range(pdf.page_count, start_page, end_page)
-            seq_no = 0
-            previous_question = PreviousQuestionState()
-            for index in range(page_start, page_end + 1):
-                page = pdf[index - 1]
-                seq_no, page_inserted = sakura_import.process_import_page(
-                    conn,
-                    page=page,
-                    page_dir=PAGE_DIR,
-                    doc_id=doc_id,
-                    page_number=index,
-                    seq_no=seq_no,
-                    subject=subject,
-                    document_kind=document_kind,
-                    split_questions=split_questions,
-                    chapters=chapters,
-                    previous_question=previous_question,
-                    created_at=now,
-                    default_chapter=DEFAULT_CHAPTER,
-                    mock_paper_kind=MOCK_PAPER_KIND,
-                    mock_paper_chapter=MOCK_PAPER_CHAPTER,
-                    classify_question=classify_question_locally,
-                )
-                inserted.extend(page_inserted)
-    finally:
-        pdf.close()
-
-    return sakura_documents.imported_document_payload(
-        doc_id=doc_id,
-        title=title,
-        subject=subject,
-        document_kind=document_kind,
-        filename=filename,
-        questions=inserted,
+        default_chapter=DEFAULT_CHAPTER,
+        mock_paper_kind=MOCK_PAPER_KIND,
+        mock_paper_chapter=MOCK_PAPER_CHAPTER,
     )
 
 
 def unlink_if_inside_data(path_value: str) -> None:
     sakura_documents.unlink_if_inside(DATA_DIR, path_value)
-
-
-def prune_empty_documents(conn: sqlite3.Connection) -> int:
-    return sakura_documents.prune_empty_documents(conn, data_dir=DATA_DIR)
 
 
 def set_migration_job(job_id: str, **updates) -> None:
@@ -1433,8 +1777,14 @@ class DemoHandler(BaseHTTPRequestHandler):
         return text_response(self, login_page(), content_type="text/html")
 
     def handle_login_post(self) -> None:
-        length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length).decode("utf-8") if length else ""
+        try:
+            raw = sakura_http.read_limited_body(
+                self.headers,
+                self.rfile,
+                max_bytes=sakura_http.MAX_FORM_BODY_BYTES,
+            ).decode("utf-8")
+        except (sakura_http.BadRequestError, UnicodeDecodeError) as exc:
+            return text_response(self, login_page(f"登录请求格式错误：{exc}"), HTTPStatus.BAD_REQUEST, "text/html")
         fields = parse_qs(raw)
         password = fields.get("password", [""])[0]
         ip = self.client_ip()
@@ -1489,8 +1839,14 @@ class DemoHandler(BaseHTTPRequestHandler):
             route = sakura_routes.get_dynamic_route(parsed.path)
             if route:
                 return self.dispatch_route(route, parse_qs(parsed.query))
-            if parsed.path.startswith("/static/") or parsed.path.startswith("/data/"):
-                return self.serve_file(ROOT / parsed.path.lstrip("/"))
+            base = public_file_base_for_path(parsed.path)
+            if base:
+                candidate = (ROOT / parsed.path.lstrip("/")).resolve()
+                try:
+                    candidate.relative_to(base.resolve())
+                except ValueError:
+                    return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
+                return self.serve_file(candidate)
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
         except Exception as exc:
             traceback.print_exc()
@@ -1529,6 +1885,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             if route:
                 return self.dispatch_route(route)
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
+        except sakura_http.BadRequestError as exc:
+            return json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         except Exception as exc:
             traceback.print_exc()
             return json_response(self, {"error": str(exc)}, 500)
@@ -1562,6 +1920,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             if route:
                 return self.dispatch_route(route)
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
+        except sakura_http.BadRequestError as exc:
+            return json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         except Exception as exc:
             traceback.print_exc()
             return json_response(self, {"error": str(exc)}, 500)
@@ -1573,10 +1933,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         return handler(*route.args)
 
     def read_json(self) -> dict:
-        length = int(self.headers.get("Content-Length", "0"))
-        if length == 0:
-            return {}
-        return json.loads(self.rfile.read(length).decode("utf-8"))
+        return sakura_http.read_json_body(self.headers, self.rfile)
 
     def serve_file(self, path: Path) -> None:
         return sakura_http.serve_file(self, path, ROOT)
@@ -1606,13 +1963,16 @@ class DemoHandler(BaseHTTPRequestHandler):
             return json_response(self, {"error": "教材精读目前只支持 PDF。"}, 400)
         title = form.getfirst("title", "")
         subject = form.getfirst("subject", "")
-        result = import_textbook_pdf(file_item.filename, file_item.file.read(), title, subject)
+        try:
+            result = import_textbook_pdf(file_item.filename, file_item.file.read(), title, subject)
+        except sakura_textbook.TextbookImportError as exc:
+            return json_response(self, {"error": str(exc)}, 400)
         return json_response(self, result)
 
     def handle_textbooks(self) -> None:
         with connect() as conn:
             rows = sakura_textbook.load_textbooks(conn)
-        return json_response(self, {"textbooks": [textbook_to_dict(row) for row in rows]})
+        return json_response(self, {"textbooks": [sakura_textbook.textbook_to_dict(row) for row in rows]})
 
     def handle_textbook_page(self, textbook_id: str, page_number: int) -> None:
         with connect() as conn:
@@ -1624,23 +1984,49 @@ class DemoHandler(BaseHTTPRequestHandler):
             deleted = sakura_textbook.delete_textbook(conn, textbook_id, delete_file=unlink_if_inside_data)
             if not deleted:
                 return json_response(self, {"error": "教材不存在。"}, 404)
+            unlink_if_inside_data(str(PAGE_DIR / f"{textbook_id}_textbook_current.png"))
         return json_response(self, {"ok": True})
+
+    def handle_delete_textbook_page(self, textbook_id: str, page_number: int) -> None:
+        with connect() as conn:
+            result = sakura_textbook.delete_textbook_page(
+                conn,
+                textbook_id,
+                page_number,
+                delete_file=unlink_if_inside_data,
+            )
+            if not result:
+                return json_response(self, {"error": "教材页不存在。"}, 404)
+            unlink_if_inside_data(str(PAGE_DIR / f"{textbook_id}_textbook_current.png"))
+        return json_response(self, result)
 
     def handle_textbook_chat(self) -> None:
         request = sakura_textbook.parse_textbook_request(self.read_json(), parse_positive_int=parse_positive_int)
         textbook_id = request["textbook_id"]
-        page_number = request["page_number"]
+        requested_page = request["page_number"]
         paragraph_index = request["paragraph_index"]
+        selected_paragraph_text = request["selected_paragraph_text"]
         message = request["message"]
         history = request["history"]
         if not textbook_id or not message:
             return json_response(self, {"error": "请选择教材并输入问题。"}, 400)
         with connect() as conn:
-            book, page = build_textbook_context(conn, textbook_id, page_number, paragraph_index)
+            if paragraph_index > 0 and selected_paragraph_text:
+                book, page = sakura_textbook.build_textbook_selected_paragraph_context(
+                    conn,
+                    textbook_id,
+                    requested_page,
+                    paragraph_index,
+                    selected_paragraph_text,
+                    to_public_path=to_public_path,
+                )
+            else:
+                book, page = build_textbook_context(conn, textbook_id, requested_page, paragraph_index)
+            pdf_page_number = int(page.get("pdf_page_number") or page.get("page_number") or requested_page)
             sakura_textbook.save_textbook_chat_message(
                 conn,
                 textbook_id=textbook_id,
-                page_number=page_number,
+                page_number=pdf_page_number,
                 role="user",
                 content=message,
                 content_limit=4000,
@@ -1653,28 +2039,66 @@ class DemoHandler(BaseHTTPRequestHandler):
             sakura_textbook.save_textbook_chat_message(
                 conn,
                 textbook_id=textbook_id,
-                page_number=page_number,
+                page_number=pdf_page_number,
                 role="assistant",
                 content=answer,
                 content_limit=8000,
             )
         return json_response(self, {"answer": answer, "textbook": book, "page": page, "has_key": llm_enabled()})
 
+    def handle_textbook_vision(self) -> None:
+        request = sakura_textbook.parse_textbook_request(self.read_json(), parse_positive_int=parse_positive_int)
+        textbook_id = request["textbook_id"]
+        requested_page = request["page_number"]
+        message = request["message"]
+        if not textbook_id:
+            return json_response(self, {"error": "请选择教材。"}, 400)
+        with connect() as conn:
+            book, page = build_textbook_context(conn, textbook_id, requested_page, 0, full_page_ocr=False)
+            vision_ok = False
+            try:
+                answer = explain_textbook_page_with_vision(book, page, message)
+                vision_ok = vision_enabled()
+            except Exception as exc:
+                traceback.print_exc()
+                answer = f"视觉模型读取失败：{exc}"
+            if vision_ok:
+                pdf_page_number = int(page.get("pdf_page_number") or page.get("page_number") or requested_page)
+                sakura_textbook.save_textbook_chat_message(
+                    conn,
+                    textbook_id=textbook_id,
+                    page_number=pdf_page_number,
+                    role="assistant",
+                    content=answer,
+                    content_limit=8000,
+                )
+        return json_response(self, {
+            "answer": answer,
+            "textbook": book,
+            "page": page,
+            "has_vision": vision_ok,
+        })
+
     def handle_textbook_memory(self) -> None:
         request = sakura_textbook.parse_textbook_request(self.read_json(), parse_positive_int=parse_positive_int)
         textbook_id = request["textbook_id"]
-        page_number = request["page_number"]
+        requested_page = request["page_number"]
         paragraph_index = request["paragraph_index"]
+        selected_paragraph_text = request["selected_paragraph_text"]
         history = request["history"]
         if not textbook_id:
             return json_response(self, {"error": "请选择教材。"}, 400)
         with connect() as conn:
-            book, page = build_textbook_context(conn, textbook_id, page_number, paragraph_index)
-            selected = page.get("selected_paragraph") or "未指定"
+            try:
+                book, _page = sakura_textbook.resolve_textbook_page_row(conn, textbook_id, requested_page)
+            except ValueError:
+                return json_response(self, {"error": "教材页不存在。"}, 404)
+            selected = selected_paragraph_text or "未指定"
+            display_page = int(requested_page)
             if llm_enabled() and history:
                 prompt = (
                     "请把下面教材精读对话压缩成一条长期学习记忆，100-180字，包含教材、页码、困惑、关键理解和后续复习建议。\n"
-                    f"教材：{book.get('title')}；页码：{page_number}；段落：{selected}\n"
+                    f"教材：{book.get('title')}；页码：{display_page}；段落：{selected}\n"
                     + json.dumps(history[-10:], ensure_ascii=False)
                 )
                 try:
@@ -1684,7 +2108,7 @@ class DemoHandler(BaseHTTPRequestHandler):
                     content = ""
             else:
                 last_user = next((item.get("content", "") for item in reversed(history) if item.get("role") == "user"), "")
-                content = f"教材精读：{book.get('title')} 第{page_number}页。困惑：{last_user or '未记录'}。关键段落：{selected[:160]}。后续复习时优先回看该页概念与例题。"
+                content = f"教材精读：{book.get('title')} 第{display_page}页。困惑：{last_user or '未记录'}。关键段落：{selected[:160]}。后续复习时优先回看该页概念与例题。"
             memory = save_teacher_memory(conn, content, "textbook", str(book.get("subject") or ""))
         return json_response(self, {"memory": memory})
 
@@ -1721,7 +2145,7 @@ class DemoHandler(BaseHTTPRequestHandler):
     def handle_questions(self, query: dict) -> None:
         where, params = build_question_filters(
             query,
-            ("category", "status", "document_id", "chapter", "subject", "search"),
+            ("category", "status", "document_id", "chapter", "subject", "document_kind", "search"),
         )
         with connect() as conn:
             rows, stats, subject_stats = sakura_questions.load_question_index(conn, where, params)
@@ -1961,6 +2385,10 @@ class DemoHandler(BaseHTTPRequestHandler):
         quote = MOTIVATIONAL_QUOTES[today.toordinal() % len(MOTIVATIONAL_QUOTES)]
         return json_response(self, {"quote": quote, "date": today.isoformat(), "count": len(MOTIVATIONAL_QUOTES)})
 
+    def handle_version(self) -> None:
+        info = sakura_update.check_for_update(APP_VERSION, UPDATE_REPO)
+        return json_response(self, {"app": "Sakura 做题集", **info})
+
     # === 学习档案 ===
     def _coach_settings_view(self, state: dict) -> dict:
         return {
@@ -2080,12 +2508,23 @@ class DemoHandler(BaseHTTPRequestHandler):
         api_key = str(payload.get("api_key", "")).strip()
         base_url = str(payload.get("base_url", "")).strip()
         model = str(payload.get("model", "")).strip()
-        if not any([api_key, base_url, model]):
+        # Visible vision text fields (model, base_url) are clearable: present-but-empty clears them.
+        has_vision_model = "vision_model" in payload
+        has_vision_url = "vision_base_url" in payload
+        vision_model = str(payload.get("vision_model", "")).strip()
+        vision_base_url = str(payload.get("vision_base_url", "")).strip()
+        # The vision API key is a password field: like the main key, empty means "keep existing"
+        # (so re-saving the form to tweak other fields never wipes a saved key).
+        vision_api_key = str(payload.get("vision_api_key", "")).strip()
+        if not any([api_key, base_url, model]) and not any([has_vision_model, has_vision_url, vision_api_key]):
             return json_response(self, {"error": "至少填写 API Key、Base URL 或模型名中的一项"}, 400)
         settings = update_llm_runtime_settings(
             api_key=api_key or None,
             base_url=base_url or None,
             model=model or None,
+            vision_model=vision_model if has_vision_model else None,
+            vision_api_key=vision_api_key or None,
+            vision_base_url=vision_base_url if has_vision_url else None,
         )
         return json_response(self, {
             **settings,
@@ -2426,116 +2865,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         safe_batch = re.sub(r"[^a-fA-F0-9]", "", batch_id)
         if not safe_batch:
             return text_response(self, "Invalid practice batch.", HTTPStatus.BAD_REQUEST)
-        html = f"""<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sakura 快速回填</title>
-  <style>
-    :root {{ --pink:#ec4899; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --ink:#172033; --muted:#718096; --line:#eadde7; --bg:#fff7fb; }}
-    * {{ box-sizing:border-box; }}
-    body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--ink); background:linear-gradient(180deg,#fff 0%,var(--bg) 100%); }}
-    header {{ position:sticky; top:0; z-index:3; padding:14px 16px; background:rgba(255,255,255,.92); backdrop-filter:blur(14px); border-bottom:1px solid var(--line); }}
-    h1 {{ margin:0; font-size:20px; }}
-    .sub {{ margin-top:6px; color:var(--muted); font-size:13px; }}
-    .progress {{ margin-top:10px; height:8px; background:#f3e8ef; border-radius:999px; overflow:hidden; }}
-    .bar {{ height:100%; width:0%; background:linear-gradient(90deg,var(--pink),#f472b6); transition:.2s; }}
-    main {{ padding:14px; max-width:760px; margin:0 auto; }}
-    .card {{ background:#fff; border:1px solid var(--line); border-radius:18px; margin:0 0 14px; overflow:hidden; box-shadow:0 10px 28px rgba(236,72,153,.08); }}
-    .qhead {{ display:flex; justify-content:space-between; gap:10px; padding:12px 14px; border-bottom:1px solid #f3e8ef; }}
-    .qhead strong {{ font-size:16px; }}
-    .qhead span {{ color:var(--muted); font-size:12px; text-align:right; }}
-    .image-wrap {{ padding:10px; background:#fbfafc; }}
-    img {{ width:100%; display:block; border-radius:12px; border:1px solid #eee; background:#fff; }}
-    .meta {{ padding:0 14px 10px; display:flex; flex-wrap:wrap; gap:8px; }}
-    .tag {{ border-radius:999px; padding:5px 9px; font-size:12px; background:#f8eaf2; color:#9d174d; }}
-    textarea {{ width:calc(100% - 28px); margin:0 14px 12px; min-height:64px; resize:vertical; border:1px solid var(--line); border-radius:12px; padding:10px; font:inherit; }}
-    .actions {{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:0 14px 14px; }}
-    button {{ border:0; border-radius:13px; padding:12px 8px; font-weight:800; color:#fff; font-size:15px; }}
-    .ok {{ background:var(--green); }} .bad {{ background:var(--red); }} .half {{ background:var(--amber); }}
-    .done {{ outline:3px solid rgba(16,185,129,.25); }}
-    .empty {{ padding:40px 18px; text-align:center; color:var(--muted); }}
-    .toast {{ position:fixed; left:16px; right:16px; bottom:18px; padding:12px 14px; background:#172033; color:#fff; border-radius:14px; opacity:0; transform:translateY(12px); transition:.2s; text-align:center; }}
-    .toast.show {{ opacity:1; transform:translateY(0); }}
-    a {{ color:var(--pink); font-weight:800; }}
-  </style>
-</head>
-<body>
-  <header>
-    <h1>Sakura 快速回填</h1>
-    <div class="sub" id="summary">正在读取本次推送...</div>
-    <div class="progress"><div class="bar" id="bar"></div></div>
-  </header>
-  <main id="list"></main>
-  <div class="toast" id="toast"></div>
-  <script>
-    const batchId = "{safe_batch}";
-    const list = document.getElementById("list");
-    const summary = document.getElementById("summary");
-    const bar = document.getElementById("bar");
-    const toast = document.getElementById("toast");
-    let state = null;
-    function esc(s) {{ return String(s ?? "").replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;","\\\"":"&quot;","'":"&#39;"}}[c])); }}
-    function showToast(text) {{ toast.textContent = text; toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 1500); }}
-    async function load() {{
-      const res = await fetch(`/api/practice/${{batchId}}`);
-      if (!res.ok) {{ list.innerHTML = '<div class="empty">这个批次不存在或已失效。</div>'; return; }}
-      state = await res.json();
-      render();
-    }}
-    function render() {{
-      const b = state.batch;
-      const qs = state.questions || [];
-      summary.textContent = `${{b.day}} · 已回填 ${{b.done_count}}/${{b.question_count}} 道`;
-      bar.style.width = b.question_count ? `${{Math.round(b.done_count / b.question_count * 100)}}%` : "0%";
-      list.innerHTML = qs.map(q => `
-        <article class="card ${{q.quick_status ? "done" : ""}}" id="q-${{q.id}}">
-          <div class="qhead">
-            <strong>第 ${{q.batch_position}} 题 · ${{esc(q.category || "待归类")}}</strong>
-            <span>${{esc(q.subject || "")}}<br>${{esc(q.document_title || q.filename || "")}}</span>
-          </div>
-          <div class="image-wrap"><img src="${{q.image_url}}" alt="题目图" loading="lazy"></div>
-          <div class="meta">
-            <span class="tag">当前：${{esc(q.status || "未做")}}</span>
-            <span class="tag">${{esc(q.chapter || "未识别章节")}}</span>
-            ${{q.quick_status ? `<span class="tag">已回填：${{esc(q.quick_status)}}</span>` : ""}}
-          </div>
-          <textarea data-note="${{q.id}}" placeholder="可选：一句话备注，电脑端之后可详细复盘">${{esc(q.quick_note || "")}}</textarea>
-          <div class="actions">
-            <button class="ok" data-id="${{q.id}}" data-status="做对">做对</button>
-            <button class="bad" data-id="${{q.id}}" data-status="做错">做错</button>
-            <button class="half" data-id="${{q.id}}" data-status="半会">半会</button>
-          </div>
-        </article>`).join("") || '<div class="empty">本次推送没有题目。<br><a href="/">回到做题集</a></div>';
-    }}
-    list.addEventListener("click", async (event) => {{
-      const btn = event.target.closest("button[data-id]");
-      if (!btn) return;
-      btn.disabled = true;
-      const id = btn.dataset.id;
-      const noteEl = document.querySelector(`[data-note="${{id}}"]`);
-      const note = noteEl ? noteEl.value : "";
-      try {{
-        const res = await fetch(`/api/practice/${{batchId}}/questions/${{id}}`, {{
-          method: "POST",
-          headers: {{ "Content-Type": "application/json" }},
-          body: JSON.stringify({{ status: btn.dataset.status, note }})
-        }});
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "保存失败");
-        showToast(`已保存：${{btn.dataset.status}}`);
-        await load();
-      }} catch (e) {{
-        showToast(e.message);
-      }} finally {{
-        btn.disabled = false;
-      }}
-    }});
-    load();
-  </script>
-</body>
-</html>"""
+        html = sakura_practice_pages.render_practice_page(safe_batch)
         return text_response(self, html, content_type="text/html")
 
     def handle_practice_batch_get(self, batch_id: str) -> None:
@@ -2563,87 +2893,72 @@ class DemoHandler(BaseHTTPRequestHandler):
     def handle_push_daily(self) -> None:
         payload_in = self.read_json()
         mode = notification_mode_from_payload(payload_in)
+        if payload_in.get("scheduled"):
+            result = dispatch_scheduled_reminder("daily", mode)
+            status = 200 if result["ok"] else 400
+            return json_response(self, result, status)
         with connect() as conn:
             reminder = build_daily_reminder(conn)
-        result = send_notification(reminder["title"], reminder["content"], mode)
+        result, pdf_result = send_reminder_payload(reminder, mode)
         status = 200 if result["ok"] else 400
-        return json_response(self, {
-            "ok": result["ok"],
-            "selected_channel": mode,
-            "title": reminder["title"],
-            "due_total": reminder["due_total"],
-            "days_left": reminder["days_left"],
-            "batch_id": reminder.get("batch_id", ""),
-            "practice_url": reminder.get("practice_url", ""),
-            "detail": notification_response_detail(result),
-            "configured": notification_response_configured(result, mode),
-        }, status)
+        response = reminder_response_payload(
+            "daily",
+            reminder,
+            result,
+            mode,
+            due_total=reminder.get("due_total", 0),
+            days_left=reminder.get("days_left", 0),
+            practice_pdf=pdf_result,
+        )
+        return json_response(self, response, status)
 
     def handle_push_morning(self) -> None:
         payload_in = self.read_json()
         mode = notification_mode_from_payload(payload_in)
+        if payload_in.get("scheduled"):
+            result = dispatch_scheduled_reminder("morning", mode)
+            status = 200 if result["ok"] else 400
+            return json_response(self, result, status)
         with connect() as conn:
             reminder = build_morning_reminder(conn)
-        result = send_notification(reminder["title"], reminder["content"], mode)
+        result, pdf_result = send_reminder_payload(reminder, mode)
         status = 200 if result["ok"] else 400
-        return json_response(self, {
-            "ok": result["ok"], "kind": "morning", "selected_channel": mode, "title": reminder["title"],
-            "batch_id": reminder.get("batch_id", ""), "practice_url": reminder.get("practice_url", ""),
-            "detail": notification_response_detail(result),
-            "configured": notification_response_configured(result, mode),
-        }, status)
+        response = reminder_response_payload("morning", reminder, result, mode, practice_pdf=pdf_result)
+        return json_response(self, response, status)
 
     def handle_push_night(self) -> None:
         payload_in = self.read_json()
         mode = notification_mode_from_payload(payload_in)
+        if payload_in.get("scheduled"):
+            result = dispatch_scheduled_reminder("night", mode)
+            status = 200 if result["ok"] else 400
+            return json_response(self, result, status)
         with connect() as conn:
             checked = is_checked_in(conn)
             payload = build_night_check(conn)
-        result = send_notification(payload["title"], payload["content"], mode)
+        result, _ = send_reminder_payload(payload, mode, attach_pdf=False)
         status = 200 if result["ok"] else 400
-        return json_response(self, {
-            "ok": result["ok"], "kind": "night", "selected_channel": mode, "checked_in": checked, "title": payload["title"],
-            "detail": notification_response_detail(result),
-            "configured": notification_response_configured(result, mode),
-        }, status)
+        response = reminder_response_payload("night", payload, result, mode, checked_in=checked)
+        return json_response(self, response, status)
 
     def handle_push_weather(self) -> None:
         payload_in = self.read_json()
         mode = notification_mode_from_payload(payload_in)
+        if payload_in.get("scheduled"):
+            result = dispatch_scheduled_reminder("weather", mode)
+            status = 200 if result["ok"] else 400
+            return json_response(self, result, status)
         with connect() as conn:
             payload = build_weather_reminder(conn, str(payload_in.get("city", "")).strip() or None)
-        result = send_notification(payload["title"], payload["content"], mode)
+        result, _ = send_reminder_payload(payload, mode, attach_pdf=False)
         status = 200 if result["ok"] else 400
-        return json_response(self, {
-            "ok": result["ok"],
-            "kind": "weather",
-            "selected_channel": mode,
-            "title": payload["title"],
-            "weather": payload["weather"],
-            "detail": notification_response_detail(result),
-            "configured": notification_response_configured(result, mode),
-        }, status)
+        response = reminder_response_payload("weather", payload, result, mode, weather=payload["weather"])
+        return json_response(self, response, status)
 
     def handle_today_done(self) -> None:
         with connect() as conn:
             mark_checkin(conn)
-        html = (
-            "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
-            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<title>打卡成功</title>"
-            "<style>body{margin:0;height:100vh;display:grid;place-items:center;"
-            "font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;"
-            "background:linear-gradient(135deg,#FBF1F6,#FCE7F1);color:#20242E}"
-            ".card{background:#fff;padding:40px 44px;border-radius:20px;text-align:center;"
-            "box-shadow:0 12px 40px -16px rgba(236,72,153,.4)}"
-            ".big{font-size:46px}.t{font-size:20px;font-weight:800;margin:14px 0 6px}"
-            ".s{color:#6B7280;font-size:14px}a{color:#DB2777;text-decoration:none;font-weight:700}</style>"
-            "</head><body><div class='card'><div class='big'>✅</div>"
-            "<div class='t'>今日打卡成功</div>"
-            "<div class='s'>晚上不会有人来念你了 😌<br>继续保持节奏，加油！</div>"
-            f"<p><a href='{APP_PUBLIC_URL.rstrip('/')}'>← 回到做题集</a></p>"
-            "</div></body></html>"
-        )
+        html = sakura_practice_pages.render_today_done_page(APP_PUBLIC_URL)
         return text_response(self, html, content_type="text/html")
 
     def handle_today_status(self) -> None:
@@ -2660,7 +2975,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         filename = f"mistakes_{date.today().isoformat()}_{count}q.pdf"
         self.send_response(200)
         self.send_header("Content-Type", "application/pdf")
-        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Disposition", sakura_http.content_disposition_attachment(filename))
         self.send_header("Content-Length", str(len(pdf_bytes)))
         self.end_headers()
         self.wfile.write(pdf_bytes)
@@ -2710,7 +3025,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             filename = export_options["filename"]
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Disposition", sakura_http.content_disposition_attachment(filename))
             self.send_header("Content-Length", str(tmp_path.stat().st_size))
             self.end_headers()
             with tmp_path.open("rb") as fh:
@@ -2775,7 +3090,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         filename, text = download
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Disposition", sakura_http.content_disposition_attachment(filename))
         self.end_headers()
         self.wfile.write(text.encode("utf-8"))
 
@@ -2787,6 +3102,7 @@ class DemoHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     init_db()
+    start_internal_scheduler()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), DemoHandler)
     print(f"Gaoshu demo running at http://127.0.0.1:{PORT}", flush=True)
     server.serve_forever()

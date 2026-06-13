@@ -25,6 +25,7 @@ const state = {
   mistakeSubjects: [],
   mistakeDocumentId: "",
   mistakeSubject: "",
+  mistakeSubjectAuto: false,
   mistakeCategory: "",
   mistakeChapter: "",
   mistakeStatus: "",
@@ -33,6 +34,7 @@ const state = {
   textbooks: [],
   textbookId: "",
   textbookPage: 1,
+  textbookPdfPage: 1,
   textbookParagraph: 0,
   textbookChat: [],
 };
@@ -183,8 +185,20 @@ async function api(path, options = {}) {
     headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
     ...options,
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "请求失败");
+  // Read as text first: a non-2xx response may be an HTML 500 page, a proxy 502, an auth
+  // redirect, or an empty body — calling res.json() on those throws an opaque SyntaxError
+  // and hides the real server error from the caller.
+  const raw = await res.text();
+  let data = {};
+  if (raw) {
+    try {
+      data = JSON.parse(raw);
+    } catch (err) {
+      if (!res.ok) throw new Error(`请求失败（${res.status} ${res.statusText || ""}）`.trim());
+      throw new Error("服务器返回了无法解析的响应。");
+    }
+  }
+  if (!res.ok) throw new Error(data.error || `请求失败（${res.status} ${res.statusText || ""}）`.trim());
   return data;
 }
 
@@ -395,21 +409,8 @@ function setView(view) {
 
 // Learning profile / coach bindings live in /static/js/ai/coach.js
 
-// 提醒打卡
-on("#checkinBtn", "click", doCheckin);
-on("#testMorningBtn", "click", () => testPush("morning"));
-on("#testNightBtn", "click", () => testPush("night"));
-on("#saveRemindSettings", "click", saveRemindSettings);
-onEach(["#remindMorningOn", "#remindMorningTime", "#remindNightTime", "#remindWeatherOn", "#remindWeatherTime", "#checkinMode"], "change", () => {
-  renderRemindGuide(readRemindForm(), "设置已修改，点击保存提醒设置后生效。");
-});
-on("#saveNotifySettings", "click", saveNotificationSettings);
-on("#saveSecuritySettings", "click", saveSecuritySettings);
-on("#testEmailBtn", "click", testEmailNotification);
-on("#saveWeatherCity", "click", saveWeatherCity);
-on("#previewWeather", "click", previewWeather);
-on("#sendWeatherPreview", "click", previewWeatherPush);
-on("#testWeatherPush", "click", testWeatherPush);
+// Reminder, notification, weather, and security bindings live in /static/js/system/reminders.js
+if (window.SakuraReminderControls) window.SakuraReminderControls.bind();
 
 // Mistake PDF export and selection bindings live in /static/js/review/mistake_export.js
 

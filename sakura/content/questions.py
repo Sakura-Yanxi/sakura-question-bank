@@ -118,7 +118,7 @@ def load_question_index(conn, where: str, params: list[str]) -> tuple[list, list
         FROM questions q
         JOIN documents d ON d.id = q.document_id
         {where}
-        ORDER BY q.created_at DESC, q.page_number ASC
+        ORDER BY q.created_at DESC, q.page_number ASC, q.seq_no ASC
         """,
         params,
     ).fetchall()
@@ -368,21 +368,38 @@ def rescan_document_chapters(
         if document_kind != mock_paper_kind and category == default_category and page["chapter"] != default_chapter:
             category = page["chapter"]
             subcategory = "章节归类"
-        cursor = conn.execute(
-            """
-            UPDATE questions
-            SET ocr_text = ?, chapter = ?, category = ?, subcategory = ?, difficulty = ?
-            WHERE document_id = ? AND page_number = ?
-            """,
-            (
-                page["text"],
-                page["chapter"],
-                category,
-                subcategory,
-                difficulty,
-                doc_id,
-                page["page_number"],
-            ),
-        )
+        # When a page was imported split into multiple question slices, every slice already has
+        # its own per-slice ocr_text. The page-level text here would clobber all of them, so for
+        # split pages only refresh the page-level classification and leave each slice's ocr_text.
+        slice_count = conn.execute(
+            "SELECT COUNT(*) c FROM questions WHERE document_id = ? AND page_number = ?",
+            (doc_id, page["page_number"]),
+        ).fetchone()["c"]
+        if slice_count > 1:
+            cursor = conn.execute(
+                """
+                UPDATE questions
+                SET chapter = ?, category = ?, subcategory = ?, difficulty = ?
+                WHERE document_id = ? AND page_number = ?
+                """,
+                (page["chapter"], category, subcategory, difficulty, doc_id, page["page_number"]),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                UPDATE questions
+                SET ocr_text = ?, chapter = ?, category = ?, subcategory = ?, difficulty = ?
+                WHERE document_id = ? AND page_number = ?
+                """,
+                (
+                    page["text"],
+                    page["chapter"],
+                    category,
+                    subcategory,
+                    difficulty,
+                    doc_id,
+                    page["page_number"],
+                ),
+            )
         updated += max(cursor.rowcount, 0)
     return {"ok": True, "pages": len(pages), "updated": updated}

@@ -1,7 +1,23 @@
 from __future__ import annotations
 
+import base64
 import json
 import re
+from pathlib import Path
+
+
+def image_to_data_url(image_path: str) -> str:
+    """Read a rendered page image and return a data: URL for OpenAI-compatible vision input.
+    Returns '' if the file is missing so callers can degrade gracefully."""
+    if not image_path:
+        return ""
+    path = Path(image_path)
+    if not path.exists() or not path.is_file():
+        return ""
+    suffix = path.suffix.lower()
+    mime = "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
 
 
 AI_TEACHER_PROTOCOL = """
@@ -67,12 +83,41 @@ def call_llm(
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key, base_url=base_url)
-    result = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-    )
+    try:
+        result = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+        )
+    except Exception as exc:
+        raise RuntimeError(normalize_llm_error(exc)) from exc
     return result.choices[0].message.content or ""
+
+
+def normalize_llm_error(exc: Exception) -> str:
+    """Map provider errors to clearer user-facing Chinese messages."""
+    body = getattr(exc, "body", None)
+    code = ""
+    err_type = ""
+    message = ""
+    if isinstance(body, dict):
+        code = str(body.get("code") or "")
+        err_type = str(body.get("type") or "")
+        message = str(body.get("message") or "")
+    raw = str(exc)
+    haystack = " ".join([raw, code, err_type, message]).lower()
+    if "insufficient_balance" in haystack or "insufficient account balance" in haystack or "402" == code:
+        return (
+            "当前视觉模型供应商账户余额不足（402）。"
+            "请到对应平台充值或确认该模型已开通计费，然后再重试。"
+        )
+    if "invalid_api_key" in haystack or "incorrect api key" in haystack or "401" == code:
+        return "API Key 无效或已失效，请检查 AI 设置中的 Key 是否填写正确。"
+    if "model_not_found" in haystack or "404" == code:
+        return "模型名称不存在或当前账号无权限调用，请检查模型名和供应商权限。"
+    if "rate limit" in haystack or "429" == code:
+        return "调用过于频繁，供应商已限流。请稍等片刻后再试。"
+    return raw or "AI 调用失败，请稍后重试。"
 
 
 def extract_json_block(raw: str) -> dict:

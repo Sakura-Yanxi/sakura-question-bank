@@ -29,7 +29,7 @@
                       </div>
                       <strong>${escapeHtml(q.category)}</strong>
                       <span class="tag">${escapeHtml(q.chapter || "未识别章节")}</span>
-                      <span class="tag kind ${questionKind(q) === "模拟卷" ? "mock" : "paper"}">${questionKind(q)}</span>
+                      <span class="tag kind ${questionKind(q) === "模拟卷" ? "mock" : "paper"}">${escapeHtml(questionKind(q))}</span>
                       ${q.daily_kind === "foundation" ? '<span class="tag foundation">前置基础</span>' : ""}
                       ${reviewTag(q)}
                       <div class="actions">

@@ -246,7 +246,11 @@ def rank_gaps_from_profile(
         urgency = 1 + (info.get("wrong", 0) + info.get("review", 0)) * 0.12
         score = round(weakness * (0.5 + volume) * prereq_boost * urgency, 4)
 
-        reason = f"正确率 {int(mastery * 100)}%（做对 {info.get('correct', 0)}/{evidence}）"
+        # Show the actual accuracy (correct/evidence) to match the 做对 X/Y fraction printed next
+        # to it; the Laplace-smoothed `mastery` is only used for ranking, not display. (evidence>0
+        # is guaranteed by the `continue` above.)
+        display_accuracy = int(round(info.get("correct", 0) / evidence * 100))
+        reason = f"正确率 {display_accuracy}%（做对 {info.get('correct', 0)}/{evidence}）"
         if name in prereq_gaps:
             reason += "，且是其它薄弱点的前置 -> 先补地基"
         if info.get("trend") == "down":

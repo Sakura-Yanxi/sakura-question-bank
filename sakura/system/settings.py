@@ -41,12 +41,27 @@ def mask_email(value: str) -> str:
     return f"{masked_name}@{domain}"
 
 
-def llm_settings_view(api_key: str, base_url: str, model: str) -> dict:
+def llm_settings_view(
+    api_key: str,
+    base_url: str,
+    model: str,
+    vision_model: str = "",
+    vision_api_key: str = "",
+    vision_base_url: str = "",
+) -> dict:
+    # Vision is usable once a model name is set AND a key is available — either its own, or the
+    # text model's key it falls back to.
+    effective_vision_key = vision_api_key or api_key
     return {
         "has_key": bool(api_key),
         "masked_key": mask_secret(api_key),
         "base_url": base_url,
         "model": model,
+        "vision_model": vision_model or "",
+        "vision_has_key": bool(vision_api_key),
+        "vision_masked_key": mask_secret(vision_api_key),
+        "vision_base_url": vision_base_url or "",
+        "vision_enabled": bool(vision_model and effective_vision_key),
         "key_env": "LLM_API_KEY" if api_key else "",
     }
 

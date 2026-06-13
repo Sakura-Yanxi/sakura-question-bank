@@ -17,6 +17,9 @@
     if ($("#llmApiKey")) $("#llmApiKey").placeholder = data.masked_key ? `已保存：${data.masked_key}` : "未保存";
     if ($("#llmBaseUrl")) $("#llmBaseUrl").value = data.base_url || "";
     if ($("#llmModel")) $("#llmModel").value = data.model || "";
+    if ($("#llmVisionModel")) $("#llmVisionModel").value = data.vision_model || "";
+    if ($("#llmVisionApiKey")) $("#llmVisionApiKey").placeholder = data.vision_masked_key ? `已保存：${data.vision_masked_key}` : "留空=复用上面的 Key";
+    if ($("#llmVisionBaseUrl")) $("#llmVisionBaseUrl").value = data.vision_base_url || "";
   }
 
   function renderTeacherMemories(memories = []) {
@@ -112,10 +115,14 @@
           api_key: $("#llmApiKey")?.value.trim() || "",
           base_url: $("#llmBaseUrl")?.value.trim() || "",
           model: $("#llmModel")?.value.trim() || "",
+          vision_model: $("#llmVisionModel")?.value.trim() || "",
+          vision_api_key: $("#llmVisionApiKey")?.value.trim() || "",
+          vision_base_url: $("#llmVisionBaseUrl")?.value.trim() || "",
         }),
       });
       updateLlmFields(data);
       if ($("#llmApiKey")) $("#llmApiKey").value = "";
+      if ($("#llmVisionApiKey")) $("#llmVisionApiKey").value = "";
       if (hint) hint.textContent = data.message || "已保存。";
     } catch (error) {
       if (hint) hint.textContent = error.message;

@@ -9,10 +9,45 @@ def ensure_dirs(paths) -> None:
         Path(path).mkdir(parents=True, exist_ok=True)
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
+class ManagedConnection:
+    """Wraps a sqlite3 connection so that, used as a context manager, it commits on success,
+    rolls back on error, and ALWAYS closes — fixing the fd leak of a bare ``with sqlite3.connect()``
+    (whose __exit__ commits but never closes). Used outside ``with`` (``conn = connect(); ...;
+    conn.close()``) it transparently delegates to the underlying connection, so existing call
+    sites keep working unchanged."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def __enter__(self) -> sqlite3.Connection:
+        return self._conn
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        try:
+            if exc_type is None:
+                self._conn.commit()
+            else:
+                self._conn.rollback()
+        finally:
+            self._conn.close()
+        return False
+
+    def __getattr__(self, name):
+        # Reached only for attributes not on the wrapper itself -> delegate to the real connection.
+        if name == "_conn":
+            raise AttributeError(name)
+        return getattr(self._conn, name)
+
+
+def connect(db_path: Path) -> ManagedConnection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    return conn
+    # ThreadingHTTPServer serves each request on its own thread/connection, and the reminder
+    # scheduler thread also writes. Wait for a contended write lock instead of failing instantly
+    # with "database is locked". (WAL is intentionally NOT enabled: the backup export hot-copies
+    # the .sqlite3 file directly, and WAL could leave recent commits in the uncopied -wal file.)
+    conn.execute("PRAGMA busy_timeout = 5000")
+    return ManagedConnection(conn)
 
 
 def init_db(
@@ -238,9 +273,11 @@ def init_db(
                 id TEXT PRIMARY KEY,
                 textbook_id TEXT NOT NULL,
                 page_number INTEGER NOT NULL,
-                image_path TEXT NOT NULL,
+                display_page INTEGER,
+                image_path TEXT NOT NULL DEFAULT '',
                 page_text TEXT NOT NULL DEFAULT '',
                 paragraphs_json TEXT NOT NULL DEFAULT '[]',
+                rendered INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 UNIQUE(textbook_id, page_number),
                 FOREIGN KEY(textbook_id) REFERENCES textbooks(id)
@@ -288,6 +325,17 @@ def init_db(
                 PRIMARY KEY(batch_id, question_id),
                 FOREIGN KEY(batch_id) REFERENCES practice_batches(id),
                 FOREIGN KEY(question_id) REFERENCES questions(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS reminder_dispatch_log (
+                day TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                minute_key TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                detail_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(day, kind, minute_key)
             );
             """
         )
@@ -362,3 +410,14 @@ def migrate_db(
     coach_columns = {row["name"] for row in conn.execute("PRAGMA table_info(coach_state)").fetchall()} if coach_exists else set()
     if coach_exists and "weather_city" not in coach_columns:
         conn.execute("ALTER TABLE coach_state ADD COLUMN weather_city TEXT NOT NULL DEFAULT ''")
+
+    textbook_pages_exists = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='textbook_pages'").fetchone()
+    if textbook_pages_exists:
+        textbook_page_columns = {row["name"] for row in conn.execute("PRAGMA table_info(textbook_pages)").fetchall()}
+        if "display_page" not in textbook_page_columns:
+            conn.execute("ALTER TABLE textbook_pages ADD COLUMN display_page INTEGER")
+        if "rendered" not in textbook_page_columns:
+            # Lazy-render support: pages are now rendered on first read. Existing rows already
+            # have an image, so mark them rendered; new placeholder rows default to 0.
+            conn.execute("ALTER TABLE textbook_pages ADD COLUMN rendered INTEGER NOT NULL DEFAULT 0")
+            conn.execute("UPDATE textbook_pages SET rendered = 1 WHERE image_path <> ''")

@@ -1,5 +1,6 @@
 // Backup and data-migration UI helpers for Sakura.
-// Loaded after app.js so shared helpers ($, api, refresh, loadDaily) are available.
+// Loaded after app.js so shared helpers ($, api, refresh) are available.
+// Daily-queue refresh goes through window.SakuraDaily.load() (daily.js).
 
 function updateBackupMode() {
   const mode = $("#backupMode")?.value || "full";
@@ -62,7 +63,7 @@ async function waitBackupImport(jobId) {
     if (job.status === "done") {
       if (hint) hint.textContent = `Import completed. Backup: ${(job.result && job.result.backup_path) || "migration_backups"}`;
       await refresh();
-      await loadDaily();
+      await window.SakuraDaily?.load();
       return;
     }
     if (job.status === "failed") {
@@ -87,7 +88,7 @@ async function importBackup(file) {
   }
   if (hint) hint.textContent = `导入完成，旧数据已备份到：${data.backup_path || "migration_backups"}`;
   await refresh();
-  await loadDaily();
+  await window.SakuraDaily?.load();
 }
 
 // Migration panel bindings

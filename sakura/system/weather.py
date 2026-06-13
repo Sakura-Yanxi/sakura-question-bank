@@ -17,6 +17,14 @@ def parse_positive_int(value, fallback: int | None = None) -> int | None:
     except (TypeError, ValueError):
         return fallback
 
+
+def parse_int(value, fallback: int | None = None) -> int | None:
+    """Parse an integer that may legitimately be zero or negative (e.g. temperatures)."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return fallback
+
 WEATHER_CODE_TEXT = {
     0: "晴",
     1: "大部晴朗",
@@ -163,8 +171,12 @@ def geocode_weather_city(city: str) -> dict:
             "https://geocoding-api.open-meteo.com/v1/search?"
             + urllib.parse.urlencode({"name": name, "count": 1, "language": "zh", "format": "json"})
         )
-        with urllib.request.urlopen(url, timeout=12) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(url, timeout=12) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            # A transient error on one candidate spelling shouldn't abort the rest — try the next.
+            continue
         results = data.get("results") or []
         if results:
             item = results[0]
@@ -236,8 +248,8 @@ def fetch_tomorrow_weather_wttr(city: str) -> dict:
         "date": item.get("date", ""),
         "weather_code": parse_positive_int(noon.get("weatherCode"), 0) or 0,
         "weather_text": desc or "天气信息",
-        "temp_max": parse_positive_int(item.get("maxtempC"), None),
-        "temp_min": parse_positive_int(item.get("mintempC"), None),
+        "temp_max": parse_int(item.get("maxtempC"), None),
+        "temp_min": parse_int(item.get("mintempC"), None),
         "rain_probability": max(rain_values) if rain_values else 0,
         "wind_max": max(wind_values) if wind_values else 0,
         "source": "wttr.in",

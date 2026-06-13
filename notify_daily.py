@@ -1,22 +1,30 @@
 # -*- coding: utf-8 -*-
 """
-每日错题复习微信提醒（PushPlus）。
+Sakura reminder trigger helper.
 
-用途：定时触发，把"今日待复习错题 + 倒计时"推送到微信。
-适合放进青龙面板、系统 crontab、或 Windows 计划任务里定时跑。
+Purpose:
+    Trigger the running Sakura service to send morning, night, weather, or
+    daily review notifications. The service decides the configured channel:
+    Enterprise WeChat, PushPlus, email, or all local channels.
 
-依赖：仅 Python 标准库，无需 pip install。
+Dependencies:
+    Python standard library only.
 
-用法：
-    # 方式一（推荐）：调用正在运行的做题集服务（需先 python app.py）
+Usage:
+    # Recommended: call the running Sakura service.
     APP_PUBLIC_URL=http://127.0.0.1:8000 python notify_daily.py
 
-    # 方式二：服务没在跑时，直接读本地数据库生成并推送（需 PUSHPLUS_TOKEN）
+    # Trigger a specific reminder kind.
+    python notify_daily.py --morning
+    python notify_daily.py --night
+    python notify_daily.py --weather
+
+    # Fallback: import app.py locally and dispatch without HTTP.
     PUSHPLUS_TOKEN=你的token python notify_daily.py --local
 
-青龙面板：
-    1. 「环境变量」里加 PUSHPLUS_TOKEN（和 APP_PUBLIC_URL，可选）。
-    2. 「定时任务」新建：命令 `task notify_daily.py`，cron 例如 `0 8 * * *`（每天 8:00）。
+Notes:
+    On the server, the built-in Sakura scheduler is preferred. This helper is
+    still useful for crontab, QingLong, or Windows Task Scheduler fallback jobs.
 """
 import json
 import os
@@ -35,28 +43,19 @@ ENDPOINTS = {
 
 
 def via_server(mode: str) -> dict:
-    """让正在运行的服务自己汇总并推送。"""
-    req = urllib.request.Request(f"{APP_PUBLIC_URL.rstrip('/')}{ENDPOINTS[mode]}", data=b"{}",
+    """Ask the running Sakura service to build and send the reminder."""
+    payload = json.dumps({"scheduled": True}, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(f"{APP_PUBLIC_URL.rstrip('/')}{ENDPOINTS[mode]}", data=payload,
                                  method="POST", headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
 def via_local(mode: str) -> dict:
-    """服务没在跑时，直接 import app 读库并推送。"""
+    """Fallback path: import app.py and dispatch from local state."""
     import app
     app.init_db()
-    with app.connect() as conn:
-        if mode == "morning":
-            payload = app.build_morning_reminder(conn)
-        elif mode == "night":
-            payload = app.build_night_check(conn)
-        elif mode == "weather":
-            payload = app.build_weather_reminder(conn)
-        else:
-            payload = app.build_daily_reminder(conn)
-    result = app.send_notification(payload["title"], payload["content"])
-    return {"ok": result["ok"], "title": payload["title"], "detail": result.get("detail") or result.get("resp") or result.get("error")}
+    return app.dispatch_scheduled_reminder(mode)
 
 
 def main() -> None:

@@ -1,12 +1,14 @@
 // Reminder/check-in/weather helpers for Sakura.
 // Loaded before app.js; uses shared global helpers such as $, api and escapeHtml.
 
-const REMIND_DEFAULTS = { morningOn: "1", morningTime: "10:00", nightOn: "1", nightTime: "20:00", weatherOn: "1", weatherTime: "22:30", checkinMode: "wework" };
+const REMIND_DEFAULTS = { morningOn: "1", morningTime: "10:00", nightOn: "1", nightTime: "20:00", weatherOn: "1", weatherTime: "22:30", checkinMode: "wework", dailyScope: "due", dailyLimit: "20", sendPdf: "1" };
+let reminderControlsBound = false;
 
 function normalizeCheckinMode(value) {
   const text = String(value || "").trim().toLowerCase();
   if (text === "button" || text === "local") return "local";
   if (text === "push" || text === "pushplus") return "pushplus";
+  if (text === "mail" || text === "email" || text === "smtp") return "email";
   if (text === "wework" || text === "wechatwork" || text === "enterprise_wechat") return "wework";
   if (text === "cloud" || text === "link") return "wework";
   return REMIND_DEFAULTS.checkinMode;
@@ -27,11 +29,17 @@ function checkinModeMeta(value) {
       desc: "PushPlus 微信消息里会带打卡链接；手机点开后直接记录到服务器。",
       note: "PushPlus 需要先在下方保存 Token，并完成 PushPlus 账号认证。公网地址要能从手机访问。",
     },
+    email: {
+      label: "邮箱推送",
+      channelText: "邮箱",
+      desc: "邮件正文会带提醒内容；早安/每日错题会额外附带今日错题 PDF，适合手机查看和长期留存。",
+      note: "邮箱需要先在下方配置 SMTP、授权码和收件人。QQ 邮箱等必须填写授权码，不是网页登录密码。",
+    },
     local: {
-      label: "本地按钮打卡",
-      channelText: "本地按钮",
-      desc: "只在当前浏览器点击上方按钮记录打卡，适合本机开发和离线使用。",
-      note: "本地按钮不依赖公网地址；但推送消息里的链接不会替你完成本机按钮打卡。",
+      label: "本地/全部通道",
+      channelText: "已配置通道",
+      desc: "本地按钮用于当前浏览器打卡；推送会发到所有已配置通道，企业微信和邮箱会附带今日错题 PDF。",
+      note: "适合本机测试：企业微信、邮箱、PushPlus 哪个配置好了就会发哪个；网页回填仍依赖可访问的公网地址。",
     },
   };
   return map[mode] || map.wework;
@@ -39,6 +47,29 @@ function checkinModeMeta(value) {
 
 function currentCheckinMode() {
   return normalizeCheckinMode($("#checkinMode")?.value || REMIND_DEFAULTS.checkinMode);
+}
+
+function normalizeDailyScope(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (text === "due" || text === "ebbinghaus" || text === "retention") return "due";
+  if (text === "wrong" || text === "active_wrong" || text === "current_wrong") return "active_wrong";
+  if (text === "all" || text === "all_wrong" || text === "all_wrong_history" || text === "history") return "all_wrong_history";
+  return "due";
+}
+
+function normalizeDailyLimit(value) {
+  const n = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(n)) return REMIND_DEFAULTS.dailyLimit;
+  return String(Math.max(1, Math.min(80, n)));
+}
+
+function dailyScopeLabel(value) {
+  const map = {
+    due: "艾宾浩斯到期题",
+    active_wrong: "当前错题/需复习题",
+    all_wrong_history: "全部错题历史",
+  };
+  return map[normalizeDailyScope(value)] || map.active_wrong;
 }
 
 function notificationDetailText(detail) {
@@ -65,7 +96,11 @@ function normalizeRemindSettings(data = {}) {
     weatherOn: data.weather_on ?? data.weatherOn ?? REMIND_DEFAULTS.weatherOn,
     weatherTime: data.weather_time ?? data.weatherTime ?? REMIND_DEFAULTS.weatherTime,
     checkinMode: normalizeCheckinMode(data.checkin_mode ?? data.checkinMode ?? REMIND_DEFAULTS.checkinMode),
+    dailyScope: normalizeDailyScope(data.daily_scope ?? data.dailyScope ?? REMIND_DEFAULTS.dailyScope),
+    dailyLimit: normalizeDailyLimit(data.daily_limit ?? data.dailyLimit ?? REMIND_DEFAULTS.dailyLimit),
+    sendPdf: String(data.send_pdf ?? data.sendPdf ?? REMIND_DEFAULTS.sendPdf) === "0" ? "0" : "1",
     cron: data.cron || {},
+    scheduler: data.scheduler || {},
   };
 }
 
@@ -76,6 +111,9 @@ function readRemindForm() {
     nightOn: dayReminderOn, nightTime: $("#remindNightTime").value,
     weatherOn: $("#remindWeatherOn")?.value || "1", weatherTime: $("#remindWeatherTime")?.value || "22:30",
     checkinMode: normalizeCheckinMode($("#checkinMode").value),
+    dailyScope: normalizeDailyScope($("#remindDailyScope")?.value || REMIND_DEFAULTS.dailyScope),
+    dailyLimit: normalizeDailyLimit($("#remindDailyLimit")?.value || REMIND_DEFAULTS.dailyLimit),
+    sendPdf: $("#remindSendPdf")?.value === "0" ? "0" : "1",
   };
   return s;
 }
@@ -87,11 +125,14 @@ function applyRemindSettings(s) {
   if ($("#remindWeatherOn")) $("#remindWeatherOn").value = s.weatherOn;
   if ($("#remindWeatherTime")) $("#remindWeatherTime").value = s.weatherTime;
   $("#checkinMode").value = s.checkinMode;
+  if ($("#remindDailyScope")) $("#remindDailyScope").value = s.dailyScope;
+  if ($("#remindDailyLimit")) $("#remindDailyLimit").value = s.dailyLimit;
+  if ($("#remindSendPdf")) $("#remindSendPdf").value = s.sendPdf;
 }
 
 async function saveRemindSettings() {
   const s = readRemindForm();
-  renderRemindGuide(s, "正在同步服务器定时任务...");
+  renderRemindGuide(s, "正在保存提醒时间并刷新定时器...");
   try {
     const data = await api("/api/reminder/settings", {
       method: "POST",
@@ -103,11 +144,14 @@ async function saveRemindSettings() {
         weather_on: s.weatherOn,
         weather_time: s.weatherTime,
         checkin_mode: s.checkinMode,
+        daily_scope: s.dailyScope,
+        daily_limit: s.dailyLimit,
+        send_pdf: s.sendPdf,
       }),
     });
     const saved = normalizeRemindSettings(data);
     applyRemindSettings(saved);
-    renderRemindGuide(saved, data.message || saved.cron?.message || "服务器定时任务已同步。");
+    renderRemindGuide(saved, data.message || saved.cron?.message || "提醒设置已保存。");
   } catch (error) {
     renderRemindGuide(s, `保存失败：${error.message}`);
   }
@@ -156,12 +200,21 @@ function renderRemindGuide(s, statusText = "") {
   const night = s.nightTime.split(":");
   const weather = (s.weatherTime || "22:30").split(":");
   const modeInfo = checkinModeMeta(mode);
+  const scheduler = s.scheduler || {};
+  const schedulerText = scheduler.enabled === false
+    ? "应用内定时器已关闭（SAKURA_INTERNAL_SCHEDULER=0）。"
+    : `应用内定时器已启用，Python 服务运行期间每 ${scheduler.poll_seconds || 30} 秒检查一次。`;
+  const cronText = s.cron?.installed
+    ? "Linux crontab 备用定时任务已写入。"
+    : (s.cron?.message || "当前未写入 Linux crontab；本地 Windows 主要依赖应用内定时器。");
   const guide = `
     ${statusText ? `<p class="remind-note"><b>同步状态：</b>${escapeHtml(statusText)}</p>` : ""}
     <p class="remind-note"><b>当前打卡入口：</b>${modeInfo.label}。${modeInfo.desc}</p>
     <p>早间提醒：${s.morningOn === "1" ? `每天 ${s.morningTime}` : "已关闭"}；晚间检查：${s.nightOn === "1" ? `每天 ${s.nightTime}` : "已关闭"}；天气推送：${s.weatherOn === "1" ? `每天 ${s.weatherTime}` : "已关闭"}。</p>
-    <p><b>服务器定时</b>：保存后服务器会自动重写 Sakura 专属 crontab，不需要手动进服务器改。</p>
-    <pre class="remind-code"># 当前将同步到服务器
+    <p><b>错题复习包</b>：${escapeHtml(dailyScopeLabel(s.dailyScope))}，最多 ${escapeHtml(s.dailyLimit)} 道。${s.sendPdf === "1" ? "企业微信和邮箱会附带 PDF；PushPlus 只发送文字摘要。" : "当前关闭 PDF 附件，只发送文字摘要。"}</p>
+    <p><b>自动推送</b>：${escapeHtml(schedulerText)} ${escapeHtml(cronText)}</p>
+    <p><b>重要</b>：如果电脑关机、终端关闭或服务器上的 Python 服务停止，到点不会推送；如果公网地址还是 127.0.0.1/localhost，手机微信打不开回填链接，但企业微信和邮箱会额外发送今日错题 PDF，推送正文也会列出题目摘要。</p>
+    <pre class="remind-code"># 当前提醒时间
 ${s.morningOn === "1" ? `${morning[1] || "00"} ${morning[0] || "10"} * * * notify_daily.py --morning` : "# 早间提醒已关闭"}
 ${s.nightOn === "1" ? `${night[1] || "00"} ${night[0] || "20"} * * * notify_daily.py --night` : "# 晚间检查已关闭"}
 ${s.weatherOn === "1" ? `${weather[1] || "30"} ${weather[0] || "22"} * * * notify_daily.py --weather` : "# 天气推送已关闭"}</pre>
@@ -200,7 +253,11 @@ async function testPush(kind) {
       $("#pushConfigBadge").textContent = "未配置推送";
       $("#pushConfigBadge").className = "tag status wrong";
     } else if (r.ok) {
-      hint.textContent = `已发送，请到${modeInfo.channelText}查看。`;
+      const pdf = r.practice_pdf;
+      const pdfText = pdf
+        ? (pdf.skipped ? `，PDF 未发送：${pdf.detail || "已关闭或没有可发送的题目。"}` : (pdf.ok ? "，今日错题 PDF 也已发送。" : `，但 PDF 发送失败：${notificationDetailText(pdf)}`))
+        : "";
+      hint.textContent = `已发送，请到${modeInfo.channelText}查看${pdfText}`;
       $("#pushConfigBadge").textContent = "推送已配置";
       $("#pushConfigBadge").className = "tag status";
     } else {
@@ -499,7 +556,37 @@ async function testWeatherPush() {
   }
 }
 
-// ==========================================================================
-// AI 对话测试台 / API 设置
-// ==========================================================================
-let lastAiChatAnswer = "";
+function bindReminderControls() {
+  if (reminderControlsBound) return;
+  reminderControlsBound = true;
+  on("#checkinBtn", "click", doCheckin);
+  on("#testMorningBtn", "click", () => testPush("morning"));
+  on("#testNightBtn", "click", () => testPush("night"));
+  on("#saveRemindSettings", "click", saveRemindSettings);
+  onEach([
+    "#remindMorningOn",
+    "#remindMorningTime",
+    "#remindNightTime",
+    "#remindWeatherOn",
+    "#remindWeatherTime",
+    "#checkinMode",
+    "#remindDailyScope",
+    "#remindSendPdf",
+  ], "change", () => {
+    renderRemindGuide(readRemindForm(), "设置已修改，点击保存提醒设置后生效。");
+  });
+  on("#remindDailyLimit", "input", () => {
+    renderRemindGuide(readRemindForm(), "设置已修改，点击保存提醒设置后生效。");
+  });
+  on("#saveNotifySettings", "click", saveNotificationSettings);
+  on("#saveSecuritySettings", "click", saveSecuritySettings);
+  on("#testEmailBtn", "click", testEmailNotification);
+  on("#saveWeatherCity", "click", saveWeatherCity);
+  on("#previewWeather", "click", previewWeather);
+  on("#sendWeatherPreview", "click", previewWeatherPush);
+  on("#testWeatherPush", "click", testWeatherPush);
+}
+
+window.SakuraReminderControls = {
+  bind: bindReminderControls,
+};

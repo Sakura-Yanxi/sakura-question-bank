@@ -5,11 +5,77 @@ import traceback
 import urllib.request
 from datetime import date, datetime
 from typing import Callable
+from urllib.parse import parse_qs, urlparse
 
 from sakura.system import email as sakura_email
 
 
 PUSHPLUS_URL = "https://www.pushplus.plus/send"
+WEWORK_UPLOAD_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/upload_media"
+WEWORK_FILE_LIMIT_BYTES = 20 * 1024 * 1024
+
+
+def is_private_app_url(url: str) -> bool:
+    parsed = urlparse(str(url or ""))
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return True
+    if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
+        return True
+    if host.startswith("192.168.") or host.startswith("10."):
+        return True
+    if host.startswith("172."):
+        parts = host.split(".")
+        if len(parts) >= 2:
+            try:
+                return 16 <= int(parts[1]) <= 31
+            except ValueError:
+                return False
+    return False
+
+
+def _compact_text(value: object, fallback: str = "") -> str:
+    text = str(value or "").strip()
+    return text if text else fallback
+
+
+def question_summary_lines(batch: dict, max_items: int = 8) -> list[str]:
+    payload = batch.get("payload") or {}
+    questions = payload.get("plan") or [
+        question
+        for group in payload.get("groups", [])
+        for question in (group.get("questions") or [])
+    ]
+    if not questions:
+        return ["- 本次没有筛选出到期错题，可以把今天当作轻复盘日。"]
+
+    lines: list[str] = []
+    for index, question in enumerate(questions[:max_items], start=1):
+        subject = _compact_text(question.get("subject"), "未分科目")
+        book = _compact_text(question.get("document_title") or question.get("filename"), "未命名资料")
+        page = _compact_text(question.get("page_number"), "-")
+        chapter = _compact_text(question.get("chapter") or question.get("category"), "未识别章节")
+        status = _compact_text(question.get("status"), "待练")
+        seq_no = _compact_text(question.get("question_no") or question.get("seq_no"))
+        seq = f" 题号{seq_no}" if seq_no else ""
+        lines.append(f"{index}. {subject} / {book} P{page}{seq}｜{chapter}｜{status}")
+    extra = len(questions) - max_items
+    if extra > 0:
+        lines.append(f"- 还有 {extra} 道题没有展开，打开做题集查看完整批次。")
+    return lines
+
+
+def reminder_link_lines(app_url: str, practice_url: str = "", question_count: int = 0) -> list[str]:
+    if is_private_app_url(app_url):
+        return [
+            "链接提示：当前公网地址是本地/内网地址，手机微信里通常打不开回填页面。",
+            f"请在运行 Sakura 的电脑浏览器打开：{app_url}",
+        ]
+    lines = []
+    if practice_url:
+        lines.append(f"[手机快速回填本批次 {question_count} 道题]({practice_url})")
+    lines.append(f"[打开完整 Sakura 做题集]({app_url})")
+    return lines
 
 
 def send_pushplus(token: str, title: str, content: str, template: str = "markdown") -> dict:
@@ -47,6 +113,68 @@ def send_wework_bot(webhook: str, title: str, content: str) -> dict:
     except Exception as exc:
         traceback.print_exc()
         return {"ok": False, "channel": "wework", "error": str(exc)}
+
+
+def wework_webhook_key(webhook: str) -> str:
+    parsed = urlparse(str(webhook or ""))
+    return (parse_qs(parsed.query).get("key") or [""])[0]
+
+
+def send_wework_file(webhook: str, filename: str, file_bytes: bytes) -> dict:
+    if not webhook:
+        return {"ok": False, "channel": "wework_file", "error": "WEWORK_BOT_WEBHOOK is not configured."}
+    key = wework_webhook_key(webhook)
+    if not key:
+        return {"ok": False, "channel": "wework_file", "error": "Enterprise WeChat webhook key is missing."}
+    if not file_bytes:
+        return {"ok": False, "channel": "wework_file", "error": "PDF file is empty."}
+    if len(file_bytes) > WEWORK_FILE_LIMIT_BYTES:
+        return {
+            "ok": False,
+            "channel": "wework_file",
+            "error": f"PDF is too large for Enterprise WeChat robot file upload: {len(file_bytes)} bytes.",
+        }
+
+    boundary = f"sakura-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    safe_name = filename.replace("\\", "_").replace("/", "_") or "sakura-practice.pdf"
+    head = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="media"; filename="{safe_name}"\r\n'
+        "Content-Type: application/pdf\r\n\r\n"
+    ).encode("utf-8")
+    tail = f"\r\n--{boundary}--\r\n".encode("utf-8")
+    upload_payload = head + file_bytes + tail
+    upload_req = urllib.request.Request(
+        f"{WEWORK_UPLOAD_URL}?key={key}&type=file",
+        data=upload_payload,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        upload_resp = json.loads(urllib.request.urlopen(upload_req, timeout=30).read().decode("utf-8"))
+        media_id = upload_resp.get("media_id")
+        if upload_resp.get("errcode") != 0 or not media_id:
+            return {"ok": False, "channel": "wework_file", "resp": upload_resp}
+        payload = json.dumps(
+            {"msgtype": "file", "file": {"media_id": media_id}},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        send_req = urllib.request.Request(
+            webhook,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        send_resp = json.loads(urllib.request.urlopen(send_req, timeout=15).read().decode("utf-8"))
+        return {
+            "ok": send_resp.get("errcode") == 0,
+            "channel": "wework_file",
+            "filename": safe_name,
+            "bytes": len(file_bytes),
+            "upload": upload_resp,
+            "resp": send_resp,
+        }
+    except Exception as exc:
+        traceback.print_exc()
+        return {"ok": False, "channel": "wework_file", "error": str(exc)}
 
 
 def send_notification(
@@ -125,7 +253,7 @@ def build_daily_reminder(
         SELECT d.subject, COALESCE(NULLIF(d.title, ''), d.filename) book, COUNT(*) n
         FROM questions q
         JOIN documents d ON d.id = q.document_id
-        WHERE q.status IN ('做错', '需复习', '半会')
+        WHERE q.status IN ('\u505a\u9519', '\u9700\u590d\u4e60', '\u534a\u4f1a')
            OR (q.ever_wrong = 1 AND q.mastered_at IS NULL
                AND q.next_review_at IS NOT NULL AND date(q.next_review_at) <= date(?))
         GROUP BY d.subject, book
@@ -135,23 +263,26 @@ def build_daily_reminder(
         (today.isoformat(),),
     ).fetchall()
 
-    title = f"今日错题复习 | 待复习 {due_total} 道 | 距考试 {days_left} 天"
+    title = f"\u4eca\u65e5\u9519\u9898\u590d\u4e60 | \u5f85\u590d\u4e60 {due_total} \u9053 | \u8ddd\u8003\u8bd5 {days_left} \u5929"
     lines = [
-        "### 今日错题复习提醒",
-        f"- 今天：{today.month}月{today.day}日，距考试还有 **{days_left}** 天",
-        f"- 到期待复习：**{due_total}** 道（逾期 {backlog['overdue']} + 今日 {backlog['due_today']}）",
-        f"- 在练错题总数：{backlog['active_wrong']} 道",
+        "### \u4eca\u65e5\u9519\u9898\u590d\u4e60\u63d0\u9192",
+        f"- \u4eca\u5929\uff1a{today.month}\u6708{today.day}\u65e5\uff0c\u8ddd\u8003\u8bd5\u8fd8\u6709 **{days_left}** \u5929",
+        f"- \u5230\u671f\u5f85\u590d\u4e60\uff1a**{due_total}** \u9053\uff08\u903e\u671f {backlog['overdue']} + \u4eca\u65e5 {backlog['due_today']}\uff09",
+        f"- \u5728\u7ec3\u9519\u9898\u603b\u6570\uff1a{backlog['active_wrong']} \u9053",
         "",
     ]
     if rows:
-        lines.append("**按资料分布：**")
+        lines.append("**\u6309\u8d44\u6599\u5206\u5e03\uff1a**")
         for row in rows:
-            lines.append(f"- {row['subject'] or '未分类'} / {row['book']}：{row['n']} 道")
+            subject = row["subject"] or "\u672a\u5206\u79d1\u76ee"
+            lines.append(f"- {subject} / {row['book']}\uff1a{row['n']} \u9053")
     else:
-        lines.append("今天没有到期的错题，保持节奏，可以预习新内容。")
+        lines.append("\u4eca\u5929\u6ca1\u6709\u5230\u671f\u7684\u9519\u9898\uff0c\u4fdd\u6301\u8282\u594f\uff0c\u53ef\u4ee5\u9884\u4e60\u65b0\u5185\u5bb9\u3002")
     lines.append("")
-    lines.append(f"[手机快速回填本批次 {batch['question_count']} 道题]({practice_url})")
-    lines.append(f"[打开完整 Sakura 做题集]({app_url})")
+    lines.append("**\u4eca\u65e5\u63a8\u9001\u9898\u76ee\uff1a**")
+    lines.extend(question_summary_lines(batch))
+    lines.append("")
+    lines.extend(reminder_link_lines(app_url, practice_url, batch["question_count"]))
     return {
         "title": title,
         "content": "\n".join(lines),
@@ -166,13 +297,19 @@ def build_weather_reminder(city: str, *, fetch_weather: Callable[[str], dict], a
     info = fetch_weather(city)
     display_city = info["resolved_city"] or city
     title = f"明天天气提醒 | {display_city}"
+
+    def show(value) -> str:
+        # Weather providers can return null for some fields (e.g. precipitation_probability_max);
+        # render a dash instead of the literal string "None" in the pushed reminder.
+        return "-" if value is None or value == "" else str(value)
+
     lines = [
         f"### 明天天气提醒：{display_city}",
-        f"- 日期：**{info['date']}**",
-        f"- 天气：**{info['weather_text']}**",
-        f"- 温度：**{info['temp_min']}°C ~ {info['temp_max']}°C**",
-        f"- 降水概率：**{info['rain_probability']}%**",
-        f"- 最大风速：**{info['wind_max']} km/h**",
+        f"- 日期：**{show(info['date'])}**",
+        f"- 天气：**{show(info['weather_text'])}**",
+        f"- 温度：**{show(info['temp_min'])}°C ~ {show(info['temp_max'])}°C**",
+        f"- 降水概率：**{show(info['rain_probability'])}%**",
+        f"- 最大风速：**{show(info['wind_max'])} km/h**",
         "",
         "晚上提前看一下天气，第二天出门少一点临时慌张。",
         f"[打开 Sakura 做题集]({app_public_url.rstrip('/')})",

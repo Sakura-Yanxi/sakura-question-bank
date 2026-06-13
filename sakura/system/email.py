@@ -122,7 +122,12 @@ def markdown_to_html(content: str) -> str:
     return "\n".join(paragraphs)
 
 
-def send_email(settings: EmailSettings, title: str, content: str) -> dict:
+def send_email(
+    settings: EmailSettings,
+    title: str,
+    content: str,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> dict:
     if not is_configured(settings):
         return {
             "ok": False,
@@ -147,6 +152,14 @@ def send_email(settings: EmailSettings, title: str, content: str) -> dict:
 </html>""",
         subtype="html",
     )
+    for filename, data, mime_type in attachments or []:
+        maintype, _, subtype = (mime_type or "application/octet-stream").partition("/")
+        msg.add_attachment(
+            data,
+            maintype=maintype or "application",
+            subtype=subtype or "octet-stream",
+            filename=filename,
+        )
 
     port = int(normalize_port(settings.port))
     try:
@@ -163,7 +176,12 @@ def send_email(settings: EmailSettings, title: str, content: str) -> dict:
                     smtp.ehlo()
                 smtp.login(settings.user, settings.password)
                 smtp.send_message(msg)
-        return {"ok": True, "channel": "email", "to": mask_email_list(settings.to)}
+        return {
+            "ok": True,
+            "channel": "email",
+            "to": mask_email_list(settings.to),
+            "attachments": len(attachments or []),
+        }
     except Exception as exc:
         traceback.print_exc()
         return {"ok": False, "channel": "email", "error": str(exc)}

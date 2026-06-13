@@ -45,12 +45,14 @@
       const cd = res.headers.get("Content-Disposition") || "";
       const name = (cd.match(/filename="(.+?)"/) || [])[1] || "mistakes.pdf";
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(blob);
+      a.href = url;
       a.download = name;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(a.href);
+      // Defer revoke: revoking in the same tick can cancel the in-flight download in some browsers.
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
       alert("导出失败：" + error.message);
     }

@@ -37,10 +37,19 @@
   }
 
   function renderMistakeFilters() {
-    const docs = state.documents.filter((doc) => !state.mistakeSubject || doc.subject === state.mistakeSubject);
-    const doc = docs.find((item) => item.id === state.mistakeDocumentId);
-    if (state.mistakeDocumentId && !doc) state.mistakeDocumentId = "";
-    if (doc?.subject && !state.mistakeSubject) state.mistakeSubject = doc.subject;
+    const doc = state.documents.find((item) => item.id === state.mistakeDocumentId);
+    if (state.mistakeDocumentId && !doc) {
+      state.mistakeDocumentId = "";
+      if (state.mistakeSubjectAuto) {
+        state.mistakeSubject = "";
+        state.mistakeSubjectAuto = false;
+      }
+    }
+    if (doc?.subject && !state.mistakeSubject) {
+      state.mistakeSubject = doc.subject;
+      state.mistakeSubjectAuto = true;
+    }
+    const docs = state.documents.filter((item) => !state.mistakeSubject || state.mistakeSubjectAuto || item.subject === state.mistakeSubject);
     const subjects = state.mistakeSubjects.length ? state.mistakeSubjects : state.subjects;
     const scopedReady = Boolean(state.mistakeSubject && state.mistakeDocumentId);
     $("#mistakeDocumentFilter").innerHTML = `<option value="">请选择资料</option>${docs
@@ -93,7 +102,13 @@
     on("#mistakeDocumentFilter", "change", async (event) => {
       state.mistakeDocumentId = event.target.value;
       const doc = state.documents.find((item) => item.id === state.mistakeDocumentId);
-      if (doc) state.mistakeSubject = doc.subject || state.mistakeSubject;
+      if (doc) {
+        state.mistakeSubject = doc.subject || "";
+        state.mistakeSubjectAuto = true;
+      } else if (state.mistakeSubjectAuto) {
+        state.mistakeSubject = "";
+        state.mistakeSubjectAuto = false;
+      }
       state.mistakeCategory = "";
       state.mistakeChapter = "";
       await loadMistakes();
@@ -101,6 +116,7 @@
 
     on("#mistakeSubjectFilter", "change", async (event) => {
       state.mistakeSubject = event.target.value;
+      state.mistakeSubjectAuto = false;
       const docs = state.documents.filter((doc) => !state.mistakeSubject || doc.subject === state.mistakeSubject);
       if (state.mistakeDocumentId && !docs.some((doc) => doc.id === state.mistakeDocumentId)) {
         state.mistakeDocumentId = "";

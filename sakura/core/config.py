@@ -4,8 +4,9 @@ import os
 from pathlib import Path
 
 
-def load_local_env(root: Path) -> None:
+def load_local_env(root: Path, override_keys: set[str] | None = None) -> None:
     """Load simple KEY=VALUE pairs from .env without adding a runtime dependency."""
+    override_keys = override_keys or set()
     env_path = root / ".env"
     if not env_path.exists():
         return
@@ -16,7 +17,7 @@ def load_local_env(root: Path) -> None:
         key, value = line.split("=", 1)
         key = key.strip().lstrip("\ufeff")
         value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
+        if key and (key in override_keys or key not in os.environ or os.environ.get(key, "") == ""):
             os.environ[key] = value
 
 
