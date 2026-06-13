@@ -2385,8 +2385,12 @@ class DemoHandler(BaseHTTPRequestHandler):
         quote = MOTIVATIONAL_QUOTES[today.toordinal() % len(MOTIVATIONAL_QUOTES)]
         return json_response(self, {"quote": quote, "date": today.isoformat(), "count": len(MOTIVATIONAL_QUOTES)})
 
-    def handle_version(self) -> None:
-        info = sakura_update.check_for_update(APP_VERSION, UPDATE_REPO)
+    def handle_version(self, query: dict | None = None) -> None:
+        force_value = (query or {}).get("force", ["0"])
+        if isinstance(force_value, list):
+            force_value = force_value[0] if force_value else "0"
+        force = str(force_value).lower() in {"1", "true", "yes"}
+        info = sakura_update.check_for_update(APP_VERSION, UPDATE_REPO, force=force)
         return json_response(self, {"app": "Sakura 做题集", **info})
 
     # === 学习档案 ===

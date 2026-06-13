@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260613-textbook-fluid-reader" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260613-release-status" />
     <script>
       window.MathJax = {
         tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] },
@@ -642,6 +642,23 @@
               <div id="remindGuide" class="remind-guide"></div>
             </div>
 
+            <div class="panel version-management-panel">
+              <div class="panel-head">
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="package-check"></i></span><div><h2>版本管理</h2><p>用 GitHub Release 发布新版本；已部署的用户可通过更新脚本或下载包升级。</p></div></div>
+                <span class="tag">Release</span>
+              </div>
+              <div id="versionStatusCard" class="version-status-card">
+                <div class="version-status-head">
+                  <span class="version-status-badge muted">检测中</span>
+                  <span class="version-status-repo">正在读取 GitHub Release</span>
+                </div>
+              </div>
+              <div class="version-guide">
+                <div><strong>发布</strong><span>修改 <code>sakura/__init__.py</code> 版本号，提交推送后在 GitHub 创建对应 tag 的 Release。</span></div>
+                <div><strong>更新</strong><span>用户运行 <code>update.bat</code> / <code>update.sh</code>，或下载最新 zip 覆盖代码；保留 <code>data/</code> 和 <code>.env</code>。</span></div>
+              </div>
+            </div>
+
             <div class="panel weather-config">
               <div class="panel-head">
                 <div class="panel-title"><span class="panel-icon"><i data-lucide="cloud-sun"></i></span><div><h2>明天天气推送</h2><p>支持北京 海淀区、山东省 日照市 东港区这类自定义地区；天气查询走 Open-Meteo，不消耗 AI token。</p></div></div>
@@ -804,7 +821,7 @@
     <script src="/static/js/ai/coach.js?v=20260608-module-folders"></script>
     <script src="/static/js/review/mistake_export.js?v=20260613-audit-fixes"></script>
     <script src="/static/js/system/backup.js?v=20260608-module-folders"></script>
-    <script src="/static/js/system/update.js?v=20260610-update-check"></script>
+    <script src="/static/js/system/update.js?v=20260613-release-status"></script>
     
     <script>
       lucide.createIcons();

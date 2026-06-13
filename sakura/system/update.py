@@ -8,6 +8,7 @@ import urllib.request
 # Latest-release lookup against the GitHub Releases API. The app only NOTIFIES about a newer
 # version (and links to the download page); it never overwrites running code automatically.
 GITHUB_API = "https://api.github.com/repos/{repo}/releases/latest"
+GITHUB_RELEASES_PAGE = "https://github.com/{repo}/releases"
 CACHE_TTL_SECONDS = 6 * 3600
 
 # Module-level cache so we don't hit GitHub on every page load. Single value (one repo).
@@ -27,9 +28,20 @@ def is_newer(latest: str, current: str) -> bool:
 
 
 def repo_configured(repo: str) -> bool:
-    """A real 'owner/repo'. Rejects the README placeholder ('owner/-') and empty values."""
+    """Return True for a syntactically usable GitHub owner/repo slug.
+
+    GitHub allows unusual repository names such as "-"; do not reject this project's
+    real repo (`Sakura-Yanxi/-`) as a placeholder.
+    """
     repo = (repo or "").strip()
-    return bool(repo) and "/" in repo and not repo.endswith("/") and not repo.endswith("/-")
+    if not repo or repo.endswith("/") or repo.count("/") != 1:
+        return False
+    owner, name = [part.strip() for part in repo.split("/", 1)]
+    return bool(owner and name)
+
+
+def releases_url(repo: str) -> str:
+    return GITHUB_RELEASES_PAGE.format(repo=repo.strip()) if repo_configured(repo) else ""
 
 
 def fetch_latest_release(repo: str, *, timeout: float = 4.0) -> dict | None:
@@ -62,6 +74,8 @@ def check_for_update(current_version: str, repo: str, *, now: float | None = Non
         "notes": "",
         "checked": False,
         "configured": repo_configured(repo),
+        "repo": repo.strip(),
+        "releases_url": releases_url(repo),
     }
     if not base["configured"]:
         return base
@@ -87,6 +101,8 @@ def check_for_update(current_version: str, repo: str, *, now: float | None = Non
             "published_at": latest.get("published_at", ""),
             "checked": True,
             "configured": True,
+            "repo": repo.strip(),
+            "releases_url": releases_url(repo),
         }
     _CACHE["result"] = result
     _CACHE["checked_at"] = now

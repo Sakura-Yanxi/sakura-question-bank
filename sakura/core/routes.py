@@ -22,7 +22,7 @@ GET_ROUTES: dict[str, RouteTarget] = {
     "/api/reflection": RouteTarget("handle_reflection_preview", with_query=True),
     "/api/countdown": RouteTarget("handle_countdown"),
     "/api/quote": RouteTarget("handle_quote"),
-    "/api/version": RouteTarget("handle_version"),
+    "/api/version": RouteTarget("handle_version", with_query=True),
     "/api/coach": RouteTarget("handle_coach_get"),
     "/api/coach/settings": RouteTarget("handle_coach_settings_get"),
     "/api/profile/history": RouteTarget("handle_profile_history"),

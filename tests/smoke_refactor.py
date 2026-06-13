@@ -34,6 +34,7 @@ from sakura.system import backup as sakura_backup
 from sakura.system import email as sakura_email
 from sakura.system import notifications as sakura_notifications
 from sakura.system import practice_pages as sakura_practice_pages
+from sakura.system import update as sakura_update
 
 import app
 import notify_daily
@@ -73,6 +74,7 @@ def test_http_file_serving() -> None:
 
     assert sakura_routes.route_for("/api/questions", sakura_routes.GET_ROUTES).handler == "handle_questions"
     assert sakura_routes.route_for("/api/questions", sakura_routes.GET_ROUTES).with_query is True
+    assert sakura_routes.route_for("/api/version", sakura_routes.GET_ROUTES).with_query is True
     assert sakura_routes.route_for("/api/notify/settings", sakura_routes.POST_ROUTES).handler == "handle_notification_settings_post"
     assert sakura_routes.route_for("/api/textbooks/vision", sakura_routes.POST_ROUTES).handler == "handle_textbook_vision"
     assert sakura_routes.route_for("/api/missing", sakura_routes.GET_ROUTES) is None
@@ -103,6 +105,17 @@ def test_http_file_serving() -> None:
     assert "filename*=UTF-8''" in disposition
     assert "%E5%8F%8D%E6%80%9D" in disposition
     assert "\n" not in sakura_http.content_disposition_attachment("bad\nname.pdf")
+
+
+def test_update_release_helpers() -> None:
+    assert sakura_update.repo_configured("Sakura-Yanxi/-") is True
+    assert sakura_update.repo_configured("owner/repo") is True
+    assert sakura_update.repo_configured("") is False
+    assert sakura_update.repo_configured("owner/") is False
+    assert sakura_update.repo_configured("owner/repo/extra") is False
+    assert sakura_update.releases_url("Sakura-Yanxi/-") == "https://github.com/Sakura-Yanxi/-/releases"
+    assert sakura_update.is_newer("v1.0.1", "1.0.0") is True
+    assert sakura_update.is_newer("v1.0.0", "1.0.1") is False
 
 
 def test_json_body_parsing_guards() -> None:
