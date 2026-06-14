@@ -4,7 +4,6 @@ import json
 import hmac
 import os
 import re
-import secrets
 import sqlite3
 import shutil
 import sys
@@ -447,37 +446,19 @@ def login_page(error: str = "") -> str:
 
 
 def update_security_runtime_settings(admin_password: str) -> dict:
-    global ADMIN_PASSWORD, AUTH_SECRET
-    errors = sakura_security.validate_admin_password(admin_password)
-    if errors:
-        raise ValueError("；".join(errors))
-    AUTH_SECRET = secrets.token_urlsafe(32)
-    ADMIN_PASSWORD = admin_password
-    os.environ["SAKURA_ADMIN_PASSWORD"] = ADMIN_PASSWORD
-    os.environ["SAKURA_AUTH_SECRET"] = AUTH_SECRET
-    sakura_config.write_local_env(
-        ROOT,
+    updates = sakura_security.security_runtime_updates(admin_password)
+    apply_runtime_env_updates(
+        updates,
         {
-            "SAKURA_ADMIN_PASSWORD": ADMIN_PASSWORD,
-            "SAKURA_AUTH_SECRET": AUTH_SECRET,
+            "SAKURA_ADMIN_PASSWORD": "ADMIN_PASSWORD",
+            "SAKURA_AUTH_SECRET": "AUTH_SECRET",
         },
     )
     return sakura_security.security_settings_view(ADMIN_PASSWORD)
 
 
 def send_login_security_alert(ip: str, user_agent_value: str, result: dict) -> dict:
-    title = "Sakura 安全警报 | 登录失败锁定"
-    content = "\n".join([
-        "### Sakura 登录异常",
-        f"- 来源 IP：`{ip}`",
-        f"- 浏览器标识：`{user_agent_value[:180] or 'unknown'}`",
-        f"- 触发规则：1 分钟内 {sakura_security.LOCK_THRESHOLD} 次密码错误",
-        f"- 锁定级别：第 {result.get('lock_level', 1)} 级",
-        f"- 锁定时长：{result.get('lock_duration') or sakura_security.duration_label(result.get('remaining_seconds', 0))}",
-        f"- 解锁时间：{result.get('locked_until') or '-'}",
-        "",
-        "如果这不是你本人操作，请检查服务器访问日志、Cloudflare/Nginx 访问记录，并尽快更换管理员密码。",
-    ])
+    title, content = sakura_security.login_security_alert_payload(ip, user_agent_value, result)
     preferred = sakura_reminders.normalize_checkin_mode(REMIND_CHECKIN_MODE)
     if preferred == "local":
         return send_notification_all_channels(title, content)
@@ -594,6 +575,15 @@ def notification_settings_view() -> dict:
     )
 
 
+def apply_runtime_env_updates(updates: dict[str, str], global_aliases: dict[str, str] | None = None) -> None:
+    global_aliases = global_aliases or {}
+    for key, value in updates.items():
+        globals()[global_aliases.get(key, key)] = value
+        os.environ[key] = value
+    if updates:
+        sakura_config.write_local_env(ROOT, updates)
+
+
 def update_llm_runtime_settings(
     api_key: str | None = None,
     base_url: str | None = None,
@@ -602,37 +592,15 @@ def update_llm_runtime_settings(
     vision_api_key: str | None = None,
     vision_base_url: str | None = None,
 ) -> dict:
-    global LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
-    global LLM_VISION_MODEL, LLM_VISION_API_KEY, LLM_VISION_BASE_URL
-    updates = {}
-    if api_key is not None and api_key.strip():
-        LLM_API_KEY = api_key.strip()
-        os.environ["LLM_API_KEY"] = LLM_API_KEY
-        updates["LLM_API_KEY"] = LLM_API_KEY
-    if base_url is not None and base_url.strip():
-        LLM_BASE_URL = base_url.strip().rstrip("/")
-        os.environ["LLM_BASE_URL"] = LLM_BASE_URL
-        updates["LLM_BASE_URL"] = LLM_BASE_URL
-    if model is not None and model.strip():
-        LLM_MODEL = model.strip()
-        os.environ["LLM_MODEL"] = LLM_MODEL
-        updates["LLM_MODEL"] = LLM_MODEL
-    # Vision fields are optional and clearable: an explicit empty string clears them (empty
-    # vision_model disables image reading; empty key/url falls back to the text model's value).
-    if vision_model is not None:
-        LLM_VISION_MODEL = vision_model.strip()
-        os.environ["LLM_VISION_MODEL"] = LLM_VISION_MODEL
-        updates["LLM_VISION_MODEL"] = LLM_VISION_MODEL
-    if vision_api_key is not None:
-        LLM_VISION_API_KEY = vision_api_key.strip()
-        os.environ["LLM_VISION_API_KEY"] = LLM_VISION_API_KEY
-        updates["LLM_VISION_API_KEY"] = LLM_VISION_API_KEY
-    if vision_base_url is not None:
-        LLM_VISION_BASE_URL = vision_base_url.strip().rstrip("/")
-        os.environ["LLM_VISION_BASE_URL"] = LLM_VISION_BASE_URL
-        updates["LLM_VISION_BASE_URL"] = LLM_VISION_BASE_URL
-    if updates:
-        sakura_config.write_local_env(ROOT, updates)
+    updates = sakura_settings.llm_runtime_updates(
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        vision_model=vision_model,
+        vision_api_key=vision_api_key,
+        vision_base_url=vision_base_url,
+    )
+    apply_runtime_env_updates(updates)
     return llm_settings_view()
 
 
@@ -651,64 +619,25 @@ def update_notification_runtime_settings(
     email_from: str | None = None,
     email_from_name: str | None = None,
 ) -> dict:
-    global WEWORK_BOT_WEBHOOK, PUSHPLUS_TOKEN, APP_PUBLIC_URL
-    global EMAIL_ENABLED, EMAIL_HOST, EMAIL_PORT, EMAIL_USE_SSL, EMAIL_USE_STARTTLS
-    global EMAIL_USER, EMAIL_PASSWORD, EMAIL_TO, EMAIL_FROM, EMAIL_FROM_NAME
-    updates = {}
-    if wework_webhook is not None and wework_webhook.strip():
-        WEWORK_BOT_WEBHOOK = wework_webhook.strip()
-        os.environ["WEWORK_BOT_WEBHOOK"] = WEWORK_BOT_WEBHOOK
-        updates["WEWORK_BOT_WEBHOOK"] = WEWORK_BOT_WEBHOOK
-    if pushplus_token is not None and pushplus_token.strip():
-        PUSHPLUS_TOKEN = pushplus_token.strip()
-        os.environ["PUSHPLUS_TOKEN"] = PUSHPLUS_TOKEN
-        updates["PUSHPLUS_TOKEN"] = PUSHPLUS_TOKEN
-    if app_public_url is not None and app_public_url.strip():
-        APP_PUBLIC_URL = app_public_url.strip().rstrip("/")
-        os.environ["APP_PUBLIC_URL"] = APP_PUBLIC_URL
-        updates["APP_PUBLIC_URL"] = APP_PUBLIC_URL
-    if email_enabled is not None and email_enabled.strip():
-        EMAIL_ENABLED = sakura_email.normalize_onoff(email_enabled)
-        os.environ["EMAIL_ENABLED"] = EMAIL_ENABLED
-        updates["EMAIL_ENABLED"] = EMAIL_ENABLED
-    if email_host is not None and email_host.strip():
-        EMAIL_HOST = email_host.strip()
-        os.environ["EMAIL_HOST"] = EMAIL_HOST
-        updates["EMAIL_HOST"] = EMAIL_HOST
-    if email_port is not None and email_port.strip():
-        EMAIL_PORT = sakura_email.normalize_port(email_port, EMAIL_PORT)
-        os.environ["EMAIL_PORT"] = EMAIL_PORT
-        updates["EMAIL_PORT"] = EMAIL_PORT
-    if email_use_ssl is not None and email_use_ssl.strip():
-        EMAIL_USE_SSL = sakura_email.normalize_onoff(email_use_ssl, EMAIL_USE_SSL)
-        os.environ["EMAIL_USE_SSL"] = EMAIL_USE_SSL
-        updates["EMAIL_USE_SSL"] = EMAIL_USE_SSL
-    if email_use_starttls is not None and email_use_starttls.strip():
-        EMAIL_USE_STARTTLS = sakura_email.normalize_onoff(email_use_starttls, EMAIL_USE_STARTTLS)
-        os.environ["EMAIL_USE_STARTTLS"] = EMAIL_USE_STARTTLS
-        updates["EMAIL_USE_STARTTLS"] = EMAIL_USE_STARTTLS
-    if email_user is not None and email_user.strip():
-        EMAIL_USER = email_user.strip()
-        os.environ["EMAIL_USER"] = EMAIL_USER
-        updates["EMAIL_USER"] = EMAIL_USER
-    if email_password is not None and email_password.strip():
-        EMAIL_PASSWORD = email_password.strip()
-        os.environ["EMAIL_PASSWORD"] = EMAIL_PASSWORD
-        updates["EMAIL_PASSWORD"] = EMAIL_PASSWORD
-    if email_to is not None and email_to.strip():
-        EMAIL_TO = email_to.strip()
-        os.environ["EMAIL_TO"] = EMAIL_TO
-        updates["EMAIL_TO"] = EMAIL_TO
-    if email_from is not None and email_from.strip():
-        EMAIL_FROM = email_from.strip()
-        os.environ["EMAIL_FROM"] = EMAIL_FROM
-        updates["EMAIL_FROM"] = EMAIL_FROM
-    if email_from_name is not None and email_from_name.strip():
-        EMAIL_FROM_NAME = email_from_name.strip()
-        os.environ["EMAIL_FROM_NAME"] = EMAIL_FROM_NAME
-        updates["EMAIL_FROM_NAME"] = EMAIL_FROM_NAME
-    if updates:
-        sakura_config.write_local_env(ROOT, updates)
+    updates = sakura_settings.notification_runtime_updates(
+        wework_webhook=wework_webhook,
+        pushplus_token=pushplus_token,
+        app_public_url=app_public_url,
+        email_enabled=email_enabled,
+        email_host=email_host,
+        email_port=email_port,
+        email_use_ssl=email_use_ssl,
+        email_use_starttls=email_use_starttls,
+        email_user=email_user,
+        email_password=email_password,
+        email_to=email_to,
+        email_from=email_from,
+        email_from_name=email_from_name,
+        current_email_port=EMAIL_PORT,
+        current_email_use_ssl=EMAIL_USE_SSL,
+        current_email_use_starttls=EMAIL_USE_STARTTLS,
+    )
+    apply_runtime_env_updates(updates)
     return notification_settings_view()
 
 
@@ -716,33 +645,8 @@ def normalize_public_url(value: str) -> str:
     return sakura_settings.normalize_public_url(value)
 
 
-def reminder_settings_view(cron_status: dict | None = None) -> dict:
-    payload = sakura_reminders.ReminderSettings(
-        morning_on=REMIND_MORNING_ON,
-        morning_time=REMIND_MORNING_TIME,
-        night_on=REMIND_NIGHT_ON,
-        night_time=REMIND_NIGHT_TIME,
-        weather_on=REMIND_WEATHER_ON,
-        weather_time=REMIND_WEATHER_TIME,
-        checkin_mode=REMIND_CHECKIN_MODE,
-        daily_scope=REMIND_DAILY_SCOPE,
-        daily_limit=REMIND_DAILY_LIMIT,
-        send_pdf=REMIND_SEND_PDF,
-    ).as_payload(cron_status)
-    payload["scheduler"] = {
-        "enabled": INTERNAL_SCHEDULER_ENABLED,
-        "poll_seconds": SCHEDULER_POLL_SECONDS,
-        "started": _scheduler_started,
-        "platform": os.name,
-    }
-    return payload
-
-
-def update_reminder_runtime_settings(payload: dict) -> dict:
-    global REMIND_MORNING_ON, REMIND_MORNING_TIME, REMIND_NIGHT_ON, REMIND_NIGHT_TIME
-    global REMIND_WEATHER_ON, REMIND_WEATHER_TIME, REMIND_CHECKIN_MODE
-    global REMIND_DAILY_SCOPE, REMIND_DAILY_LIMIT, REMIND_SEND_PDF
-    current = sakura_reminders.ReminderSettings(
+def current_reminder_settings() -> sakura_reminders.ReminderSettings:
+    return sakura_settings.reminder_settings_from_values(
         morning_on=REMIND_MORNING_ON,
         morning_time=REMIND_MORNING_TIME,
         night_on=REMIND_NIGHT_ON,
@@ -754,21 +658,24 @@ def update_reminder_runtime_settings(payload: dict) -> dict:
         daily_limit=REMIND_DAILY_LIMIT,
         send_pdf=REMIND_SEND_PDF,
     )
-    settings = sakura_reminders.merge_settings(current, payload)
-    REMIND_MORNING_ON = settings.morning_on
-    REMIND_MORNING_TIME = settings.morning_time
-    REMIND_NIGHT_ON = settings.night_on
-    REMIND_NIGHT_TIME = settings.night_time
-    REMIND_WEATHER_ON = settings.weather_on
-    REMIND_WEATHER_TIME = settings.weather_time
-    REMIND_CHECKIN_MODE = settings.checkin_mode
-    REMIND_DAILY_SCOPE = settings.daily_scope
-    REMIND_DAILY_LIMIT = settings.daily_limit
-    REMIND_SEND_PDF = settings.send_pdf
-    updates = settings.as_env()
-    for key, value in updates.items():
-        os.environ[key] = value
-    sakura_config.write_local_env(ROOT, updates)
+
+
+def reminder_settings_view(cron_status: dict | None = None) -> dict:
+    return sakura_settings.reminder_settings_view(
+        current_reminder_settings(),
+        cron_status,
+        scheduler={
+            "enabled": INTERNAL_SCHEDULER_ENABLED,
+            "poll_seconds": SCHEDULER_POLL_SECONDS,
+            "started": _scheduler_started,
+            "platform": os.name,
+        },
+    )
+
+
+def update_reminder_runtime_settings(payload: dict) -> dict:
+    settings, updates = sakura_settings.reminder_runtime_updates(current_reminder_settings(), payload)
+    apply_runtime_env_updates(updates)
     cron_status = sakura_reminders.install_crontab(settings, ROOT, DATA_DIR)
     return settings.as_payload(cron_status)
 
@@ -1457,45 +1364,15 @@ def build_practice_batch_pdf(conn: sqlite3.Connection, batch_id: str) -> tuple[b
 
 
 def send_practice_pdf_if_available(reminder: dict, mode: str) -> dict | None:
-    if REMIND_SEND_PDF != "1":
-        return {"ok": True, "channel": "practice_pdf", "skipped": True, "detail": "PDF sending is disabled."}
-    if mode not in {"wework", "email", "local"}:
-        return None
-    batch_id = reminder.get("batch_id")
-    if not batch_id:
-        return None
-    try:
-        with connect() as conn:
-            pdf_bytes, count = build_practice_batch_pdf(conn, batch_id)
-        if count <= 0:
-            return {"ok": True, "channel": "practice_pdf", "skipped": True, "detail": "本次复习包没有匹配题目，未生成 PDF。"}
-        filename = f"sakura_daily_{date.today().isoformat()}_{count}q.pdf"
-        results = []
-        if mode in {"wework", "local"} and WEWORK_BOT_WEBHOOK:
-            results.append(sakura_notifications.send_wework_file(WEWORK_BOT_WEBHOOK, filename, pdf_bytes))
-        if mode in {"email", "local"}:
-            email_settings = current_email_settings()
-            if sakura_email.is_configured(email_settings):
-                results.append(
-                    sakura_email.send_email(
-                        email_settings,
-                        f"今日错题 PDF | {count} 道",
-                        "今日错题 PDF 已生成，附件中可直接查看或打印。",
-                        attachments=[(filename, pdf_bytes, "application/pdf")],
-                    )
-                )
-        if not results:
-            return {"ok": False, "channel": "practice_pdf", "error": "No file-capable channel is configured."}
-        return {
-            "ok": any(item.get("ok") for item in results),
-            "channel": "practice_pdf",
-            "filename": filename,
-            "bytes": len(pdf_bytes),
-            "results": results,
-        }
-    except Exception as exc:
-        traceback.print_exc()
-        return {"ok": False, "channel": "practice_pdf", "error": str(exc)}
+    return sakura_notifications.send_practice_pdf_if_available(
+        reminder,
+        mode,
+        send_pdf_enabled=REMIND_SEND_PDF,
+        connect=connect,
+        build_practice_batch_pdf=build_practice_batch_pdf,
+        wework_webhook=WEWORK_BOT_WEBHOOK,
+        current_email_settings=current_email_settings,
+    )
 
 
 def load_daily_rules(conn: sqlite3.Connection, enabled_only: bool = False) -> list[dict]:

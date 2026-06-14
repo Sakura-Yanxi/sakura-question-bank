@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from datetime import datetime, timedelta
 
 
@@ -84,6 +85,32 @@ def security_settings_view(admin_password: str) -> dict:
         "password_configured": bool(admin_password),
         "policy": password_policy_view(),
     }
+
+
+def security_runtime_updates(admin_password: str, secret_factory=secrets.token_urlsafe) -> dict[str, str]:
+    errors = validate_admin_password(admin_password)
+    if errors:
+        raise ValueError("；".join(errors))
+    return {
+        "SAKURA_ADMIN_PASSWORD": admin_password,
+        "SAKURA_AUTH_SECRET": secret_factory(32),
+    }
+
+
+def login_security_alert_payload(ip: str, user_agent_value: str, result: dict) -> tuple[str, str]:
+    title = "Sakura 安全警报 | 登录失败锁定"
+    content = "\n".join([
+        "### Sakura 登录异常",
+        f"- 来源 IP：`{ip}`",
+        f"- 浏览器标识：`{user_agent_value[:180] or 'unknown'}`",
+        f"- 触发规则：1 分钟内 {LOCK_THRESHOLD} 次密码错误",
+        f"- 锁定级别：第 {result.get('lock_level', 1)} 级",
+        f"- 锁定时长：{result.get('lock_duration') or duration_label(result.get('remaining_seconds', 0))}",
+        f"- 解锁时间：{result.get('locked_until') or '-'}",
+        "",
+        "如果这不是你本人操作，请检查服务器访问日志、Cloudflare/Nginx 访问记录，并尽快更换管理员密码。",
+    ])
+    return title, content
 
 
 def recent_security_events(conn, limit: int = 8) -> list[dict]:

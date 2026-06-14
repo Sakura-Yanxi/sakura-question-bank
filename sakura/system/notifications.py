@@ -177,6 +177,57 @@ def send_wework_file(webhook: str, filename: str, file_bytes: bytes) -> dict:
         return {"ok": False, "channel": "wework_file", "error": str(exc)}
 
 
+def send_practice_pdf_if_available(
+    reminder: dict,
+    mode: str,
+    *,
+    send_pdf_enabled: str,
+    connect: Callable,
+    build_practice_batch_pdf: Callable,
+    wework_webhook: str,
+    current_email_settings: Callable[[], sakura_email.EmailSettings],
+) -> dict | None:
+    if send_pdf_enabled != "1":
+        return {"ok": True, "channel": "practice_pdf", "skipped": True, "detail": "PDF sending is disabled."}
+    if mode not in {"wework", "email", "local"}:
+        return None
+    batch_id = reminder.get("batch_id")
+    if not batch_id:
+        return None
+    try:
+        with connect() as conn:
+            pdf_bytes, count = build_practice_batch_pdf(conn, batch_id)
+        if count <= 0:
+            return {"ok": True, "channel": "practice_pdf", "skipped": True, "detail": "本次复习包没有匹配题目，未生成 PDF。"}
+        filename = f"sakura_daily_{date.today().isoformat()}_{count}q.pdf"
+        results = []
+        if mode in {"wework", "local"} and wework_webhook:
+            results.append(send_wework_file(wework_webhook, filename, pdf_bytes))
+        if mode in {"email", "local"}:
+            email_settings = current_email_settings()
+            if sakura_email.is_configured(email_settings):
+                results.append(
+                    sakura_email.send_email(
+                        email_settings,
+                        f"今日错题 PDF | {count} 道",
+                        "今日错题 PDF 已生成，附件中可直接查看或打印。",
+                        attachments=[(filename, pdf_bytes, "application/pdf")],
+                    )
+                )
+        if not results:
+            return {"ok": False, "channel": "practice_pdf", "error": "No file-capable channel is configured."}
+        return {
+            "ok": any(item.get("ok") for item in results),
+            "channel": "practice_pdf",
+            "filename": filename,
+            "bytes": len(pdf_bytes),
+            "results": results,
+        }
+    except Exception as exc:
+        traceback.print_exc()
+        return {"ok": False, "channel": "practice_pdf", "error": str(exc)}
+
+
 def send_notification(
     title: str,
     content: str,
