@@ -474,3 +474,12 @@ Original repository: https://github.com/Sakura-Yanxi/sakura-question-bank
 - 使用外部讲解接口、视觉接口、天气接口或推送接口产生的费用、余额不足、限流、封禁、服务中断等问题，由对应服务账号持有人自行承担。
 - 智能讲解、计划、反思和教材解读可能存在错误，只能作为学习辅助，不能替代教材、教师、标准答案或专业判断。
 - 请勿上传、传播或打包没有授权的 PDF、教材、题库、试卷、图片等资料。
+
+## 支持作者
+
+如果你感觉本工具有用，想请作者喝杯可乐，欢迎自愿打赏。
+
+<p>
+  <img src="donation/wechat-pay.jpg" alt="微信支付打赏码" width="260" />
+  <img src="donation/alipay.jpg" alt="支付宝打赏码" width="260" />
+</p>

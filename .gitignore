@@ -32,6 +32,10 @@ docs/*
 !docs/architecture.md
 !docs/release-update.md
 !docs/notion-sakura-project-page.md
+!docs/donation/
+docs/donation/*
+!docs/donation/wechat-pay.jpg
+!docs/donation/alipay.jpg
 !docs/poster/
 docs/poster/*
 !docs/poster/sakura-demo-poster.png

@@ -361,3 +361,12 @@ Original repository: https://github.com/Sakura-Yanxi/sakura-question-bank
 - 请勿上传、传播或打包没有授权的 PDF、教材、题库、试卷、图片等资料；由此产生的版权、合规或法律风险由使用者自行承担。
 - 公网部署时请遵守所在地网络安全、备案、域名、版权和数据合规要求；因部署、公开访问或二次分发造成的风险由部署者自行承担。
 
+## 支持作者
+
+如果你感觉本工具有用，想请作者喝杯可乐，欢迎自愿打赏。感谢你的支持，也请先照顾好自己的学习数据、API Key 和本地备份。
+
+<p>
+  <img src="docs/donation/wechat-pay.jpg" alt="微信支付打赏码" width="260" />
+  <img src="docs/donation/alipay.jpg" alt="支付宝打赏码" width="260" />
+</p>
+
