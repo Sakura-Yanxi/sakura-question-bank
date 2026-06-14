@@ -23,7 +23,6 @@ if not errorlevel 1 (
 )
 
 set "VENV_PY=%CD%\.venv\Scripts\python.exe"
-set "VENV_CREATED=0"
 
 if not exist "%VENV_PY%" (
   set "BASE_PYTHON_CMD="
@@ -46,30 +45,27 @@ if not exist "%VENV_PY%" (
     if /I not "%~1"=="/hidden" pause
     exit /b 1
   )
-  set "VENV_CREATED=1"
 )
 
-set "PYTHON_CMD="%VENV_PY%""
+set "PYTHON_EXE=%VENV_PY%"
 
-if "%VENV_CREATED%"=="1" (
-  echo [Sakura] 正在安装依赖，这一步只在首次运行时较慢。
-  %PYTHON_CMD% -m pip install --disable-pip-version-check -r "%CD%\requirements.txt"
-  if errorlevel 1 (
-    echo [Sakura] 依赖安装失败，请检查网络后重新运行本文件。
-    if /I not "%~1"=="/hidden" pause
-    exit /b 1
-  )
+echo [Sakura] 正在检查依赖，已安装的依赖会自动跳过。
+"%PYTHON_EXE%" -m pip install --disable-pip-version-check -r "%CD%\requirements.txt"
+if errorlevel 1 (
+  echo [Sakura] 依赖安装失败，请检查网络后重新运行本文件。
+  if /I not "%~1"=="/hidden" pause
+  exit /b 1
 )
 
 echo [Sakura] 项目目录：%CD%
-echo [Sakura] Python：%PYTHON_CMD%
+echo [Sakura] Python：%PYTHON_EXE%
 echo [Sakura] 浏览器地址：%APP_URL%
 echo [Sakura] 正在启动；窗口保持打开表示服务正在运行。
 echo [Sakura] 关闭这个窗口会停止本地服务。
 echo.
 
 start "" "%APP_URL%"
-%PYTHON_CMD% "%CD%\app.py"
+"%PYTHON_EXE%" "%CD%\app.py"
 echo.
 echo [Sakura] 服务已停止或启动失败。请检查上方报错。
 if /I not "%~1"=="/hidden" pause

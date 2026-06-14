@@ -23,12 +23,16 @@ fi
 
 echo
 echo "== 2/2 更新依赖 =="
-if command -v python3 >/dev/null 2>&1; then
-  PY=python3
-else
-  PY=python
+if [ ! -x ".venv/bin/python" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    BASE_PY=python3
+  else
+    BASE_PY=python
+  fi
+  echo "正在创建本地虚拟环境：$(pwd)/.venv"
+  "$BASE_PY" -m venv .venv
 fi
-"$PY" -m pip install -r requirements.txt
+".venv/bin/python" -m pip install --disable-pip-version-check -r requirements.txt
 
 echo
-echo "✅ 更新完成。请重启服务（python app.py，或你的 systemd / pm2 / screen 进程）。"
+echo "✅ 更新完成。请重启服务（.venv/bin/python app.py，或你的 systemd / pm2 / screen 进程）。"

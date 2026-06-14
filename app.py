@@ -96,6 +96,7 @@ LOCAL_SETTINGS_ENV_KEYS = {
     "REMIND_SEND_PDF",
     "REMIND_WEATHER_ON",
     "REMIND_WEATHER_TIME",
+    "SAKURA_HOST",
     "WEATHER_CITY",
     "WEWORK_BOT_WEBHOOK",
 }
@@ -103,6 +104,7 @@ LOCAL_SETTINGS_ENV_KEYS = {
 sakura_config.load_local_env(ROOT, override_keys=LOCAL_SETTINGS_ENV_KEYS)
 
 PORT = int(os.getenv("PORT", "8000"))
+SAKURA_HOST = os.getenv("SAKURA_HOST", "127.0.0.1").strip() or "127.0.0.1"
 ADMIN_PASSWORD = sakura_auth.clean_auth_value(os.getenv("SAKURA_ADMIN_PASSWORD") or os.getenv("APP_PASSWORD") or "")
 AUTH_SECRET = sakura_auth.clean_auth_value(os.getenv("SAKURA_AUTH_SECRET") or os.getenv("APP_SECRET") or "")
 AUTH_COOKIE_NAME = "sakura_session"
@@ -2661,8 +2663,9 @@ class DemoHandler(BaseHTTPRequestHandler):
 def main() -> None:
     init_db()
     start_internal_scheduler()
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), DemoHandler)
-    print(f"Sakura demo running at http://127.0.0.1:{PORT}", flush=True)
+    server = ThreadingHTTPServer((SAKURA_HOST, PORT), DemoHandler)
+    shown_host = "127.0.0.1" if SAKURA_HOST in {"", "0.0.0.0", "::"} else SAKURA_HOST
+    print(f"Sakura demo running at http://{shown_host}:{PORT}", flush=True)
     server.serve_forever()
 
 
