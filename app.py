@@ -162,9 +162,8 @@ REMIND_DAILY_SCOPE = sakura_reminders.normalize_daily_scope(os.getenv("REMIND_DA
 REMIND_DAILY_LIMIT = sakura_reminders.normalize_daily_limit(os.getenv("REMIND_DAILY_LIMIT", "20"))
 REMIND_SEND_PDF = sakura_reminders.normalize_onoff(os.getenv("REMIND_SEND_PDF", "1"))
 INTERNAL_SCHEDULER_ENABLED = os.getenv("SAKURA_INTERNAL_SCHEDULER", "1").strip().lower() not in {"0", "false", "no", "off"}
-# GitHub "owner/repo" used to check for a newer release (notify-only). Set this to your fork/repo;
-# the placeholder default keeps the check dormant until configured.
-UPDATE_REPO = os.getenv("SAKURA_UPDATE_REPO", "Sakura-Yanxi/-").strip()
+# GitHub "owner/repo" used to check for a newer release (notify-only). Set this to your fork/repo.
+UPDATE_REPO = os.getenv("SAKURA_UPDATE_REPO", "Sakura-Yanxi/sakura-question-bank").strip()
 
 
 def env_int(name: str, default: int, minimum: int | None = None) -> int:

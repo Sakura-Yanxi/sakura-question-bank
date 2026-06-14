@@ -30,8 +30,8 @@ def is_newer(latest: str, current: str) -> bool:
 def repo_configured(repo: str) -> bool:
     """Return True for a syntactically usable GitHub owner/repo slug.
 
-    GitHub allows unusual repository names such as "-"; do not reject this project's
-    real repo (`Sakura-Yanxi/-`) as a placeholder.
+    GitHub allows unusual repository names such as "-"; accept any non-empty
+    owner/repo pair and let the API decide whether it exists.
     """
     repo = (repo or "").strip()
     if not repo or repo.endswith("/") or repo.count("/") != 1:
