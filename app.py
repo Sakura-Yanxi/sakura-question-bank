@@ -16,7 +16,17 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import urllib.parse
 
-import fitz
+try:
+    import fitz
+except ModuleNotFoundError as exc:
+    if exc.name == "fitz":
+        raise SystemExit(
+            "\n[Sakura] 缺少依赖 PyMuPDF（模块名 fitz）。\n"
+            "Windows 用户请双击 run_server.bat，它会自动创建 .venv 并安装依赖。\n"
+            "命令行启动请先运行：python -m pip install -r requirements.txt\n"
+            "如果已经创建 .venv，请运行：.\\.venv\\Scripts\\python app.py\n"
+        ) from None
+    raise
 from sakura.content.pdf import (
     crop_image_by_ratio,
     render_page_image,

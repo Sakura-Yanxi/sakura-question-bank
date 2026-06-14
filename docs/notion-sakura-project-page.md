@@ -5,7 +5,7 @@
 ## 项目入口
 
 - GitHub 仓库：https://github.com/Sakura-Yanxi/sakura-question-bank
-- 当前版本：`v1.0.1`
+- 当前版本：`v1.0.2`
 - 发布页：https://github.com/Sakura-Yanxi/sakura-question-bank/releases
 - 宣传海报：`docs/poster/sakura-demo-poster.png`
 - 保姆级部署教程：`docs/本地到云端部署保姆级教程.md`
@@ -231,20 +231,26 @@ SAKURA_AUTH_SECRET=换成一长串随机字符
 
 ### 第七步：启动
 
+Windows 推荐直接双击：
+
+```text
+run_server.bat
+```
+
+它会自动创建 `.venv`、安装依赖并打开浏览器。
+
+手动命令行启动：
+
 ```bash
 python app.py
 ```
+
+如果看到 `No module named 'fitz'`，说明依赖还没安装；请先运行 `run_server.bat`，或执行 `python -m pip install -r requirements.txt`。
 
 浏览器打开：
 
 ```text
 http://127.0.0.1:8000
-```
-
-Windows 用户也可以双击：
-
-```text
-run_server.bat
 ```
 
 ## 文字讲解接口配置

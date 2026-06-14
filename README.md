@@ -8,7 +8,7 @@ Sakura 做题集是一个本地优先的个人学习工作台，用来管理 PDF
 
 ## 当前状态
 
-- 当前版本：`v1.0.1`
+- 当前版本：`v1.0.2`
 - 项目地址：[Sakura-Yanxi/sakura-question-bank](https://github.com/Sakura-Yanxi/sakura-question-bank)
 - 发布页：[GitHub Releases](https://github.com/Sakura-Yanxi/sakura-question-bank/releases)
 - 更新方式：Git 用户运行 `update.bat` / `update.sh`；下载压缩包的用户覆盖代码文件，并保留自己的 `data/` 和 `.env`。
@@ -161,7 +161,13 @@ cd sakura-question-bank
 
 ### 2. 安装依赖
 
-Windows:
+Windows 最简单的方式是直接双击：
+
+```text
+run_server.bat
+```
+
+它会自动创建 `.venv`、安装依赖并打开浏览器。手动命令行方式如下：
 
 ```powershell
 python -m venv .venv
@@ -198,6 +204,14 @@ SAKURA_AUTH_SECRET=换成一长串随机字符
 
 ### 4. 启动服务
 
+Windows 推荐双击：
+
+```text
+run_server.bat
+```
+
+命令行启动：
+
 ```bash
 python app.py
 ```
@@ -208,19 +222,15 @@ python app.py
 http://127.0.0.1:8000
 ```
 
-Windows 也可以双击 `run_server.bat`。
+如果看到 `No module named 'fitz'`，说明跳过了依赖安装；请运行 `run_server.bat`，或先执行 `python -m pip install -r requirements.txt`。
 
 ## 更新项目
 
 已用 Git 下载的用户：
 
-```bash
-git pull
-pip install -r requirements.txt
-python app.py
-```
+Windows 可以双击 `update.bat`。
 
-Windows 可以双击 `update.bat`，Linux / macOS / 服务器可以运行：
+Linux / macOS / 服务器可以运行：
 
 ```bash
 bash update.sh
@@ -369,4 +379,3 @@ Original repository: https://github.com/Sakura-Yanxi/sakura-question-bank
   <img src="docs/donation/wechat-pay.jpg" alt="微信支付打赏码" width="260" />
   <img src="docs/donation/alipay.jpg" alt="支付宝打赏码" width="260" />
 </p>
-
