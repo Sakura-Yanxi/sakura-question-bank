@@ -37,9 +37,9 @@ Create `.env`:
 ```bash
 cat > /opt/sakura/app/.env <<'EOF'
 PORT=8000
-APP_PUBLIC_URL=https://xiaoyinghua.dpdns.org
-SAKURA_ADMIN_PASSWORD=change-me
-SAKURA_AUTH_SECRET=replace-with-a-long-random-string
+APP_PUBLIC_URL=https://your-domain.example
+SAKURA_ADMIN_PASSWORD=replace-with-a-strong-password
+SAKURA_AUTH_SECRET=replace-with-a-long-random-secret
 SAKURA_DEMO_MODE=1
 REMIND_MORNING_ON=0
 REMIND_NIGHT_ON=0

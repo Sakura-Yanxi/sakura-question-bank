@@ -1,16 +1,30 @@
 __pycache__/
+.pytest_cache/
 *.py[cod]
 .venv/
 venv/
 
 data/
-sample_gaoshu.pdf
+*.db
+*.sqlite
+*.sqlite3
+*.pdf
 
 .env
 .deploy_keys/
+*.pem
+*.key
+*.p12
+*.pfx
 *.log
 *.zip
+*.bak
+*.tmp
 gitdb/
+.coverage
+htmlcov/
+dist/
+build/
 
 # Keep only public docs under docs/.
 docs/*

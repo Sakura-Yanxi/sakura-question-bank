@@ -32,8 +32,8 @@ For a private instance:
 
 ```env
 SAKURA_DEMO_MODE=0
-SAKURA_ADMIN_PASSWORD=your-password
-SAKURA_AUTH_SECRET=long-random-secret
+SAKURA_ADMIN_PASSWORD=replace-with-a-strong-password
+SAKURA_AUTH_SECRET=replace-with-a-long-random-secret
 APP_PUBLIC_URL=https://your-domain.example
 ```
 

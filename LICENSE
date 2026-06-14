@@ -1,0 +1,50 @@
+Sakura Non-Commercial Source License
+
+Copyright (c) 2026 Sakura-Yanxi
+
+This repository is source-available for learning, personal use, technical
+exchange, demos, and non-commercial derivative work only. It is not an
+OSI-approved open source license because commercial use is restricted.
+
+1. Permission
+
+You may view, run, copy, and modify the source code for personal,
+educational, research, portfolio, demo, and other non-commercial purposes.
+
+2. Conditions
+
+You must:
+
+- keep the original author attribution and repository link;
+- keep this license and copyright notice in redistributed copies;
+- clearly state that derivative work is based on Sakura by Sakura-Yanxi;
+- avoid misleading others into thinking a derivative work is the official
+  Sakura project;
+- comply with the licenses of third-party dependencies.
+
+3. Commercial Use Is Prohibited
+
+Without prior written permission from Sakura-Yanxi, you may not use this
+project, its interface, documentation, poster, code, or core functionality for:
+
+- paid products, paid courses, training institution products, SaaS services,
+  paid deployment, closed-source commercial systems, or commercial marketing;
+- republishing after removing, hiding, or weakening the original attribution;
+- packaging similar names, logos, pages, or functions as an original
+  commercial product;
+- using this project as a main feature, demo template, or deliverable in a
+  commercial project.
+
+4. User Data and Third-Party Content
+
+This repository does not grant rights to redistribute textbooks, PDFs,
+question banks, exam papers, screenshots, images, API keys, user databases, or
+other materials that belong to third parties. Users are responsible for the
+legality of the content they import, export, back up, deploy, or share.
+
+5. No Warranty
+
+The project is provided "as is", without warranty of any kind. The author is
+not responsible for data loss, server security issues, API costs, service
+limits, account bans, model output mistakes, copyright disputes, deployment
+risks, or any direct or indirect damages arising from use of this project.

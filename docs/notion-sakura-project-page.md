@@ -393,7 +393,7 @@ bash update.sh
 检查终端里是否显示：
 
 ```text
-Gaoshu demo running at http://127.0.0.1:8000
+Sakura demo running at http://127.0.0.1:8000
 ```
 
 如果端口被占用，可以在 `.env` 改：

@@ -103,8 +103,8 @@ LOCAL_SETTINGS_ENV_KEYS = {
 sakura_config.load_local_env(ROOT, override_keys=LOCAL_SETTINGS_ENV_KEYS)
 
 PORT = int(os.getenv("PORT", "8000"))
-ADMIN_PASSWORD = os.getenv("SAKURA_ADMIN_PASSWORD") or os.getenv("APP_PASSWORD") or ""
-AUTH_SECRET = os.getenv("SAKURA_AUTH_SECRET") or os.getenv("APP_SECRET") or ""
+ADMIN_PASSWORD = sakura_auth.clean_auth_value(os.getenv("SAKURA_ADMIN_PASSWORD") or os.getenv("APP_PASSWORD") or "")
+AUTH_SECRET = sakura_auth.clean_auth_value(os.getenv("SAKURA_AUTH_SECRET") or os.getenv("APP_SECRET") or "")
 AUTH_COOKIE_NAME = "sakura_session"
 AUTH_MAX_AGE_SECONDS = 60 * 60 * 24 * 14
 DEMO_MODE = os.getenv("SAKURA_DEMO_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -1421,7 +1421,7 @@ def run_migration_import_job(job_id: str, upload_path: Path) -> None:
 
 
 class DemoHandler(BaseHTTPRequestHandler):
-    server_version = "GaoshuDemo/0.1"
+    server_version = f"SakuraStudy/{APP_VERSION}"
 
     def log_message(self, format: str, *args) -> None:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] {format % args}")
@@ -2662,7 +2662,7 @@ def main() -> None:
     init_db()
     start_internal_scheduler()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), DemoHandler)
-    print(f"Gaoshu demo running at http://127.0.0.1:{PORT}", flush=True)
+    print(f"Sakura demo running at http://127.0.0.1:{PORT}", flush=True)
     server.serve_forever()
 
 

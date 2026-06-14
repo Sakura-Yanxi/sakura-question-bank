@@ -305,6 +305,12 @@ bash update.sh
 
 更详细的发布说明见 [docs/release-update.md](docs/release-update.md)。
 
+## 授权
+
+本仓库采用自定义非商业源码授权，详见 [LICENSE](LICENSE)。
+
+因为包含禁止商用条款，它不是 OSI 意义上的宽松开源协议。这里的“开源”指公开源码供学习、交流、个人使用和非商业二次开发；商业使用必须先获得 Sakura-Yanxi 的明确书面许可。
+
 ## 使用边界
 
 可以：

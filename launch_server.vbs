@@ -1,3 +1,5 @@
 Set shell = CreateObject("WScript.Shell")
-shell.CurrentDirectory = "C:\Users\Sakura\Desktop\demo"
-shell.Run Chr(34) & "C:\Users\Sakura\Desktop\demo\run_server.bat" & Chr(34), 0, False
+Set fso = CreateObject("Scripting.FileSystemObject")
+projectDir = fso.GetParentFolderName(WScript.ScriptFullName)
+shell.CurrentDirectory = projectDir
+shell.Run Chr(34) & fso.BuildPath(projectDir, "run_server.bat") & Chr(34), 0, False

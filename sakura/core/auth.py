@@ -10,12 +10,41 @@ from urllib.parse import unquote
 
 PUBLIC_AUTH_PATHS = {"/login", "/api/health"}
 
+PLACEHOLDER_AUTH_VALUES = {
+    "admin",
+    "change-me",
+    "changeme",
+    "long-random-secret",
+    "password",
+    "replace-with-a-long-random-string",
+    "replace-with-a-long-random-secret",
+    "replace-with-a-strong-password",
+    "your-password",
+    "一串很长的随机字符串",
+    "刚才生成的长字符串",
+    "换成一长串随机字符",
+    "换成强密码",
+    "新密码",
+    "请改成一串很长的随机字符",
+    "请改成你的登录密码",
+    "你的登录密码",
+}
+
+
+def clean_auth_value(value: str) -> str:
+    cleaned = (value or "").strip()
+    if cleaned.lower() in PLACEHOLDER_AUTH_VALUES or cleaned in PLACEHOLDER_AUTH_VALUES:
+        return ""
+    return cleaned
+
 
 def auth_enabled(admin_password: str) -> bool:
-    return bool(admin_password)
+    return bool(clean_auth_value(admin_password))
 
 
 def auth_secret(admin_password: str, auth_secret_value: str) -> str:
+    auth_secret_value = clean_auth_value(auth_secret_value)
+    admin_password = clean_auth_value(admin_password)
     return auth_secret_value or admin_password or "sakura-local-dev"
 
 
