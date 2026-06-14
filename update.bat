@@ -2,34 +2,14 @@
 chcp 65001 >nul
 REM ============================================================
 REM  Sakura 做题集 · 一键更新（Windows）
-REM  作用：拉取最新代码 + 更新依赖。
-REM  绝不触碰你的 data\（题库/数据库/题图）和 .env（密钥配置）。
+REM  有 Git 就拉取代码；没有 Git 也会自动下载最新 Release zip。
+REM  会保留 data\、.env、.venv 和 docs\software_copyright\。
 REM ============================================================
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
-where git >nul 2>nul
-if errorlevel 1 (
-  echo [错误] 未检测到 git。
-  echo 你可以改用「下载最新 zip，解压后覆盖代码文件」的方式更新，
-  echo 覆盖时不要动 data\ 和 .env 即可。
-  pause
-  exit /b 1
-)
-
-echo == 1/2 拉取最新代码 ==
-git pull --ff-only
-if errorlevel 1 (
-  echo.
-  echo [错误] git pull 失败：通常是本地代码被改过，或网络/远程仓库问题。
-  echo 放心：你的题库数据在 data\、配置在 .env，都不受影响。
-  pause
-  exit /b 1
-)
-
-echo.
-echo == 2/2 更新依赖 ==
 set "VENV_PY=%CD%\.venv\Scripts\python.exe"
+
 if not exist "%VENV_PY%" (
   set "BASE_PYTHON_CMD="
   python --version >nul 2>nul
@@ -43,7 +23,7 @@ if not exist "%VENV_PY%" (
     pause
     exit /b 1
   )
-  echo 正在创建本地虚拟环境：%CD%\.venv
+  echo [Sakura] 正在创建本地虚拟环境：%CD%\.venv
   !BASE_PYTHON_CMD! -m venv "%CD%\.venv"
   if errorlevel 1 (
     echo [错误] 虚拟环境创建失败。
@@ -51,14 +31,9 @@ if not exist "%VENV_PY%" (
     exit /b 1
   )
 )
-"%VENV_PY%" -m pip install --disable-pip-version-check -r requirements.txt
-if errorlevel 1 (
-  echo [错误] 依赖安装失败，请检查网络后重试。
-  pause
-  exit /b 1
-)
 
+echo [Sakura] 正在启动轻量更新器。
+echo [Sakura] 如果当前目录是 Git 仓库，会使用 git pull；否则会下载 GitHub Release zip。
 echo.
-echo ✅ 更新完成。请重新启动服务：双击 run_server.bat。
-pause
-endlocal
+"%VENV_PY%" "%CD%\scripts\sakura_updater.py" --pause
+exit /b %ERRORLEVEL%

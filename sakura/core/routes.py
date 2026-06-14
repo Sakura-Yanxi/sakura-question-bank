@@ -74,6 +74,7 @@ POST_ROUTES: dict[str, RouteTarget] = {
     "/api/security/settings": RouteTarget("handle_security_settings_post"),
     "/api/notification/test-email": RouteTarget("handle_email_test"),
     "/api/reminder/settings": RouteTarget("handle_reminder_settings_post"),
+    "/api/version/update": RouteTarget("handle_version_update"),
 }
 
 

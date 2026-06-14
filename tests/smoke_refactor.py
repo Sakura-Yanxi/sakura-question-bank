@@ -86,6 +86,7 @@ def test_http_file_serving() -> None:
     assert sakura_routes.route_for("/api/version", sakura_routes.GET_ROUTES).with_query is True
     assert sakura_routes.route_for("/api/notify/settings", sakura_routes.POST_ROUTES).handler == "handle_notification_settings_post"
     assert sakura_routes.route_for("/api/textbooks/vision", sakura_routes.POST_ROUTES).handler == "handle_textbook_vision"
+    assert sakura_routes.route_for("/api/version/update", sakura_routes.POST_ROUTES).handler == "handle_version_update"
     assert sakura_routes.route_for("/api/missing", sakura_routes.GET_ROUTES) is None
     assert sakura_routes.split_path("/api/practice/b1/questions/q2") == ["api", "practice", "b1", "questions", "q2"]
     assert sakura_routes.get_dynamic_route("/api/questions/q1").handler == "handle_question_detail"
@@ -151,6 +152,19 @@ def test_http_file_serving() -> None:
 
 
 def test_update_release_helpers() -> None:
+    updater_script = ROOT / "scripts" / "sakura_updater.py"
+    assert updater_script.exists()
+    updater_text = updater_script.read_text(encoding="utf-8")
+    assert "apply_update" in updater_text
+    assert "DEFAULT_UPDATE_REPO" in updater_text
+
+    update_bat = (ROOT / "update.bat").read_text(encoding="utf-8")
+    update_sh = (ROOT / "update.sh").read_text(encoding="utf-8")
+    assert "sakura_updater.py" in update_bat
+    assert "sakura_updater.py" in update_sh
+    assert "where git" not in update_bat
+    assert "command -v git" not in update_sh
+
     assert sakura_update.repo_configured("Sakura-Yanxi/-") is True
     assert sakura_update.repo_configured("owner/repo") is True
     assert sakura_update.repo_configured("") is False
@@ -159,6 +173,45 @@ def test_update_release_helpers() -> None:
     assert sakura_update.releases_url("Sakura-Yanxi/-") == "https://github.com/Sakura-Yanxi/-/releases"
     assert sakura_update.is_newer("v1.0.1", "1.0.0") is True
     assert sakura_update.is_newer("v1.0.0", "1.0.1") is False
+
+    disabled = sakura_update.disabled_capability("手动下载", "当前不可自动更新。", "manual")
+    assert disabled == {
+        "supported": False,
+        "mode": "manual",
+        "label": "手动下载",
+        "description": "当前不可自动更新。",
+    }
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert sakura_update.update_capability(root, {})["supported"] is False
+        zip_capability = sakura_update.update_capability(root, {"zipball_url": "https://example.com/source.zip"})
+        assert zip_capability["supported"] is True
+        assert zip_capability["mode"] == "zip"
+
+        bad_zip = root / "bad.zip"
+        with zipfile.ZipFile(bad_zip, "w") as archive:
+            archive.writestr("../evil.txt", "bad")
+        try:
+            sakura_update._safe_extract_zip(bad_zip, root / "extract")
+            raise AssertionError("unsafe zip path accepted")
+        except ValueError:
+            pass
+
+        source = root / "source"
+        (source / "sakura").mkdir(parents=True)
+        (source / "static").mkdir()
+        (source / "docs").mkdir()
+        (source / "app.py").write_text("print('new')\n", encoding="utf-8")
+        (source / "docs" / "public.md").write_text("new docs\n", encoding="utf-8")
+
+        (root / "docs" / "software_copyright").mkdir(parents=True)
+        (root / "docs" / "software_copyright" / "private.md").write_text("secret\n", encoding="utf-8")
+        (root / "docs" / "old.md").write_text("old docs\n", encoding="utf-8")
+        sakura_update._replace_code_from(source, root)
+        assert (root / "docs" / "public.md").read_text(encoding="utf-8") == "new docs\n"
+        assert (root / "docs" / "software_copyright" / "private.md").read_text(encoding="utf-8") == "secret\n"
+        assert not (root / "docs" / "old.md").exists()
 
 
 def test_json_body_parsing_guards() -> None:
@@ -1528,6 +1581,7 @@ def test_real_import_pdf_smoke() -> None:
 
 def main() -> None:
     test_http_file_serving()
+    test_update_release_helpers()
     test_local_env_override_policy()
     test_question_detail_legacy_note_fallback()
     test_settings_payload_parsing()

@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260613-release-status" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260614-auto-update" />
     <script>
       window.MathJax = {
         tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] },
@@ -644,7 +644,7 @@
 
             <div class="panel version-management-panel">
               <div class="panel-head">
-                <div class="panel-title"><span class="panel-icon"><i data-lucide="package-check"></i></span><div><h2>版本管理</h2><p>用 GitHub Release 发布新版本；已部署的用户可通过更新脚本或下载包升级。</p></div></div>
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="package-check"></i></span><div><h2>版本管理</h2><p>用 GitHub Release 发布新版本；已部署的用户可在页面内一键更新，重启后生效。</p></div></div>
                 <span class="tag">Release</span>
               </div>
               <div id="versionStatusCard" class="version-status-card">
@@ -655,7 +655,7 @@
               </div>
               <div class="version-guide">
                 <div><strong>发布</strong><span>修改 <code>sakura/__init__.py</code> 版本号，提交推送后在 GitHub 创建对应 tag 的 Release。</span></div>
-                <div><strong>更新</strong><span>用户运行 <code>update.bat</code> / <code>update.sh</code>，或下载最新 zip 覆盖代码；保留 <code>data/</code> 和 <code>.env</code>。</span></div>
+                <div><strong>更新</strong><span>页面支持 Git / Release zip 一键更新；也可运行 <code>update.bat</code> / <code>update.sh</code>。更新保留 <code>data/</code>、<code>.env</code> 和 <code>.venv</code>。</span></div>
               </div>
             </div>
 
@@ -821,7 +821,7 @@
     <script src="/static/js/ai/coach.js?v=20260608-module-folders"></script>
     <script src="/static/js/review/mistake_export.js?v=20260613-audit-fixes"></script>
     <script src="/static/js/system/backup.js?v=20260608-module-folders"></script>
-    <script src="/static/js/system/update.js?v=20260613-release-status"></script>
+    <script src="/static/js/system/update.js?v=20260614-auto-update"></script>
     
     <script>
       lucide.createIcons();

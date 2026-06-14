@@ -1,5 +1,4 @@
-// In-app version notice and release status panel.
-// Notify-only: the app links to the release page and never rewrites running code.
+// In-app version notice, release status panel, and guarded one-click updater.
 (function () {
   const DISMISS_KEY = "sakura_update_dismissed";
 
@@ -8,7 +7,25 @@
     return api(`/api/version${suffix}`);
   }
 
+  function canAutoUpdate(info) {
+    return Boolean(info?.auto_update?.supported);
+  }
+
+  function updateModeText(info) {
+    if (canAutoUpdate(info)) {
+      return info.auto_update.mode === "git" ? "一键更新（Git）" : "一键更新（Release zip）";
+    }
+    return info?.auto_update?.label || "手动下载覆盖";
+  }
+
   function formatReleaseStatus(info) {
+    if (info?.restart_required) {
+      return {
+        label: "等待重启",
+        text: "更新文件已写入本地，关闭并重新启动 Sakura 服务后，新版本才会正式生效。",
+        tone: "warning",
+      };
+    }
     if (!info?.configured) {
       return {
         label: "未配置仓库",
@@ -55,13 +72,15 @@
       <div class="version-status-grid">
         <div><span>当前版本</span><strong>${escapeHtml(info?.current || "-")}</strong></div>
         <div><span>最新 Release</span><strong>${escapeHtml(info?.latest || "-")}</strong></div>
-        <div><span>更新方式</span><strong>update.bat / update.sh</strong></div>
+        <div><span>更新方式</span><strong>${escapeHtml(updateModeText(info))}</strong></div>
       </div>
       <p>${escapeHtml(status.text)}</p>
+      ${info?.auto_update?.description ? `<p>${escapeHtml(info.auto_update.description)}</p>` : ""}
       ${notes ? `<p class="version-release-notes">${escapeHtml(notes)}</p>` : ""}
       <div class="version-actions">
         <button id="checkVersionNow" class="ghost" type="button"><i data-lucide="refresh-cw"></i>重新检查</button>
-        ${releaseHref ? `<a class="ghost version-link" href="${escapeAttr(releaseHref)}" target="_blank" rel="noopener"><i data-lucide="external-link"></i>打开 Release</a>` : ""}
+        ${info?.update_available && canAutoUpdate(info) ? `<button id="applyVersionUpdate" type="button"><i data-lucide="download"></i>一键更新</button>` : ""}
+        ${releaseHref ? `<a class="ghost version-link" href="${escapeAttr(releaseHref)}" target="_blank" rel="noopener"><i data-lucide="external-link"></i>手动下载</a>` : ""}
         <span>${escapeHtml(message || checkedText)}</span>
       </div>`;
 
@@ -80,19 +99,75 @@
         }
       });
     }
+    const updateButton = document.getElementById("applyVersionUpdate");
+    if (updateButton) {
+      updateButton.addEventListener("click", () => applyUpdate(info, updateButton));
+    }
     if (window.lucide) window.lucide.createIcons();
+  }
+
+  async function applyUpdate(info, button) {
+    const ok = window.confirm(
+      "将自动更新代码文件，保留 data/、.env 和 .venv。Release zip 模式会先备份旧代码，更新完成后需要重启 Sakura 服务才会生效。现在继续吗？",
+    );
+    if (!ok) return;
+    const original = button?.innerHTML;
+    if (button) {
+      button.disabled = true;
+      button.innerHTML = `<i data-lucide="loader-2"></i>更新中`;
+      if (window.lucide) window.lucide.createIcons();
+    }
+    try {
+      const result = await api("/api/version/update", { method: "POST", body: JSON.stringify({}) });
+      const stepText = (result.steps || [])
+        .map((step) => `${step.ok ? "OK" : "FAIL"} ${step.name}`)
+        .join("；");
+      const nextInfo = {
+        ...info,
+        auto_update: result.auto_update || info.auto_update,
+        latest: result.info?.latest || info.latest,
+        restart_required: Boolean(result.restart_required),
+        update_available: result.restart_required ? false : info.update_available,
+      };
+      renderVersionPanel(nextInfo, `${result.message || "更新完成。"}${stepText ? ` ${stepText}` : ""}`);
+      const banner = document.getElementById("updateBanner");
+      if (banner) {
+        banner.innerHTML = `<span class="update-banner-text">更新已完成，请关闭并重新启动 Sakura 服务后生效。</span>`;
+        banner.classList.remove("hidden");
+      }
+    } catch (error) {
+      renderVersionPanel(info, `更新失败：${error.message || error}`);
+      if (button) {
+        button.disabled = false;
+        button.innerHTML = original || "一键更新";
+        if (window.lucide) window.lucide.createIcons();
+      }
+    }
   }
 
   function showUpdateBanner(info) {
     const banner = document.getElementById("updateBanner");
-    if (!banner || !info || !info.update_available || !info.url) return;
+    if (!banner) return;
+    if (!info || !info.update_available || !info.url) {
+      banner.classList.add("hidden");
+      return;
+    }
     if (localStorage.getItem(DISMISS_KEY) === info.latest) return;
 
+    const auto = canAutoUpdate(info);
     banner.innerHTML = `
       <span class="update-banner-text">发现新版本 <strong>${escapeHtml(info.latest)}</strong>，当前为 ${escapeHtml(info.current || "")}，建议更新。</span>
-      <a class="update-banner-link" href="${escapeAttr(info.url)}" target="_blank" rel="noopener">前往下载</a>
+      ${
+        auto
+          ? `<button class="update-banner-link" id="updateBannerApply" type="button">一键更新</button>`
+          : `<a class="update-banner-link" href="${escapeAttr(info.url)}" target="_blank" rel="noopener">下载新版</a>`
+      }
       <button class="update-banner-close" type="button" aria-label="关闭">×</button>`;
     banner.classList.remove("hidden");
+    const updateBtn = banner.querySelector("#updateBannerApply");
+    if (updateBtn) {
+      updateBtn.addEventListener("click", () => applyUpdate(info, updateBtn));
+    }
     const closeBtn = banner.querySelector(".update-banner-close");
     if (closeBtn) {
       closeBtn.addEventListener("click", () => {

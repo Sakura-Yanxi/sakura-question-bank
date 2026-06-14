@@ -148,7 +148,7 @@ LLM_VISION_BASE_URL=可选，留空则沿用 LLM_BASE_URL
 - 支持企业微信机器人、PushPlus 和 SMTP 邮件。
 - 可设置早晚提醒、天气提醒和每日练习推送。
 - 公网部署时可开启访问密码和登录失败锁定。
-- 版本管理卡片会检查 GitHub Releases，只提示可更新版本，不会自动覆盖代码。
+- 版本管理卡片会检查 GitHub Releases；Git 下载和 Release zip 下载的用户都可以在页面内一键更新，重启后生效。
 
 ## 本地运行
 
@@ -226,7 +226,13 @@ http://127.0.0.1:8000
 
 ## 更新项目
 
-已用 Git 下载的用户：
+页面内更新：
+
+打开“提醒与设置 -> 版本管理”。如果 GitHub Releases 上有新版本，页面会显示“一键更新”。点击后会自动拉取新版代码或下载 Release zip，保留自己的 `data/`、`.env` 和 `.venv`。更新完成后需要关闭并重新启动 Sakura 服务。
+
+脚本更新：
+
+不会 Git 的用户也可以直接用脚本。脚本会自动判断当前目录是不是 Git 仓库：是 Git 就拉取代码，不是 Git 就下载最新 Release zip 并覆盖代码文件。
 
 Windows 可以双击 `update.bat`。
 
@@ -236,9 +242,11 @@ Linux / macOS / 服务器可以运行：
 bash update.sh
 ```
 
-不用 Git 的用户可以到 [Releases](https://github.com/Sakura-Yanxi/sakura-question-bank/releases) 下载最新压缩包，覆盖代码文件即可。覆盖时不要动自己的 `data/` 和 `.env`。
+脚本同样会保留 `data/`、`.env`、`.venv` 和 `docs/software_copyright/`。这是非 Git 用户最省心的升级方式。
 
-程序会检查 GitHub 最新发布版本。如果发现更高版本，页面顶部会显示更新提示；它只提示，不会自动覆盖代码。
+如果你手里的旧版本还没有这个轻量更新器，需要先手动升级到包含新 `update.bat` / `update.sh` 的版本一次；之后再更新就可以直接用脚本或页面一键更新。
+
+如果页面和脚本都无法连接 GitHub，再到 [Releases](https://github.com/Sakura-Yanxi/sakura-question-bank/releases) 手动下载最新压缩包。覆盖时不要动自己的 `data/`、`.env` 和 `.venv`。
 
 ## 数据与隐私
 

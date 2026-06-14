@@ -1,8 +1,8 @@
 # Sakura 版本发布与用户更新
 
-Sakura 的更新提示走 GitHub Releases。维护者发布 `v1.0.1`、`v1.1.0` 这类版本后，已经下载或部署过的人会在页面里看到提示，再用更新脚本或下载包升级。
+Sakura 的更新提示走 GitHub Releases。维护者发布 `v1.0.1`、`v1.1.0` 这类版本后，已经下载或部署过的人会在页面里看到提示，并可在页面内一键更新。
 
-程序只提醒，不会自动覆盖正在运行的代码。
+一键更新会写入新版代码文件，但不会热更新当前 Python 进程；更新完成后必须重启 Sakura 服务才会生效。
 
 ## 当前仓库
 
@@ -55,7 +55,16 @@ Sakura 的更新提示走 GitHub Releases。维护者发布 `v1.0.1`、`v1.1.0` 
 
 ## 使用者更新
 
-推荐方式是直接运行项目自带脚本：
+推荐方式是在页面里打开“提醒与设置 -> 版本管理”，看到新版本后点击“一键更新”。
+
+页面会按当前安装方式自动选择：
+
+- Git 仓库：执行 `git pull --ff-only`，再用当前 Python 环境安装依赖。
+- Release zip：下载 GitHub Release 源码包，先备份旧代码到 `data/update_backups/`，再覆盖代码文件。
+
+两种方式都会保留 `data/`、`.env` 和 `.venv`。更新完成后关闭并重新启动 Sakura 服务。
+
+也可以直接运行项目自带脚本。脚本会自动判断安装方式：是 Git 仓库就拉取代码，不是 Git 仓库就下载最新 Release zip。
 
 ```bash
 # Windows
@@ -65,16 +74,25 @@ update.bat
 bash update.sh
 ```
 
-脚本只会执行：
+脚本内部会执行其中一种流程：
 
 ```bash
+# Git 仓库
 git pull --ff-only
+.venv/bin/python -m pip install -r requirements.txt
+
+# 非 Git 目录
+下载最新 Release zip
+备份旧代码到 data/update_backups/
+覆盖代码文件
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
-它不会碰 `data/`、`.env`、数据库、题图、教材文件和用户上传文件。
+它不会碰 `data/`、`.env`、`.venv`、数据库、题图、教材文件和用户上传文件；本仓库额外保留 `docs/software_copyright/`。
 
-不用 Git 的用户可以在 Release 页面下载最新 zip，解压后覆盖代码文件。覆盖时保留自己的 `data/` 和 `.env`，然后重启服务。
+不用 Git 且页面无法一键更新的用户，优先运行 `update.bat` / `update.sh`。只有脚本也无法连接 GitHub 时，才需要到 Release 页面下载最新 zip，解压后覆盖代码文件。
+
+如果用户手里的旧版本还没有轻量更新器，需要先手动升级到包含新 `update.bat` / `update.sh` 的版本一次；之后再更新就可以直接用脚本或页面一键更新。
 
 ## 应用内版本提示
 
@@ -88,6 +106,7 @@ git pull --ff-only
   ```
 
 - 检查结果缓存约 6 小时；页面的“版本管理”卡片可以手动刷新。
+- 当环境支持自动更新时，顶部横幅和版本管理卡片会显示“一键更新”；否则显示手动下载入口。
 - 如果 GitHub 还没有发布 Release、网络失败、限流或私有仓库无权限，页面会显示“暂未连通”，不影响正常使用。
 
 ## 常见情况

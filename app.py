@@ -166,7 +166,7 @@ REMIND_DAILY_SCOPE = sakura_reminders.normalize_daily_scope(os.getenv("REMIND_DA
 REMIND_DAILY_LIMIT = sakura_reminders.normalize_daily_limit(os.getenv("REMIND_DAILY_LIMIT", "20"))
 REMIND_SEND_PDF = sakura_reminders.normalize_onoff(os.getenv("REMIND_SEND_PDF", "1"))
 INTERNAL_SCHEDULER_ENABLED = os.getenv("SAKURA_INTERNAL_SCHEDULER", "1").strip().lower() not in {"0", "false", "no", "off"}
-# GitHub "owner/repo" used to check for a newer release (notify-only). Set this to your fork/repo.
+# GitHub "owner/repo" used for release checks and one-click updates. Set this to your fork/repo.
 UPDATE_REPO = os.getenv("SAKURA_UPDATE_REPO", "Sakura-Yanxi/sakura-question-bank").strip()
 
 
@@ -2082,7 +2082,20 @@ class DemoHandler(BaseHTTPRequestHandler):
             force_value = force_value[0] if force_value else "0"
         force = str(force_value).lower() in {"1", "true", "yes"}
         info = sakura_update.check_for_update(APP_VERSION, UPDATE_REPO, force=force)
-        return json_response(self, {"app": "Sakura 做题集", **info})
+        auto_update = sakura_update.update_capability(ROOT, info)
+        if demo_mode_enabled():
+            auto_update = sakura_update.disabled_capability(
+                "演示模式不可更新",
+                "当前为只读演示模式，不允许从页面覆盖代码；请在自己的部署环境中更新。",
+                "demo",
+            )
+        return json_response(self, {"app": "Sakura 做题集", **info, "auto_update": auto_update})
+
+    def handle_version_update(self) -> None:
+        if demo_mode_enabled():
+            return json_response(self, {"ok": False, "error": "演示模式不允许自动更新。"}, 403)
+        result = sakura_update.apply_update(ROOT, APP_VERSION, UPDATE_REPO)
+        return json_response(self, result, 200 if result.get("ok") else 400)
 
     # === 学习档案 ===
     def _coach_settings_view(self, state: dict) -> dict:

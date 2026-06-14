@@ -2085,7 +2085,7 @@ body:not([data-view="library"]) .search-box { display: none; }
   h1 { font-size: 24px; }
 }
 
-/* 新版本提示横幅（notify-only，固定在顶部居中，不影响主布局） */
+/* 新版本提示横幅（固定在顶部居中，不影响主布局） */
 .update-banner {
   position: fixed;
   top: 14px;
@@ -2109,13 +2109,21 @@ body:not([data-view="library"]) .search-box { display: none; }
 .update-banner-link {
   flex: none;
   padding: 5px 12px;
+  border: 0;
   border-radius: 999px;
   background: var(--accent);
   color: #fff;
   text-decoration: none;
   font-weight: 600;
+  font: inherit;
+  line-height: 1.4;
+  cursor: pointer;
 }
 .update-banner-link:hover { background: var(--sakura-deep, #DB2777); }
+.update-banner-link:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
 .update-banner-close {
   flex: none;
   width: 26px;

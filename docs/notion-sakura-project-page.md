@@ -162,7 +162,7 @@ cd sakura-question-bank
 4. 解压到一个固定目录。
 5. 进入解压后的项目文件夹。
 
-`Code -> Download ZIP` 下载的是当前 `main` 分支快照，适合临时查看最新代码，但不等于稳定发布版，也不能自动同步更新。不会用 Git 的用户想升级时，需要重新到 Releases 下载最新版压缩包，再覆盖代码文件；覆盖时保留自己的 `data/` 和 `.env`。
+`Code -> Download ZIP` 下载的是当前 `main` 分支快照，适合临时查看最新代码，但不等于稳定发布版。正式使用建议从 Releases 下载；后续页面内“版本管理”会优先提供一键更新，无法一键更新时再到 Releases 下载最新版压缩包覆盖代码文件。覆盖时保留自己的 `data/`、`.env` 和 `.venv`。
 
 ### 第三步：创建虚拟环境
 
@@ -349,17 +349,35 @@ WEATHER_CITY=Beijing
 
 ## 版本更新
 
-已用 Git 下载的用户：
+推荐方式：
+
+在页面里打开“提醒与设置 -> 版本管理”，看到新版本后点击“一键更新”。更新完成后重启 Sakura 服务。
+
+如果页面打不开，也可以直接运行项目自带脚本。脚本会自动判断：是 Git 仓库就拉取代码，不是 Git 仓库就下载最新 Release zip。
 
 ```bash
-git pull
+# Windows
+update.bat
+
+# Linux / macOS / 服务器
+bash update.sh
+```
+
+已用 Git 下载的用户也可以手动运行：
+
+```bash
+git pull --ff-only
 pip install -r requirements.txt
 python app.py
 ```
 
-也可以直接运行：
+这些更新方式都会保留 `data/`、`.env`、`.venv`、数据库、题图、教材文件和用户上传文件。
 
-Windows：
+如果手里的旧版本还没有轻量更新器，需要先手动升级到包含新 `update.bat` / `update.sh` 的版本一次；之后再更新就可以直接用脚本或页面一键更新。
+
+不用 Git 且脚本也无法连接 GitHub 时，再到 Release 页面下载最新 zip，覆盖代码文件。覆盖时保留自己的 `data/`、`.env` 和 `.venv`。
+
+Windows 脚本：
 
 ```text
 update.bat
@@ -370,10 +388,6 @@ Linux / macOS / 服务器：
 ```bash
 bash update.sh
 ```
-
-这些脚本只会拉取代码和更新依赖，不会删除 `data/`、`.env`、数据库、题图、教材文件和用户上传文件。
-
-不用 Git 的用户可以在 Release 页面下载最新 zip，覆盖代码文件。覆盖时保留自己的 `data/` 和 `.env`。
 
 ## 授权说明
 
