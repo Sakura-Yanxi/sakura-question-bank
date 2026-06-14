@@ -6,21 +6,15 @@ import os
 import re
 import sqlite3
 import shutil
-import sys
-import tempfile
 import threading
 import traceback
 import uuid
-import warnings
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import urllib.parse
-
-warnings.filterwarnings("ignore", message="'cgi' is deprecated.*", category=DeprecationWarning)
-import cgi
 
 import fitz
 from sakura.content.pdf import (
@@ -36,7 +30,6 @@ from sakura.content import documents as sakura_documents
 from sakura.content import filters as sakura_filters
 from sakura.content import models as sakura_models
 from sakura.content import ocr as sakura_ocr
-from sakura.content import pdf as sakura_pdf
 from sakura.content import questions as sakura_questions
 from sakura.content import textbook as sakura_textbook
 from sakura.core import auth as sakura_auth
@@ -301,31 +294,11 @@ def migrate_db(conn: sqlite3.Connection) -> None:
 
 
 def to_public_path(path: str | Path) -> str:
-    absolute = Path(path).resolve()
-    try:
-        return "/data/pages/" + absolute.relative_to(PAGE_DIR).as_posix()
-    except ValueError:
-        pass
-    try:
-        return "/static/" + absolute.relative_to(STATIC_DIR).as_posix()
-    except ValueError:
-        # Path resolves outside the project root — e.g. a stale absolute path from a backup
-        # restored on a different machine. Recover the data-relative URL by file name so the
-        # page still renders (image may 404) instead of 500-ing the whole list/detail view.
-        normalized = str(path).replace("\\", "/")
-        marker = normalized.rfind("/data/pages/")
-        if marker != -1:
-            return normalized[marker:]
-        name = Path(normalized).name
-        return "/data/pages/" + name if name else ""
+    return sakura_http.to_public_path(path, page_dir=PAGE_DIR, static_dir=STATIC_DIR)
 
 
 def public_file_base_for_path(path: str) -> Path | None:
-    if path.startswith("/static/"):
-        return STATIC_DIR
-    if path.startswith("/data/pages/"):
-        return PAGE_DIR
-    return None
+    return sakura_http.public_file_base_for_path(path, page_dir=PAGE_DIR, static_dir=STATIC_DIR)
 
 
 def extract_question_no(text: str) -> str:
@@ -342,22 +315,12 @@ def row_to_dict(row: sqlite3.Row) -> dict:
 
 
 def question_detail_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
-    item = row_to_dict(row)
-    notes = sakura_questions.load_question_review_notes(conn, item["id"])
-    if not notes and item.get("user_note"):
-        notes = [
-            {
-                "id": "legacy-user-note",
-                "question_id": item["id"],
-                "status": item.get("status") or "",
-                "note": item.get("user_note") or "",
-                "meta_tags": item.get("meta_tags") or [],
-                "source": "legacy",
-                "created_at": item.get("last_reviewed_at") or item.get("created_at") or "",
-            }
-        ]
-    item["review_notes"] = notes
-    return item
+    return sakura_models.question_detail_to_dict(
+        conn,
+        row,
+        row_to_dict=row_to_dict,
+        load_question_review_notes=sakura_questions.load_question_review_notes,
+    )
 
 
 def document_to_dict(row: sqlite3.Row) -> dict:
@@ -821,54 +784,22 @@ def get_meta_tag_stats(conn: sqlite3.Connection, doc_id: str | None = None) -> l
 
 
 def weak_chapter_dependencies(conn: sqlite3.Connection) -> dict[str, list[str]]:
-    rows = conn.execute(
-        """
-        SELECT d.subject, d.document_kind, COALESCE(NULLIF(d.title, ''), d.filename) document_title, q.document_id,
-               q.chapter, q.category,
-               SUM(CASE WHEN q.status = '做对' THEN 1 ELSE 0 END) correct,
-               SUM(CASE WHEN q.status IN ('做对', '做错', '半会', '需复习') THEN 1 ELSE 0 END) done
-        FROM questions q
-        JOIN documents d ON d.id = q.document_id
-        GROUP BY d.subject, d.document_kind, document_title, q.document_id, q.chapter, q.category
-        HAVING done >= 2 AND (correct * 1.0 / done) < 0.5
-        """
-    ).fetchall()
-    mapping: dict[str, list[str]] = {}
-    for row in rows:
-        deps = []
-        for key in (row["category"], row["chapter"]):
-            deps.extend(KNOWLEDGE_DEPENDENCIES.get(key, []))
-        if deps:
-            group_key = f"{row['subject'] or DEFAULT_SUBJECT} / {row['document_kind'] or DEFAULT_DOCUMENT_KIND} / {row['document_title'] or '做题本'}"
-            mapping.setdefault(group_key, [])
-            for dep in deps:
-                if dep not in mapping[group_key]:
-                    mapping[group_key].append(dep)
-    return mapping
+    return sakura_coach.weak_chapter_dependencies(
+        conn,
+        knowledge_dependencies=KNOWLEDGE_DEPENDENCIES,
+        default_subject=DEFAULT_SUBJECT,
+        default_document_kind=DEFAULT_DOCUMENT_KIND,
+    )
 
 
 def find_foundation_questions(conn: sqlite3.Connection, subject: str, dependency_categories: list[str], exclude_ids: set[str]) -> list[dict]:
-    if not dependency_categories:
-        return []
-    placeholders = ",".join("?" for _ in dependency_categories)
-    params = [subject, *dependency_categories]
-    rows = conn.execute(
-        f"""
-        SELECT q.*, d.filename, d.title document_title, d.subject, d.document_kind
-        FROM questions q
-        JOIN documents d ON d.id = q.document_id
-        WHERE d.subject = ?
-          AND q.category IN ({placeholders})
-          AND q.id NOT IN ({",".join("?" for _ in exclude_ids) if exclude_ids else "''"})
-        ORDER BY
-          CASE q.status WHEN '未做' THEN 0 WHEN '做对' THEN 1 ELSE 2 END,
-          q.created_at ASC,
-          q.page_number ASC
-        LIMIT 3
-        """,
-        params + list(exclude_ids),
-    ).fetchall()
-    return [row_to_dict(row) | {"daily_kind": "foundation"} for row in rows]
+    return sakura_coach.find_foundation_questions(
+        conn,
+        subject,
+        dependency_categories,
+        exclude_ids,
+        row_to_dict=row_to_dict,
+    )
 
 
 # ==========================================================================
@@ -1127,60 +1058,14 @@ def build_weather_reminder(conn: sqlite3.Connection, city: str | None = None) ->
 
 
 def send_notification(title: str, content: str, checkin_mode: str | None = None) -> dict:
-    mode = sakura_reminders.normalize_checkin_mode(checkin_mode or REMIND_CHECKIN_MODE)
-    if mode == "wework":
-        if not WEWORK_BOT_WEBHOOK:
-            return {
-                "ok": False,
-                "configured": False,
-                "selected_channel": mode,
-                "detail": "未配置企业微信机器人 Webhook。",
-                "results": [],
-            }
-        result = sakura_notifications.send_notification(
-            title,
-            content,
-            wework_webhook=WEWORK_BOT_WEBHOOK,
-        )
-    elif mode == "pushplus":
-        if not PUSHPLUS_TOKEN:
-            return {
-                "ok": False,
-                "configured": False,
-                "selected_channel": mode,
-                "detail": "未配置 PushPlus Token。",
-                "results": [],
-            }
-        result = sakura_notifications.send_notification(
-            title,
-            content,
-            pushplus_token=PUSHPLUS_TOKEN,
-        )
-    elif mode == "email":
-        email_settings = current_email_settings()
-        if not sakura_email.is_configured(email_settings):
-            return {
-                "ok": False,
-                "configured": False,
-                "selected_channel": mode,
-                "detail": "未配置邮箱 SMTP。",
-                "results": [],
-            }
-        result = sakura_notifications.send_notification(
-            title,
-            content,
-            email_settings=email_settings,
-        )
-    else:
-        result = sakura_notifications.send_notification(
-            title,
-            content,
-            wework_webhook=WEWORK_BOT_WEBHOOK,
-            pushplus_token=PUSHPLUS_TOKEN,
-            email_settings=current_email_settings(),
-        )
-    result["selected_channel"] = mode
-    return result
+    return sakura_notifications.send_notification_for_mode(
+        title,
+        content,
+        checkin_mode or REMIND_CHECKIN_MODE,
+        wework_webhook=WEWORK_BOT_WEBHOOK,
+        pushplus_token=PUSHPLUS_TOKEN,
+        email_settings=current_email_settings(),
+    )
 
 
 def notification_mode_from_payload(payload: dict) -> str:
@@ -1345,22 +1230,7 @@ def build_mistakes_pdf(conn: sqlite3.Connection, query: dict, mistakes_only: boo
 
 
 def build_practice_batch_pdf(conn: sqlite3.Connection, batch_id: str) -> tuple[bytes, int]:
-    rows = conn.execute(
-        """
-        SELECT
-            q.*,
-            COALESCE(NULLIF(d.title, ''), d.filename) document_title,
-            d.subject,
-            d.stored_path
-        FROM practice_batch_items p
-        JOIN questions q ON q.id = p.question_id
-        JOIN documents d ON d.id = q.document_id
-        WHERE p.batch_id = ?
-        ORDER BY p.position ASC
-        """,
-        (batch_id,),
-    ).fetchall()
-    return sakura_export.build_mistakes_pdf(rows, normalize_meta_tags)
+    return sakura_export.build_practice_batch_pdf(conn, batch_id, normalize_meta_tags)
 
 
 def send_practice_pdf_if_available(reminder: dict, mode: str) -> dict | None:
@@ -1557,20 +1427,10 @@ class DemoHandler(BaseHTTPRequestHandler):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] {format % args}")
 
     def is_public_path(self, path: str) -> bool:
-        return (
-            path in {"/login", "/api/health"}
-            or path.startswith("/practice/")
-            or path.startswith("/api/practice/")
-        )
+        return sakura_auth.is_public_path(path)
 
     def get_cookie(self, name: str) -> str:
-        for part in (self.headers.get("Cookie") or "").split(";"):
-            if "=" not in part:
-                continue
-            key, value = part.strip().split("=", 1)
-            if key == name:
-                return urllib.parse.unquote(value)
-        return ""
+        return sakura_auth.cookie_value(self.headers.get("Cookie") or "", name)
 
     def client_ip(self) -> str:
         return sakura_security.client_ip(self.headers, self.client_address)
@@ -1758,11 +1618,11 @@ class DemoHandler(BaseHTTPRequestHandler):
         return sakura_http.serve_file(self, path, ROOT)
 
     def handle_upload(self) -> None:
-        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})
-        file_item = form["file"] if "file" in form else None
-        if file_item is None or not file_item.filename:
+        form = sakura_http.read_multipart_form(self.headers, self.rfile)
+        file_item = sakura_http.first_form_file(form, "file")
+        if file_item is None or not sakura_http.uploaded_filename(file_item):
             return json_response(self, {"error": "请上传 PDF 文件。"}, 400)
-        if not file_item.filename.lower().endswith(".pdf"):
+        if not sakura_http.uploaded_file_has_suffix(file_item, ".pdf"):
             return json_response(self, {"error": "当前 demo 只支持 PDF。"}, 400)
         title = form.getfirst("title", "")
         subject = form.getfirst("subject", "")
@@ -1770,20 +1630,20 @@ class DemoHandler(BaseHTTPRequestHandler):
         start_page = parse_positive_int(form.getfirst("start_page", ""), None)
         end_page = parse_positive_int(form.getfirst("end_page", ""), None)
         split_questions = sakura_parse.bool_flag(form.getfirst("split_questions", ""))
-        result = import_pdf(file_item.filename, file_item.file.read(), title, subject, document_kind, start_page, end_page, split_questions)
+        result = import_pdf(sakura_http.uploaded_filename(file_item), file_item.file.read(), title, subject, document_kind, start_page, end_page, split_questions)
         return json_response(self, result)
 
     def handle_textbook_upload(self) -> None:
-        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})
-        file_item = form["file"] if "file" in form else None
-        if file_item is None or not file_item.filename:
+        form = sakura_http.read_multipart_form(self.headers, self.rfile)
+        file_item = sakura_http.first_form_file(form, "file")
+        if file_item is None or not sakura_http.uploaded_filename(file_item):
             return json_response(self, {"error": "请上传教材 PDF。"}, 400)
-        if not file_item.filename.lower().endswith(".pdf"):
+        if not sakura_http.uploaded_file_has_suffix(file_item, ".pdf"):
             return json_response(self, {"error": "教材精读目前只支持 PDF。"}, 400)
         title = form.getfirst("title", "")
         subject = form.getfirst("subject", "")
         try:
-            result = import_textbook_pdf(file_item.filename, file_item.file.read(), title, subject)
+            result = import_textbook_pdf(sakura_http.uploaded_filename(file_item), file_item.file.read(), title, subject)
         except sakura_textbook.TextbookImportError as exc:
             return json_response(self, {"error": str(exc)}, 400)
         return json_response(self, result)
@@ -2327,28 +2187,11 @@ class DemoHandler(BaseHTTPRequestHandler):
         return json_response(self, llm_settings_view())
 
     def handle_llm_settings_post(self) -> None:
-        payload = self.read_json()
-        api_key = str(payload.get("api_key", "")).strip()
-        base_url = str(payload.get("base_url", "")).strip()
-        model = str(payload.get("model", "")).strip()
-        # Visible vision text fields (model, base_url) are clearable: present-but-empty clears them.
-        has_vision_model = "vision_model" in payload
-        has_vision_url = "vision_base_url" in payload
-        vision_model = str(payload.get("vision_model", "")).strip()
-        vision_base_url = str(payload.get("vision_base_url", "")).strip()
-        # The vision API key is a password field: like the main key, empty means "keep existing"
-        # (so re-saving the form to tweak other fields never wipes a saved key).
-        vision_api_key = str(payload.get("vision_api_key", "")).strip()
-        if not any([api_key, base_url, model]) and not any([has_vision_model, has_vision_url, vision_api_key]):
-            return json_response(self, {"error": "至少填写 API Key、Base URL 或模型名中的一项"}, 400)
-        settings = update_llm_runtime_settings(
-            api_key=api_key or None,
-            base_url=base_url or None,
-            model=model or None,
-            vision_model=vision_model if has_vision_model else None,
-            vision_api_key=vision_api_key or None,
-            vision_base_url=vision_base_url if has_vision_url else None,
-        )
+        try:
+            updates = sakura_settings.parse_llm_settings_payload(self.read_json())
+        except ValueError as exc:
+            return json_response(self, {"error": str(exc)}, 400)
+        settings = update_llm_runtime_settings(**updates)
         return json_response(self, {
             **settings,
             "message": "已保存到本地 .env，并已更新当前运行中的服务。",
@@ -2376,55 +2219,11 @@ class DemoHandler(BaseHTTPRequestHandler):
         })
 
     def handle_notification_settings_post(self) -> None:
-        payload = self.read_json()
-        wework_webhook = str(payload.get("wework_webhook", "")).strip()
-        pushplus_token = str(payload.get("pushplus_token", "")).strip()
-        app_public_url = str(payload.get("app_public_url", "")).strip()
-        email_enabled = str(payload.get("email_enabled", "")).strip()
-        email_host = str(payload.get("email_host", "")).strip()
-        email_port = str(payload.get("email_port", "")).strip()
-        email_use_ssl = str(payload.get("email_use_ssl", "")).strip()
-        email_use_starttls = str(payload.get("email_use_starttls", "")).strip()
-        email_user = str(payload.get("email_user", "")).strip()
-        email_password = str(payload.get("email_password", "")).strip()
-        email_to = str(payload.get("email_to", "")).strip()
-        email_from = str(payload.get("email_from", "")).strip()
-        email_from_name = str(payload.get("email_from_name", "")).strip()
-        if not any([
-            wework_webhook,
-            pushplus_token,
-            app_public_url,
-            email_enabled,
-            email_host,
-            email_port,
-            email_use_ssl,
-            email_use_starttls,
-            email_user,
-            email_password,
-            email_to,
-            email_from,
-            email_from_name,
-        ]):
-            return json_response(self, {"error": "至少填写企业微信 Webhook、PushPlus Token 或公网地址中的一项"}, 400)
         try:
-            normalized_public_url = normalize_public_url(app_public_url) if app_public_url else None
+            updates = sakura_settings.parse_notification_settings_payload(self.read_json())
         except ValueError as exc:
             return json_response(self, {"error": str(exc)}, 400)
-        settings = update_notification_runtime_settings(
-            wework_webhook=wework_webhook or None,
-            pushplus_token=pushplus_token or None,
-            app_public_url=normalized_public_url,
-            email_enabled=email_enabled or None,
-            email_host=email_host or None,
-            email_port=email_port or None,
-            email_use_ssl=email_use_ssl or None,
-            email_use_starttls=email_use_starttls or None,
-            email_user=email_user or None,
-            email_password=email_password or None,
-            email_to=email_to or None,
-            email_from=email_from or None,
-            email_from_name=email_from_name or None,
-        )
+        settings = update_notification_runtime_settings(**updates)
         return json_response(self, {
             **settings,
             "message": "已保存到本地 .env，并已更新当前运行中的推送配置。",
@@ -2483,31 +2282,17 @@ class DemoHandler(BaseHTTPRequestHandler):
             return json_response(self, {"error": "原始内容不能为空"}, 400)
         with connect() as conn:
             settings = load_teacher_memory_settings(conn)
-        prompt = sakura_teacher_memory.build_memory_compression_prompt(
+        result = sakura_teacher_memory.compress_memory_content(
             content=content,
             subject=subject,
             source=source,
-            compression_prompt=settings["compression_prompt"],
             instruction=instruction,
+            settings=settings,
+            llm_enabled=llm_enabled(),
+            call_llm=call_llm,
+            on_error=lambda exc: traceback.print_exc(),
         )
-        used_ai = False
-        error = ""
-        summary = ""
-        if llm_enabled():
-            try:
-                summary = call_llm(prompt, temperature=0.15).strip()
-                used_ai = True
-            except Exception as exc:
-                traceback.print_exc()
-                error = str(exc)
-        if not summary:
-            summary = sakura_teacher_memory.local_compress_memory(content, subject, instruction)
-        return json_response(self, {
-            "summary": summary[:2000],
-            "used_ai": used_ai,
-            "error": error,
-            "memory_settings": settings,
-        })
+        return json_response(self, result)
 
     def handle_ai_memory_post(self) -> None:
         payload = self.read_json()
@@ -2585,29 +2370,19 @@ class DemoHandler(BaseHTTPRequestHandler):
         with connect() as conn:
             context = build_ai_teacher_context(conn, message)
         try:
-            turn = sakura_ai.build_teacher_chat_turn(message, context, call_llm_messages=call_llm_messages)
+            with connect() as conn:
+                response = sakura_teacher_memory.run_teacher_chat_turn(
+                    conn,
+                    message=message,
+                    context=context,
+                    call_llm_messages=call_llm_messages,
+                    model=LLM_MODEL,
+                    base_url=LLM_BASE_URL,
+                )
         except Exception as exc:
             traceback.print_exc()
             return json_response(self, {"error": f"AI 调用失败：{exc}", "has_key": True}, 500)
-        with connect() as conn:
-            sakura_teacher_memory.save_teacher_turn(
-                conn,
-                message=message,
-                intent=turn["intent"],
-                strategy=turn["strategy"],
-                context=context,
-                answer=turn["answer"],
-                memory_candidate=turn["memory_candidate"],
-            )
-        return json_response(self, {
-            "answer": turn["answer"],
-            "has_key": True,
-            "model": LLM_MODEL,
-            "base_url": LLM_BASE_URL,
-            "teacher_intent": turn["intent"],
-            "teacher_strategy": turn["strategy"],
-            "memory_candidate": turn["memory_candidate"],
-        })
+        return json_response(self, response)
 
     def handle_coach_get(self) -> None:
         """纯读记忆：返回设置 + 最新档案摘要 + 缓存计划 + 是否需要刷新。零 token。"""
@@ -2641,34 +2416,7 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_profile_history(self) -> None:
         with connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT id, version, scope, profile_json, evidence_count, source, created_at
-                FROM learner_profile
-                ORDER BY version DESC
-                LIMIT 30
-                """
-            ).fetchall()
-        profiles = []
-        for row in rows:
-            item = dict(row)
-            try:
-                profile = json.loads(item.get("profile_json") or "{}")
-            except (TypeError, json.JSONDecodeError):
-                profile = {}
-            profiles.append({
-                "id": item["id"],
-                "version": item["version"],
-                "scope": item["scope"],
-                "evidence_count": item["evidence_count"],
-                "source": item["source"],
-                "created_at": item["created_at"],
-                "headline": profile.get("headline") or profile.get("velocity") or "本地统计档案",
-                "velocity": profile.get("velocity", ""),
-                "pattern_summary": profile.get("pattern_summary", ""),
-                "knowledge_count": profile.get("knowledge_count", 0),
-                "avg_mastery": profile.get("avg_mastery", 0),
-            })
+            profiles = sakura_profile.load_profile_history(conn)
         return json_response(self, {"profiles": profiles})
 
     def handle_coach_post(self) -> None:
@@ -2796,12 +2544,12 @@ class DemoHandler(BaseHTTPRequestHandler):
         if count == 0:
             return json_response(self, {"error": "当前范围没有可导出的错题。"}, 404)
         filename = f"mistakes_{date.today().isoformat()}_{count}q.pdf"
-        self.send_response(200)
-        self.send_header("Content-Type", "application/pdf")
-        self.send_header("Content-Disposition", sakura_http.content_disposition_attachment(filename))
-        self.send_header("Content-Length", str(len(pdf_bytes)))
-        self.end_headers()
-        self.wfile.write(pdf_bytes)
+        return sakura_http.send_attachment_bytes(
+            self,
+            pdf_bytes,
+            filename=filename,
+            content_type="application/pdf",
+        )
 
     def handle_daily_rules_get(self) -> None:
         with connect() as conn:
@@ -2828,35 +2576,20 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_backup_export(self, query: dict) -> None:
         try:
-            export_options = sakura_backup.export_options_from_query(query)
+            tmp_path, filename = sakura_backup.build_backup_export_file(
+                query,
+                DB_PATH,
+                {"uploads": UPLOAD_DIR, "pages": PAGE_DIR},
+            )
         except ValueError as exc:
             return json_response(self, {"error": str(exc)}, 400)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
-            tmp_path = Path(tmp.name)
         try:
-            try:
-                sakura_backup.build_backup_zip_file(
-                    tmp_path,
-                    DB_PATH,
-                    {"uploads": UPLOAD_DIR, "pages": PAGE_DIR},
-                    include_assets=export_options["include_assets"],
-                    start_date=export_options["start_date"],
-                    end_date=export_options["end_date"],
-                )
-            except ValueError as exc:
-                return json_response(self, {"error": str(exc)}, 400)
-            filename = export_options["filename"]
-            self.send_response(200)
-            self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Disposition", sakura_http.content_disposition_attachment(filename))
-            self.send_header("Content-Length", str(tmp_path.stat().st_size))
-            self.end_headers()
-            with tmp_path.open("rb") as fh:
-                while True:
-                    chunk = fh.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
+            return sakura_http.stream_attachment_file(
+                self,
+                tmp_path,
+                filename=filename,
+                content_type="application/zip",
+            )
         finally:
             try:
                 tmp_path.unlink(missing_ok=True)
@@ -2865,9 +2598,10 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_backup_import(self) -> None:
         print("[migration] request received", flush=True)
-        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})
-        file_item = form["backup"] if "backup" in form else form["file"] if "file" in form else None
-        if file_item is None or not file_item.filename:
+        form = sakura_http.read_multipart_form(self.headers, self.rfile)
+        file_item = sakura_http.first_form_file(form, "backup", "file")
+        filename = sakura_http.uploaded_filename(file_item)
+        if file_item is None or not filename:
             return json_response(self, {"error": "请上传 Sakura 迁移 ZIP 包。"}, 400)
         job_id = uuid.uuid4().hex
         upload_dir = DATA_DIR / "migration_uploads"
@@ -2876,14 +2610,14 @@ class DemoHandler(BaseHTTPRequestHandler):
         with upload_path.open("wb") as out:
             shutil.copyfileobj(file_item.file, out, length=1024 * 1024)
         size = upload_path.stat().st_size
-        print(f"[migration] uploaded file: {file_item.filename}, {size} bytes, job={job_id}", flush=True)
+        print(f"[migration] uploaded file: {filename}, {size} bytes, job={job_id}", flush=True)
         now = datetime.now().isoformat(timespec="seconds")
         set_migration_job(
             job_id,
             id=job_id,
             status="queued",
             message="Backup uploaded. Waiting to restore...",
-            filename=file_item.filename,
+            filename=filename,
             size=size,
             created_at=now,
         )
@@ -2911,11 +2645,12 @@ class DemoHandler(BaseHTTPRequestHandler):
         if not download:
             return json_response(self, {"error": "反思记录不存在"}, 404)
         filename, text = download
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Disposition", sakura_http.content_disposition_attachment(filename))
-        self.end_headers()
-        self.wfile.write(text.encode("utf-8"))
+        return sakura_http.send_attachment_bytes(
+            self,
+            text.encode("utf-8"),
+            filename=filename,
+            content_type="text/plain; charset=utf-8",
+        )
 
     def handle_daily(self) -> None:
         with connect() as conn:

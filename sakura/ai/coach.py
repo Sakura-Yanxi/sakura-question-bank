@@ -124,6 +124,70 @@ def recent_learning_evidence(conn, limit: int = 8) -> list[dict]:
     return evidence
 
 
+def weak_chapter_dependencies(
+    conn,
+    *,
+    knowledge_dependencies: dict[str, list[str]],
+    default_subject: str,
+    default_document_kind: str,
+) -> dict[str, list[str]]:
+    rows = conn.execute(
+        """
+        SELECT d.subject, d.document_kind, COALESCE(NULLIF(d.title, ''), d.filename) document_title, q.document_id,
+               q.chapter, q.category,
+               SUM(CASE WHEN q.status = '做对' THEN 1 ELSE 0 END) correct,
+               SUM(CASE WHEN q.status IN ('做对', '做错', '半会', '需复习') THEN 1 ELSE 0 END) done
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        GROUP BY d.subject, d.document_kind, document_title, q.document_id, q.chapter, q.category
+        HAVING done >= 2 AND (correct * 1.0 / done) < 0.5
+        """
+    ).fetchall()
+    mapping: dict[str, list[str]] = {}
+    for row in rows:
+        deps = []
+        for key in (row["category"], row["chapter"]):
+            deps.extend(knowledge_dependencies.get(key, []))
+        if deps:
+            group_key = f"{row['subject'] or default_subject} / {row['document_kind'] or default_document_kind} / {row['document_title'] or '做题本'}"
+            mapping.setdefault(group_key, [])
+            for dep in deps:
+                if dep not in mapping[group_key]:
+                    mapping[group_key].append(dep)
+    return mapping
+
+
+def find_foundation_questions(
+    conn,
+    subject: str,
+    dependency_categories: list[str],
+    exclude_ids: set[str],
+    *,
+    row_to_dict: Callable,
+) -> list[dict]:
+    if not dependency_categories:
+        return []
+    placeholders = ",".join("?" for _ in dependency_categories)
+    params = [subject, *dependency_categories]
+    rows = conn.execute(
+        f"""
+        SELECT q.*, d.filename, d.title document_title, d.subject, d.document_kind
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        WHERE d.subject = ?
+          AND q.category IN ({placeholders})
+          AND q.id NOT IN ({",".join("?" for _ in exclude_ids) if exclude_ids else "''"})
+        ORDER BY
+          CASE q.status WHEN '未做' THEN 0 WHEN '做对' THEN 1 ELSE 2 END,
+          q.created_at ASC,
+          q.page_number ASC
+        LIMIT 3
+        """,
+        params + list(exclude_ids),
+    ).fetchall()
+    return [row_to_dict(row) | {"daily_kind": "foundation"} for row in rows]
+
+
 def build_ai_teacher_context(
     conn,
     message: str = "",

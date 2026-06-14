@@ -8,6 +8,7 @@ from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
 from sakura.system import email as sakura_email
+from sakura.system import reminders as sakura_reminders
 
 
 PUSHPLUS_URL = "https://www.pushplus.plus/send"
@@ -256,6 +257,58 @@ def send_notification(
         "results": results,
         "detail": results,
     }
+
+
+def send_notification_for_mode(
+    title: str,
+    content: str,
+    mode: str | None,
+    *,
+    wework_webhook: str,
+    pushplus_token: str,
+    email_settings: sakura_email.EmailSettings,
+) -> dict:
+    selected_mode = sakura_reminders.normalize_checkin_mode(mode or "wework")
+    if selected_mode == "wework":
+        if not wework_webhook:
+            result = {
+                "ok": False,
+                "configured": False,
+                "detail": "未配置企业微信机器人 Webhook。",
+                "results": [],
+            }
+        else:
+            result = send_notification(title, content, wework_webhook=wework_webhook)
+    elif selected_mode == "pushplus":
+        if not pushplus_token:
+            result = {
+                "ok": False,
+                "configured": False,
+                "detail": "未配置 PushPlus Token。",
+                "results": [],
+            }
+        else:
+            result = send_notification(title, content, pushplus_token=pushplus_token)
+    elif selected_mode == "email":
+        if not sakura_email.is_configured(email_settings):
+            result = {
+                "ok": False,
+                "configured": False,
+                "detail": "未配置邮箱 SMTP。",
+                "results": [],
+            }
+        else:
+            result = send_notification(title, content, email_settings=email_settings)
+    else:
+        result = send_notification(
+            title,
+            content,
+            wework_webhook=wework_webhook,
+            pushplus_token=pushplus_token,
+            email_settings=email_settings,
+        )
+    result["selected_channel"] = selected_mode
+    return result
 
 
 def today_quote(quotes: list[str], day: date | None = None) -> str:

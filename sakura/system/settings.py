@@ -96,6 +96,27 @@ def llm_runtime_updates(
     return updates
 
 
+def parse_llm_settings_payload(payload: dict) -> dict:
+    api_key = str(payload.get("api_key", "")).strip()
+    base_url = str(payload.get("base_url", "")).strip()
+    model = str(payload.get("model", "")).strip()
+    has_vision_model = "vision_model" in payload
+    has_vision_url = "vision_base_url" in payload
+    vision_model = str(payload.get("vision_model", "")).strip()
+    vision_base_url = str(payload.get("vision_base_url", "")).strip()
+    vision_api_key = str(payload.get("vision_api_key", "")).strip()
+    if not any([api_key, base_url, model]) and not any([has_vision_model, has_vision_url, vision_api_key]):
+        raise ValueError("至少填写 API Key、Base URL 或模型名中的一项")
+    return {
+        "api_key": api_key or None,
+        "base_url": base_url or None,
+        "model": model or None,
+        "vision_model": vision_model if has_vision_model else None,
+        "vision_api_key": vision_api_key or None,
+        "vision_base_url": vision_base_url if has_vision_url else None,
+    }
+
+
 def notification_settings_view(
     wework_webhook: str,
     pushplus_token: str,
@@ -112,6 +133,29 @@ def notification_settings_view(
         "masked_app_public_url": mask_public_url(app_public_url),
         **email_settings,
     }
+
+
+def parse_notification_settings_payload(payload: dict) -> dict:
+    fields = {
+        "wework_webhook": str(payload.get("wework_webhook", "")).strip(),
+        "pushplus_token": str(payload.get("pushplus_token", "")).strip(),
+        "app_public_url": str(payload.get("app_public_url", "")).strip(),
+        "email_enabled": str(payload.get("email_enabled", "")).strip(),
+        "email_host": str(payload.get("email_host", "")).strip(),
+        "email_port": str(payload.get("email_port", "")).strip(),
+        "email_use_ssl": str(payload.get("email_use_ssl", "")).strip(),
+        "email_use_starttls": str(payload.get("email_use_starttls", "")).strip(),
+        "email_user": str(payload.get("email_user", "")).strip(),
+        "email_password": str(payload.get("email_password", "")).strip(),
+        "email_to": str(payload.get("email_to", "")).strip(),
+        "email_from": str(payload.get("email_from", "")).strip(),
+        "email_from_name": str(payload.get("email_from_name", "")).strip(),
+    }
+    if not any(fields.values()):
+        raise ValueError("至少填写企业微信 Webhook、PushPlus Token 或公网地址中的一项")
+    if fields["app_public_url"]:
+        fields["app_public_url"] = normalize_public_url(fields["app_public_url"])
+    return {key: (value or None) for key, value in fields.items()}
 
 
 def notification_runtime_updates(

@@ -69,6 +69,32 @@ def build_filtered_mistakes_pdf(
     return build_mistakes_pdf(rows, normalize_meta_tags)
 
 
+def select_practice_batch_rows(conn, batch_id: str) -> list:
+    return conn.execute(
+        """
+        SELECT
+            q.*,
+            COALESCE(NULLIF(d.title, ''), d.filename) document_title,
+            d.subject,
+            d.stored_path
+        FROM practice_batch_items p
+        JOIN questions q ON q.id = p.question_id
+        JOIN documents d ON d.id = q.document_id
+        WHERE p.batch_id = ?
+        ORDER BY p.position ASC
+        """,
+        (batch_id,),
+    ).fetchall()
+
+
+def build_practice_batch_pdf(
+    conn,
+    batch_id: str,
+    normalize_meta_tags: Callable[[object], list[str]],
+) -> tuple[bytes, int]:
+    return build_mistakes_pdf(select_practice_batch_rows(conn, batch_id), normalize_meta_tags)
+
+
 def image_to_print_jpeg(image_path: Path, max_width: int = 1500, max_height: int = 2100) -> bytes:
     """Compress a question image into a print-friendly JPEG stream."""
     from PIL import Image, ImageOps

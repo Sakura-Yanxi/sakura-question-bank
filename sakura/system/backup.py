@@ -38,6 +38,30 @@ def export_options_from_query(query: dict, now: datetime | None = None) -> dict:
     }
 
 
+def build_backup_export_file(
+    query: dict,
+    db_path: Path,
+    folders: dict[str, Path],
+    now: datetime | None = None,
+) -> tuple[Path, str]:
+    export_options = export_options_from_query(query, now)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        build_backup_zip_file(
+            tmp_path,
+            db_path,
+            folders,
+            include_assets=export_options["include_assets"],
+            start_date=export_options["start_date"],
+            end_date=export_options["end_date"],
+        )
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return tmp_path, export_options["filename"]
+
+
 def _safe_date(value: str | None) -> str:
     text = (value or "").strip()
     if not text:

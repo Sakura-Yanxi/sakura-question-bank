@@ -53,6 +53,31 @@ def row_to_dict(
     return item
 
 
+def question_detail_to_dict(
+    conn,
+    row,
+    *,
+    row_to_dict: Callable,
+    load_question_review_notes: Callable,
+) -> dict:
+    item = row_to_dict(row)
+    notes = load_question_review_notes(conn, item["id"])
+    if not notes and item.get("user_note"):
+        notes = [
+            {
+                "id": "legacy-user-note",
+                "question_id": item["id"],
+                "status": item.get("status") or "",
+                "note": item.get("user_note") or "",
+                "meta_tags": item.get("meta_tags") or [],
+                "source": "legacy",
+                "created_at": item.get("last_reviewed_at") or item.get("created_at") or "",
+            }
+        ]
+    item["review_notes"] = notes
+    return item
+
+
 def document_to_dict(row, normalize_document_kind: Callable[[str | None], str]) -> dict:
     item = dict(row)
     item["document_kind"] = normalize_document_kind(item.get("document_kind"))

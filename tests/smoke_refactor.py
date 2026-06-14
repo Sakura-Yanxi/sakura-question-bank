@@ -8,6 +8,7 @@ import re
 import sqlite3
 import sys
 import tempfile
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -19,11 +20,13 @@ if str(ROOT) not in sys.path:
 
 from sakura.ai import client as sakura_ai
 from sakura.ai import coach as sakura_coach
+from sakura.ai import profile as sakura_profile
 from sakura.ai import teacher_memory as sakura_teacher_memory
 from sakura.api import textbook_runtime as sakura_textbook_runtime
 from sakura.content import classify as sakura_classify
 from sakura.content import documents as sakura_documents
 from sakura.content import importer as sakura_import
+from sakura.content import models as sakura_models
 from sakura.content import pdf as sakura_pdf
 from sakura.content import questions as sakura_questions
 from sakura.content import textbook as sakura_textbook
@@ -34,6 +37,7 @@ from sakura.system import backup as sakura_backup
 from sakura.system import email as sakura_email
 from sakura.system import notifications as sakura_notifications
 from sakura.system import practice_pages as sakura_practice_pages
+from sakura.system import settings as sakura_settings
 from sakura.system import update as sakura_update
 
 import app
@@ -54,6 +58,11 @@ class FakeHttpHandler:
 
     def end_headers(self) -> None:
         pass
+
+
+class FakeUpload:
+    def __init__(self, filename: str) -> None:
+        self.filename = filename
 
 
 def test_http_file_serving() -> None:
@@ -106,6 +115,40 @@ def test_http_file_serving() -> None:
     assert "%E5%8F%8D%E6%80%9D" in disposition
     assert "\n" not in sakura_http.content_disposition_attachment("bad\nname.pdf")
 
+    download = FakeHttpHandler()
+    sakura_http.send_attachment_bytes(
+        download,
+        b"pdf",
+        filename="错题.pdf",
+        content_type="application/pdf",
+    )
+    assert download.status == 200
+    assert ("Content-Type", "application/pdf") in download.headers
+    assert ("Content-Length", "3") in download.headers
+    assert download.wfile.getvalue() == b"pdf"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = Path(tmp) / "backup.zip"
+        archive.write_bytes(b"zip-body")
+        streamed = FakeHttpHandler()
+        sakura_http.stream_attachment_file(
+            streamed,
+            archive,
+            filename="backup.zip",
+            content_type="application/zip",
+            chunk_size=3,
+        )
+        assert ("Content-Type", "application/zip") in streamed.headers
+        assert ("Content-Length", "8") in streamed.headers
+        assert streamed.wfile.getvalue() == b"zip-body"
+
+    assert sakura_http.first_form_file({"backup": FakeUpload("backup.zip")}, "backup", "file").filename == "backup.zip"
+    assert sakura_http.first_form_file({"file": [FakeUpload("book.pdf")]}, "backup", "file").filename == "book.pdf"
+    assert sakura_http.first_form_file({}, "file") is None
+    assert sakura_http.uploaded_filename(FakeUpload("Book.PDF")) == "Book.PDF"
+    assert sakura_http.uploaded_file_has_suffix(FakeUpload("Book.PDF"), ".pdf")
+    assert not sakura_http.uploaded_file_has_suffix(FakeUpload("Book.txt"), ".pdf")
+
 
 def test_update_release_helpers() -> None:
     assert sakura_update.repo_configured("Sakura-Yanxi/-") is True
@@ -142,6 +185,34 @@ def test_json_body_parsing_guards() -> None:
         pass
 
 
+def test_question_detail_legacy_note_fallback() -> None:
+    row = {
+        "id": "q1",
+        "status": "需复习",
+        "user_note": "补一次定义",
+        "meta_tags": ["概念混淆"],
+        "last_reviewed_at": "",
+        "created_at": "2026-06-01T10:00:00",
+    }
+    detail = sakura_models.question_detail_to_dict(
+        None,
+        row,
+        row_to_dict=lambda value: dict(value),
+        load_question_review_notes=lambda conn, question_id: [],
+    )
+    assert detail["review_notes"] == [
+        {
+            "id": "legacy-user-note",
+            "question_id": "q1",
+            "status": "需复习",
+            "note": "补一次定义",
+            "meta_tags": ["概念混淆"],
+            "source": "legacy",
+            "created_at": "2026-06-01T10:00:00",
+        }
+    ]
+
+
 def test_local_env_override_policy() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -167,6 +238,113 @@ def test_local_env_override_policy() -> None:
                 os.environ.pop("EXTERNAL_ONLY", None)
             else:
                 os.environ["EXTERNAL_ONLY"] = old_external
+
+
+def test_settings_payload_parsing() -> None:
+    llm = sakura_settings.parse_llm_settings_payload({
+        "api_key": " key ",
+        "base_url": " https://api.example.com/v1/ ",
+        "model": " demo ",
+        "vision_model": "",
+        "vision_base_url": "",
+    })
+    assert llm == {
+        "api_key": "key",
+        "base_url": "https://api.example.com/v1/",
+        "model": "demo",
+        "vision_model": "",
+        "vision_api_key": None,
+        "vision_base_url": "",
+    }
+    try:
+        sakura_settings.parse_llm_settings_payload({})
+        raise AssertionError("empty llm settings payload should be rejected")
+    except ValueError:
+        pass
+
+    notify = sakura_settings.parse_notification_settings_payload({
+        "app_public_url": " https://example.com/sakura/ ",
+        "email_enabled": "1",
+    })
+    assert notify["app_public_url"] == "https://example.com/sakura"
+    assert notify["email_enabled"] == "1"
+    assert notify["wework_webhook"] is None
+    try:
+        sakura_settings.parse_notification_settings_payload({"app_public_url": "not-a-url"})
+        raise AssertionError("invalid public url should be rejected")
+    except ValueError:
+        pass
+
+
+def test_profile_history_loading() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute(
+            """
+            CREATE TABLE learner_profile (
+                id TEXT,
+                version INTEGER,
+                scope TEXT,
+                profile_json TEXT,
+                evidence_count INTEGER,
+                source TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO learner_profile VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("p1", 2, "__all__", json.dumps({"headline": "稳步提升", "avg_mastery": 0.7}, ensure_ascii=False), 5, "ai", "2026-06-02"),
+        )
+        conn.execute(
+            "INSERT INTO learner_profile VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("p0", 1, "__all__", "{bad", 3, "local", "2026-06-01"),
+        )
+        history = sakura_profile.load_profile_history(conn)
+        assert [item["id"] for item in history] == ["p1", "p0"]
+        assert history[0]["headline"] == "稳步提升"
+        assert history[0]["avg_mastery"] == 0.7
+        assert history[1]["headline"] == "本地统计档案"
+    finally:
+        conn.close()
+
+
+def test_memory_compression_helper() -> None:
+    settings = {"compression_prompt": "请压缩"}
+    ai_result = sakura_teacher_memory.compress_memory_content(
+        content="用户总是忘记先写定义域",
+        subject="高数",
+        source="chat",
+        instruction="保留复习建议",
+        settings=settings,
+        llm_enabled=True,
+        call_llm=lambda prompt, temperature=0.15: "先提醒定义域，再进入计算。",
+    )
+    assert ai_result["summary"] == "先提醒定义域，再进入计算。"
+    assert ai_result["used_ai"] is True
+    assert ai_result["error"] == ""
+    assert ai_result["memory_settings"] is settings
+
+    errors = []
+
+    def fail_llm(prompt, temperature=0.15):
+        raise RuntimeError("no balance")
+
+    fallback = sakura_teacher_memory.compress_memory_content(
+        content="用户经常混淆公式，复习时需要先画图。",
+        subject="高数",
+        source="chat",
+        instruction="",
+        settings=settings,
+        llm_enabled=True,
+        call_llm=fail_llm,
+        on_error=errors.append,
+    )
+    assert fallback["used_ai"] is False
+    assert fallback["error"] == "no balance"
+    assert errors and isinstance(errors[0], RuntimeError)
+    assert "高数" in fallback["summary"]
 
 
 def test_normalize_llm_error_messages() -> None:
@@ -1106,6 +1284,25 @@ def test_backup_options() -> None:
     assert ranged["include_assets"] is True
     assert ranged["filename"] == "sakura_backup_range_2026-01-01_to_2026-01-31_20260102_030405.zip"
 
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        db_path = root / "gaoshu_demo.sqlite3"
+        sqlite3.connect(db_path).close()
+        export_path, filename = sakura_backup.build_backup_export_file(
+            {"mode": ["light"]},
+            db_path,
+            {"uploads": root / "uploads", "pages": root / "pages"},
+            now,
+        )
+        try:
+            assert filename == "sakura_backup_light_20260102_030405.zip"
+            assert export_path.exists()
+            with zipfile.ZipFile(export_path) as zf:
+                assert "manifest.json" in zf.namelist()
+                assert "data/gaoshu_demo.sqlite3" in zf.namelist()
+        finally:
+            export_path.unlink(missing_ok=True)
+
 
 def test_teacher_turn_persistence() -> None:
     calls = []
@@ -1188,6 +1385,21 @@ def test_teacher_turn_persistence() -> None:
     context = json.loads(row["context_json"])
     assert len(context["top_gaps"]) == 5
     assert len(context["today_actions"]) == 5
+
+    response = sakura_teacher_memory.run_teacher_chat_turn(
+        conn,
+        message="please review limits",
+        context={"profile": {"headline": "steady"}, "top_gaps": [], "review_backlog": {}, "today_actions": []},
+        call_llm_messages=lambda messages, temperature=0.35: "review answer",
+        model="demo-model",
+        base_url="https://api.example.com/v1",
+    )
+    assert response["answer"] == "review answer"
+    assert response["has_key"] is True
+    assert response["model"] == "demo-model"
+    assert response["base_url"] == "https://api.example.com/v1"
+    assert response["teacher_intent"] in sakura_ai.TEACHER_INTENTS
+    assert conn.execute("SELECT COUNT(*) c FROM ai_teacher_turns").fetchone()["c"] == 2
 
 
 def test_real_import_pdf_smoke() -> None:
@@ -1317,6 +1529,10 @@ def test_real_import_pdf_smoke() -> None:
 def main() -> None:
     test_http_file_serving()
     test_local_env_override_policy()
+    test_question_detail_legacy_note_fallback()
+    test_settings_payload_parsing()
+    test_profile_history_loading()
+    test_memory_compression_helper()
     test_email_notification_helpers()
     test_practice_pages_and_reminder_helpers()
     test_notification_summary_helpers()

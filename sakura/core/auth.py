@@ -5,6 +5,10 @@ import hmac
 import secrets
 import time
 from html import escape as html_escape
+from urllib.parse import unquote
+
+
+PUBLIC_AUTH_PATHS = {"/login", "/api/health"}
 
 
 def auth_enabled(admin_password: str) -> bool:
@@ -40,6 +44,24 @@ def verify_session_token(token: str, *, admin_password: str, auth_secret_value: 
         return int(expires) >= int(time.time())
     except ValueError:
         return False
+
+
+def is_public_path(path: str) -> bool:
+    return (
+        path in PUBLIC_AUTH_PATHS
+        or path.startswith("/practice/")
+        or path.startswith("/api/practice/")
+    )
+
+
+def cookie_value(cookie_header: str, name: str) -> str:
+    for part in (cookie_header or "").split(";"):
+        if "=" not in part:
+            continue
+        key, value = part.strip().split("=", 1)
+        if key == name:
+            return unquote(value)
+    return ""
 
 
 def login_page(error: str = "") -> str:

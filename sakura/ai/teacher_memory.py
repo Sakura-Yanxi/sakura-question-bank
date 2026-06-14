@@ -4,6 +4,9 @@ import json
 import re
 import uuid
 from datetime import datetime
+from typing import Callable
+
+from sakura.ai import client as sakura_ai
 
 DEFAULT_MEMORY_SUBJECT = "未分科"
 MEMORY_SETTINGS_ID = "singleton"
@@ -141,6 +144,45 @@ def build_memory_compression_prompt(
 
 请输出压缩后的老师记忆：
 """.strip()
+
+
+def compress_memory_content(
+    *,
+    content: str,
+    subject: str,
+    source: str,
+    instruction: str,
+    settings: dict,
+    llm_enabled: bool,
+    call_llm: Callable,
+    on_error: Callable[[Exception], None] | None = None,
+) -> dict:
+    prompt = build_memory_compression_prompt(
+        content=content,
+        subject=subject,
+        source=source,
+        compression_prompt=settings["compression_prompt"],
+        instruction=instruction,
+    )
+    used_ai = False
+    error = ""
+    summary = ""
+    if llm_enabled:
+        try:
+            summary = call_llm(prompt, temperature=0.15).strip()
+            used_ai = True
+        except Exception as exc:
+            if on_error:
+                on_error(exc)
+            error = str(exc)
+    if not summary:
+        summary = local_compress_memory(content, subject, instruction)
+    return {
+        "summary": summary[:2000],
+        "used_ai": used_ai,
+        "error": error,
+        "memory_settings": settings,
+    }
 
 
 def ensure_teacher_memory_subject(conn, subject: str | None) -> str:
@@ -361,6 +403,36 @@ def save_teacher_turn(
         ),
     )
     return turn_id
+
+
+def run_teacher_chat_turn(
+    conn,
+    *,
+    message: str,
+    context: dict,
+    call_llm_messages: Callable,
+    model: str,
+    base_url: str,
+) -> dict:
+    turn = sakura_ai.build_teacher_chat_turn(message, context, call_llm_messages=call_llm_messages)
+    save_teacher_turn(
+        conn,
+        message=message,
+        intent=turn["intent"],
+        strategy=turn["strategy"],
+        context=context,
+        answer=turn["answer"],
+        memory_candidate=turn["memory_candidate"],
+    )
+    return {
+        "answer": turn["answer"],
+        "has_key": True,
+        "model": model,
+        "base_url": base_url,
+        "teacher_intent": turn["intent"],
+        "teacher_strategy": turn["strategy"],
+        "memory_candidate": turn["memory_candidate"],
+    }
 
 
 def select_relevant_mentor_experiences(conn, message: str = "", subject_hint: str = "", limit: int = 5) -> list[dict]:

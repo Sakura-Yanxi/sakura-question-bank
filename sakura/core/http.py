@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from urllib.parse import quote
 from http import HTTPStatus
 from pathlib import Path
@@ -42,6 +43,33 @@ def read_limited_body(headers, rfile, *, max_bytes: int) -> bytes:
     return rfile.read(length)
 
 
+def read_multipart_form(headers, rfile):
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="'cgi' is deprecated.*", category=DeprecationWarning)
+        import cgi
+
+    return cgi.FieldStorage(fp=rfile, headers=headers, environ={"REQUEST_METHOD": "POST"})
+
+
+def first_form_file(form, *field_names: str):
+    for name in field_names:
+        if name not in form:
+            continue
+        item = form[name]
+        if isinstance(item, list):
+            item = item[0] if item else None
+        return item
+    return None
+
+
+def uploaded_filename(file_item) -> str:
+    return str(getattr(file_item, "filename", "") or "")
+
+
+def uploaded_file_has_suffix(file_item, suffix: str) -> bool:
+    return uploaded_filename(file_item).lower().endswith(suffix.lower())
+
+
 def json_response(handler, payload: dict | list, status: int = 200) -> None:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
@@ -74,6 +102,43 @@ def content_disposition_attachment(filename: str) -> str:
     return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded}'
 
 
+def send_attachment_bytes(
+    handler,
+    body: bytes,
+    *,
+    filename: str,
+    content_type: str,
+    status: int = 200,
+) -> None:
+    handler.send_response(status)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Content-Disposition", content_disposition_attachment(filename))
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+def stream_attachment_file(
+    handler,
+    path: Path,
+    *,
+    filename: str,
+    content_type: str,
+    chunk_size: int = 1024 * 1024,
+) -> None:
+    handler.send_response(200)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Content-Disposition", content_disposition_attachment(filename))
+    handler.send_header("Content-Length", str(path.stat().st_size))
+    handler.end_headers()
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            handler.wfile.write(chunk)
+
+
 def content_type_for_path(path: Path) -> str:
     content_types = {
         ".html": "text/html; charset=utf-8",
@@ -102,3 +167,28 @@ def serve_file(handler, path: Path, root: Path) -> None:
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def to_public_path(path: str | Path, *, page_dir: Path, static_dir: Path) -> str:
+    absolute = Path(path).resolve()
+    try:
+        return "/data/pages/" + absolute.relative_to(page_dir).as_posix()
+    except ValueError:
+        pass
+    try:
+        return "/static/" + absolute.relative_to(static_dir).as_posix()
+    except ValueError:
+        normalized = str(path).replace("\\", "/")
+        marker = normalized.rfind("/data/pages/")
+        if marker != -1:
+            return normalized[marker:]
+        name = Path(normalized).name
+        return "/data/pages/" + name if name else ""
+
+
+def public_file_base_for_path(path: str, *, page_dir: Path, static_dir: Path) -> Path | None:
+    if path.startswith("/static/"):
+        return static_dir
+    if path.startswith("/data/pages/"):
+        return page_dir
+    return None
