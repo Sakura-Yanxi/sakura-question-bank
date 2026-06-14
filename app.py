@@ -10,7 +10,6 @@ import shutil
 import sys
 import tempfile
 import threading
-import time
 import traceback
 import uuid
 import warnings
@@ -60,6 +59,7 @@ from sakura.system import migration as sakura_migration
 from sakura.system import notifications as sakura_notifications
 from sakura.system import practice_pages as sakura_practice_pages
 from sakura.system import reminders as sakura_reminders
+from sakura.system import scheduler as sakura_scheduler
 from sakura.system import settings as sakura_settings
 from sakura.system import update as sakura_update
 from sakura.system import weather as sakura_weather
@@ -1357,13 +1357,12 @@ def build_night_check(conn: sqlite3.Connection) -> dict:
 
 
 def reminder_kinds_for_minute(minute: str, schedules: list[tuple[str, str, str]]) -> list[str]:
-    return [kind for kind, enabled, target_minute in schedules if enabled == "1" and target_minute == minute]
+    return sakura_scheduler.reminder_kinds_for_minute(minute, schedules)
 
 
 def scheduled_reminder_kinds(now: datetime | None = None) -> list[str]:
-    now = now or datetime.now()
-    return reminder_kinds_for_minute(
-        now.strftime("%H:%M"),
+    return sakura_scheduler.scheduled_reminder_kinds(
+        now,
         [
             ("morning", REMIND_MORNING_ON, REMIND_MORNING_TIME),
             ("night", REMIND_NIGHT_ON, REMIND_NIGHT_TIME),
@@ -1373,40 +1372,11 @@ def scheduled_reminder_kinds(now: datetime | None = None) -> list[str]:
 
 
 def claim_reminder_dispatch(conn: sqlite3.Connection, kind: str, now: datetime) -> bool:
-    day = now.date().isoformat()
-    minute_key = now.strftime("%Y-%m-%d %H:%M")
-    stamp = now.isoformat(timespec="seconds")
-    try:
-        conn.execute(
-            """
-            INSERT INTO reminder_dispatch_log (day, kind, minute_key, status, detail_json, created_at, updated_at)
-            VALUES (?, ?, ?, 'running', '{}', ?, ?)
-            """,
-            (day, kind, minute_key, stamp, stamp),
-        )
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
+    return sakura_scheduler.claim_reminder_dispatch(conn, kind, now)
 
 
 def finish_reminder_dispatch(conn: sqlite3.Connection, kind: str, now: datetime, status: str, detail: dict) -> None:
-    conn.execute(
-        """
-        UPDATE reminder_dispatch_log
-        SET status = ?, detail_json = ?, updated_at = ?
-        WHERE day = ? AND kind = ? AND minute_key = ?
-        """,
-        (
-            status,
-            json.dumps(detail, ensure_ascii=False, default=str)[:4000],
-            datetime.now().isoformat(timespec="seconds"),
-            now.date().isoformat(),
-            kind,
-            now.strftime("%Y-%m-%d %H:%M"),
-        ),
-    )
-    conn.commit()
+    sakura_scheduler.finish_reminder_dispatch(conn, kind, now, status, detail)
 
 
 def build_scheduled_reminder(conn: sqlite3.Connection, kind: str) -> dict:
@@ -1420,55 +1390,28 @@ def build_scheduled_reminder(conn: sqlite3.Connection, kind: str) -> dict:
 
 
 def dispatch_scheduled_reminder(kind: str, mode: str | None = None) -> dict:
-    now = datetime.now()
-    conn = connect()
-    try:
-        if not claim_reminder_dispatch(conn, kind, now):
-            return {"ok": True, "skipped": True, "kind": kind, "detail": "already dispatched for this minute"}
-        try:
-            payload = build_scheduled_reminder(conn, kind)
-            conn.commit()
-            attach_pdf = kind in {"daily", "morning"}
-            result, _ = send_reminder_payload(payload, mode or REMIND_CHECKIN_MODE, attach_pdf=attach_pdf)
-        except Exception as exc:
-            traceback.print_exc()
-            result = {
-                "ok": False,
-                "selected_channel": mode or REMIND_CHECKIN_MODE,
-                "detail": str(exc),
-                "configured": notification_channels_configured(mode or REMIND_CHECKIN_MODE),
-            }
-            payload = {"title": f"{kind} reminder failed"}
-        finish_reminder_dispatch(
-            conn,
-            kind,
-            now,
-            "sent" if result.get("ok") else "failed",
-            {"title": payload.get("title"), "result": result},
-        )
-    finally:
-        conn.close()
-    return {
-        "ok": bool(result.get("ok")),
-        "kind": kind,
-        "selected_channel": result.get("selected_channel", mode or REMIND_CHECKIN_MODE),
-        "title": payload.get("title", ""),
-        "detail": notification_response_detail(result),
-        "configured": notification_response_configured(result, result.get("selected_channel", mode or REMIND_CHECKIN_MODE)),
-    }
+    return sakura_scheduler.dispatch_scheduled_reminder(
+        kind,
+        mode=mode,
+        default_mode=REMIND_CHECKIN_MODE,
+        connect=connect,
+        build_payload=build_scheduled_reminder,
+        send_payload=send_reminder_payload,
+        channels_configured=notification_channels_configured,
+        response_detail=notification_response_detail,
+        response_configured=notification_response_configured,
+        print_exception=traceback.print_exc,
+    )
 
 
 def reminder_scheduler_loop() -> None:
-    print("[sakura scheduler] internal reminder scheduler started", flush=True)
-    while True:
-        try:
-            if INTERNAL_SCHEDULER_ENABLED:
-                for kind in scheduled_reminder_kinds(datetime.now()):
-                    result = dispatch_scheduled_reminder(kind)
-                    print(f"[sakura scheduler] {kind}: {result}", flush=True)
-        except Exception:
-            traceback.print_exc()
-        time.sleep(SCHEDULER_POLL_SECONDS)
+    sakura_scheduler.reminder_scheduler_loop(
+        enabled=lambda: INTERNAL_SCHEDULER_ENABLED,
+        scheduled_kinds=scheduled_reminder_kinds,
+        dispatch=dispatch_scheduled_reminder,
+        poll_seconds=SCHEDULER_POLL_SECONDS,
+        print_exception=traceback.print_exc,
+    )
 
 
 def start_internal_scheduler() -> None:
