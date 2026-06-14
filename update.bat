@@ -5,7 +5,7 @@ REM  Sakura 做题集 · 一键更新（Windows）
 REM  作用：拉取最新代码 + 更新依赖。
 REM  绝不触碰你的 data\（题库/数据库/题图）和 .env（密钥配置）。
 REM ============================================================
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 where git >nul 2>nul
@@ -32,11 +32,11 @@ echo == 2/2 更新依赖 ==
 set "VENV_PY=%CD%\.venv\Scripts\python.exe"
 if not exist "%VENV_PY%" (
   set "BASE_PYTHON_CMD="
-  where py >nul 2>nul
-  if not errorlevel 1 set "BASE_PYTHON_CMD=py -3"
+  python --version >nul 2>nul
+  if not errorlevel 1 set "BASE_PYTHON_CMD=python"
   if not defined BASE_PYTHON_CMD (
-    where python >nul 2>nul
-    if not errorlevel 1 set "BASE_PYTHON_CMD=python"
+    py -3 --version >nul 2>nul
+    if not errorlevel 1 set "BASE_PYTHON_CMD=py -3"
   )
   if not defined BASE_PYTHON_CMD (
     echo [错误] 未检测到 Python。请先安装 Python 3.10 或更新版本。
@@ -44,7 +44,7 @@ if not exist "%VENV_PY%" (
     exit /b 1
   )
   echo 正在创建本地虚拟环境：%CD%\.venv
-  %BASE_PYTHON_CMD% -m venv "%CD%\.venv"
+  !BASE_PYTHON_CMD! -m venv "%CD%\.venv"
   if errorlevel 1 (
     echo [错误] 虚拟环境创建失败。
     pause

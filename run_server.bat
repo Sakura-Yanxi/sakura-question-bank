@@ -26,11 +26,11 @@ set "VENV_PY=%CD%\.venv\Scripts\python.exe"
 
 if not exist "%VENV_PY%" (
   set "BASE_PYTHON_CMD="
-  where py >nul 2>nul
-  if not errorlevel 1 set "BASE_PYTHON_CMD=py -3"
+  python --version >nul 2>nul
+  if not errorlevel 1 set "BASE_PYTHON_CMD=python"
   if not defined BASE_PYTHON_CMD (
-    where python >nul 2>nul
-    if not errorlevel 1 set "BASE_PYTHON_CMD=python"
+    py -3 --version >nul 2>nul
+    if not errorlevel 1 set "BASE_PYTHON_CMD=py -3"
   )
   if not defined BASE_PYTHON_CMD (
     echo [Sakura] 没有检测到 Python。
@@ -39,7 +39,7 @@ if not exist "%VENV_PY%" (
     exit /b 1
   )
   echo [Sakura] 第一次运行，正在创建本地虚拟环境：%CD%\.venv
-  %BASE_PYTHON_CMD% -m venv "%CD%\.venv"
+  !BASE_PYTHON_CMD! -m venv "%CD%\.venv"
   if errorlevel 1 (
     echo [Sakura] 虚拟环境创建失败，请检查 Python 是否安装完整。
     if /I not "%~1"=="/hidden" pause

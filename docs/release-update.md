@@ -16,7 +16,7 @@ Sakura 的更新提示走 GitHub Releases。维护者发布 `v1.0.1`、`v1.1.0` 
 1. 修改 `sakura/__init__.py`：
 
    ```python
-   __version__ = "1.0.2"
+   __version__ = "1.0.3"
    ```
 
 2. 更新 README 或变更说明，确认版本说明和实际功能一致。
@@ -33,15 +33,15 @@ Sakura 的更新提示走 GitHub Releases。维护者发布 `v1.0.1`、`v1.1.0` 
 
    ```bash
    git add .
-   git commit -m "Release v1.0.2"
+   git commit -m "Release v1.0.3"
    git push origin main
    ```
 
 5. 打开 GitHub 仓库的 **Releases** 页面，点击 **Create a new release**。
 
-6. `Choose a tag` 填 `v1.0.2`，目标分支选 `main`。
+6. `Choose a tag` 填 `v1.0.3`，目标分支选 `main`。
 
-7. Release title 写 `v1.0.2`。说明里建议写：
+7. Release title 写 `v1.0.3`。说明里建议写：
 
    ```text
    - 主要新增功能
