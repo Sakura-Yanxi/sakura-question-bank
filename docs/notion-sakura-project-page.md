@@ -5,7 +5,7 @@
 ## 项目入口
 
 - GitHub 仓库：https://github.com/Sakura-Yanxi/sakura-question-bank
-- 当前版本：`v1.0.0`
+- 当前版本：`v1.0.1`
 - 发布页：https://github.com/Sakura-Yanxi/sakura-question-bank/releases
 - 宣传海报：`docs/poster/sakura-demo-poster.png`
 - 保姆级部署教程：`docs/本地到云端部署保姆级教程.md`
