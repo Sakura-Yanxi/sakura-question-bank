@@ -17,6 +17,7 @@ docs/*
 !docs/本地到云端部署保姆级教程.md
 !docs/architecture.md
 !docs/release-update.md
+!docs/notion-sakura-project-page.md
 !docs/poster/
 docs/poster/*
 !docs/poster/sakura-demo-poster.png
