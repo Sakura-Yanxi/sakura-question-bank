@@ -16,7 +16,7 @@ Sakura 的更新提示走 GitHub Releases。维护者发布 `v1.0.1`、`v1.1.0` 
 1. 修改 `sakura/__init__.py`：
 
    ```python
-   __version__ = "1.0.6"
+   __version__ = "1.0.7"
    ```
 
 2. 更新 README 或变更说明，确认版本说明和实际功能一致。
@@ -33,15 +33,15 @@ Sakura 的更新提示走 GitHub Releases。维护者发布 `v1.0.1`、`v1.1.0` 
 
    ```bash
    git add .
-   git commit -m "Release v1.0.6"
+   git commit -m "Release v1.0.7"
    git push origin main
    ```
 
 5. 打开 GitHub 仓库的 **Releases** 页面，点击 **Create a new release**。
 
-6. `Choose a tag` 填 `v1.0.6`，目标分支选 `main`。
+6. `Choose a tag` 填 `v1.0.7`，目标分支选 `main`。
 
-7. Release title 写 `v1.0.6`。说明里建议写：
+7. Release title 写 `v1.0.7`。说明里建议写：
 
    ```text
    - 主要新增功能
@@ -60,9 +60,9 @@ Sakura 的更新提示走 GitHub Releases。维护者发布 `v1.0.1`、`v1.1.0` 
 页面会按当前安装方式自动选择：
 
 - Git 仓库：执行 `git pull --ff-only`，再用当前 Python 环境安装依赖。
-- Release zip：下载 GitHub Release 源码包，先备份旧代码到 `data/update_backups/`，再覆盖代码文件。
+- Release zip：下载 GitHub Release 源码包，先备份旧代码到 `data/update_backups/`，再覆盖代码文件；默认只保留最近 3 份旧代码备份。
 
-两种方式都会保留 `data/`、`.env` 和 `.venv`。更新完成后关闭并重新启动 Sakura 服务。
+两种方式都会保留 `data/`、`.env` 和 `.venv`。systemd 托管的服务器会在页面内更新完成后自动重启 Sakura；本地窗口运行时需要手动关闭并重新打开。
 
 也可以直接运行项目自带脚本。脚本会自动判断安装方式：是 Git 仓库就拉取代码，不是 Git 仓库就下载最新 Release zip。
 
@@ -84,6 +84,7 @@ git pull --ff-only
 # 非 Git 目录
 下载最新 Release zip
 备份旧代码到 data/update_backups/
+清理更旧的 update_backups 备份
 覆盖代码文件
 .venv/bin/python -m pip install -r requirements.txt
 ```

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -17,6 +18,9 @@ GITHUB_API = "https://api.github.com/repos/{repo}/releases/latest"
 GITHUB_RELEASES_PAGE = "https://github.com/{repo}/releases"
 CACHE_TTL_SECONDS = 6 * 3600
 UPDATE_LOG_LIMIT = 6000
+DEFAULT_UPDATE_BACKUP_KEEP = 3
+MAX_UPDATE_BACKUP_KEEP = 20
+UPDATE_BACKUP_KEEP_ENV = "SAKURA_UPDATE_BACKUP_KEEP"
 
 CODE_DIRS = ("sakura", "static", "scripts", "tests", "docs", "deploy")
 CODE_FILES = (
@@ -227,6 +231,73 @@ def _backup_code(root: Path) -> str:
     return str(backup_path.relative_to(root))
 
 
+def _backup_keep_count() -> int:
+    raw = os.getenv(UPDATE_BACKUP_KEEP_ENV, "").strip()
+    if not raw:
+        return DEFAULT_UPDATE_BACKUP_KEEP
+    try:
+        keep = int(raw)
+    except ValueError:
+        return DEFAULT_UPDATE_BACKUP_KEEP
+    return max(1, min(keep, MAX_UPDATE_BACKUP_KEEP))
+
+
+def _cleanup_empty_parents(path: Path, stop_at: Path) -> None:
+    current = path
+    stop_at = stop_at.resolve()
+    while current.exists():
+        try:
+            if current.resolve() == stop_at:
+                break
+            current.rmdir()
+        except OSError:
+            break
+        current = current.parent
+
+
+def _remove_backup_path(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_dir():
+        size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+        shutil.rmtree(path)
+        return size
+    size = path.stat().st_size
+    path.unlink()
+    return size
+
+
+def _cleanup_update_backups(root: Path, *, keep: int | None = None) -> dict:
+    backup_root = root / "data" / "update_backups"
+    if not backup_root.exists():
+        return {"removed": 0, "freed_bytes": 0, "kept": keep or _backup_keep_count()}
+
+    keep_count = keep if keep is not None else _backup_keep_count()
+    removed = 0
+    freed_bytes = 0
+    for pattern in ("code-*.zip", "preserve-*"):
+        candidates = [path for path in backup_root.glob(pattern) if path.exists()]
+        candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        for path in candidates[keep_count:]:
+            try:
+                freed_bytes += _remove_backup_path(path)
+                removed += 1
+            except OSError:
+                continue
+    return {"removed": removed, "freed_bytes": freed_bytes, "kept": keep_count}
+
+
+def _cleanup_step(root: Path) -> dict:
+    cleanup = _cleanup_update_backups(root)
+    freed_kb = cleanup["freed_bytes"] // 1024
+    return {
+        "name": "清理旧更新备份",
+        "ok": True,
+        "code": 0,
+        "output": f"保留最近 {cleanup['kept']} 份，清理 {cleanup['removed']} 项，释放约 {freed_kb} KB。",
+    }
+
+
 def _safe_extract_zip(zip_path: Path, target: Path) -> Path:
     with zipfile.ZipFile(zip_path) as archive:
         names = [name for name in archive.namelist() if name and not name.endswith("/")]
@@ -277,6 +348,7 @@ def _restore_preserved_code_paths(root: Path, moved: list[tuple[Path, Path]]) ->
                 destination.unlink()
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(source), str(destination))
+        _cleanup_empty_parents(source.parent, root / "data" / "update_backups")
 
 
 def _replace_code_from(source_root: Path, root: Path) -> None:
@@ -359,6 +431,9 @@ def apply_update(root: Path, current_version: str, repo: str) -> dict:
     steps.append({"name": "安装依赖", **pip})
     if not pip["ok"]:
         return {"ok": False, "error": "依赖安装失败。", "steps": steps, "info": info, "auto_update": capability}
+
+    if backup:
+        steps.append(_cleanup_step(root))
 
     return {
         "ok": True,
