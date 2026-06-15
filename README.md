@@ -224,6 +224,8 @@ http://127.0.0.1:8000
 
 如果看到 `No module named 'fitz'`，说明跳过了依赖安装；请运行 `run_server.bat`，或先执行 `python -m pip install -r requirements.txt`。
 
+如果双击 `run_server.bat` 时提示 `No matching distribution found for PyMuPDF>=1.24.0`，通常不是网络问题，而是当前项目里的旧 `.venv` 还在使用过低版本或 32 位 Python。新版 `run_server.bat` 会自动检查并重建旧 `.venv`；如果你手里的旧包还没有这个修复，可以先关闭 Sakura 窗口，删除项目目录下的 `.venv` 文件夹，再重新双击 `run_server.bat`。
+
 ## 更新项目
 
 页面内更新：
