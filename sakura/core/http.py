@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import warnings
 from urllib.parse import quote
@@ -9,10 +10,51 @@ from pathlib import Path
 
 MAX_JSON_BODY_BYTES = 2 * 1024 * 1024
 MAX_FORM_BODY_BYTES = 64 * 1024
+DEFAULT_MULTIPART_BODY_BYTES = 1024 * 1024 * 1024
+MAX_MULTIPART_BODY_BYTES = 4 * 1024 * 1024 * 1024
+MAX_UPLOAD_MB_ENV = "SAKURA_MAX_UPLOAD_MB"
 
 
 class BadRequestError(ValueError):
     pass
+
+
+class PayloadTooLargeError(BadRequestError):
+    pass
+
+
+def format_bytes(size: int) -> str:
+    if size >= 1024 * 1024 * 1024:
+        return f"{size / (1024 * 1024 * 1024):.1f} GB"
+    if size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):.0f} MB"
+    return f"{size} bytes"
+
+
+def multipart_body_limit() -> int:
+    raw = os.getenv(MAX_UPLOAD_MB_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MULTIPART_BODY_BYTES
+    try:
+        megabytes = int(raw)
+    except ValueError:
+        return DEFAULT_MULTIPART_BODY_BYTES
+    return max(1, min(megabytes, MAX_MULTIPART_BODY_BYTES // (1024 * 1024))) * 1024 * 1024
+
+
+def enforce_content_length_limit(headers, *, max_bytes: int) -> int:
+    raw_length = headers.get("Content-Length")
+    if raw_length is None:
+        raise BadRequestError("上传请求缺少 Content-Length，已拒绝读取。")
+    try:
+        length = int(raw_length)
+    except (TypeError, ValueError) as exc:
+        raise BadRequestError("请求体长度无效。") from exc
+    if length < 0:
+        raise BadRequestError("请求体长度无效。")
+    if length > max_bytes:
+        raise PayloadTooLargeError(f"上传内容过大，当前上限 {format_bytes(max_bytes)}。")
+    return length
 
 
 def read_json_body(headers, rfile, *, max_bytes: int = MAX_JSON_BODY_BYTES) -> dict:
@@ -43,7 +85,8 @@ def read_limited_body(headers, rfile, *, max_bytes: int) -> bytes:
     return rfile.read(length)
 
 
-def read_multipart_form(headers, rfile):
+def read_multipart_form(headers, rfile, *, max_bytes: int | None = None):
+    enforce_content_length_limit(headers, max_bytes=max_bytes or multipart_body_limit())
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="'cgi' is deprecated.*", category=DeprecationWarning)
         import cgi

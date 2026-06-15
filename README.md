@@ -8,7 +8,7 @@ Sakura 做题集是一个本地优先的个人学习工作台，用来管理 PDF
 
 ## 当前状态
 
-- 当前版本：`v1.0.7`
+- 当前版本：`v1.0.8`
 - 项目地址：[Sakura-Yanxi/sakura-question-bank](https://github.com/Sakura-Yanxi/sakura-question-bank)
 - 发布页：[GitHub Releases](https://github.com/Sakura-Yanxi/sakura-question-bank/releases)
 - 更新方式：Git 用户运行 `update.bat` / `update.sh`；下载压缩包的用户覆盖代码文件，并保留自己的 `data/` 和 `.env`。
@@ -249,6 +249,8 @@ bash update.sh
 如果是在 systemd 托管的服务器上通过页面内“版本管理”更新，更新完成后服务会自动重启并加载新版本；普通本地窗口运行时，更新后仍需要手动关闭并重新打开 Sakura。
 
 Release zip 更新会把旧代码备份到 `data/update_backups/`，默认只保留最近 3 份旧代码备份，避免长期占用磁盘空间。需要保留更多时可以在 `.env` 里设置 `SAKURA_UPDATE_BACKUP_KEEP=5`。
+
+迁移包导入前会把当前数据备份到 `data/migration_backups/`，默认同样只保留最近 3 份。需要保留更多时可以设置 `SAKURA_MIGRATION_BACKUP_KEEP=5`。浏览器上传 PDF 或迁移 ZIP 时默认最大 1024 MB，超出会直接拒绝读取，避免服务器内存被大文件拖垮；如果确实有超大教材，可以在 `.env` 里设置 `SAKURA_MAX_UPLOAD_MB=2048` 后重启服务。
 
 如果你手里的旧版本还没有这个轻量更新器，需要先手动升级到包含新 `update.bat` / `update.sh` 的版本一次；之后再更新就可以直接用脚本或页面一键更新。
 

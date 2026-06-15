@@ -35,6 +35,7 @@ from sakura.core import config as sakura_config
 from sakura.core import routes as sakura_routes
 from sakura.system import backup as sakura_backup
 from sakura.system import email as sakura_email
+from sakura.system import migration as sakura_migration
 from sakura.system import notifications as sakura_notifications
 from sakura.system import practice_pages as sakura_practice_pages
 from sakura.system import settings as sakura_settings
@@ -213,12 +214,41 @@ def test_update_release_helpers() -> None:
         assert (root / "docs" / "software_copyright" / "private.md").read_text(encoding="utf-8") == "secret\n"
         assert not (root / "docs" / "old.md").exists()
 
+        backup_root = root / "data" / "update_backups"
+        backup_root.mkdir(parents=True, exist_ok=True)
+        for index in range(5):
+            code_backup = backup_root / f"code-20260101-00000{index}.zip"
+            code_backup.write_text(str(index), encoding="utf-8")
+            preserve_backup = backup_root / f"preserve-20260101-00000{index}"
+            preserve_backup.mkdir()
+            (preserve_backup / "private.txt").write_text(str(index), encoding="utf-8")
+            os.utime(code_backup, (index, index))
+            os.utime(preserve_backup, (index, index))
+        cleanup = sakura_update._cleanup_update_backups(root, keep=2)
+        assert cleanup["removed"] == 6
+        assert cleanup["kept"] == 2
+        assert sorted(path.name for path in backup_root.glob("code-*.zip")) == [
+            "code-20260101-000003.zip",
+            "code-20260101-000004.zip",
+        ]
+        assert sorted(path.name for path in backup_root.glob("preserve-*")) == [
+            "preserve-20260101-000003",
+            "preserve-20260101-000004",
+        ]
+
+        outside = root / "outside"
+        outside_child = outside / "child"
+        outside_child.mkdir(parents=True)
+        sakura_update._cleanup_empty_parents(outside_child, backup_root)
+        assert outside_child.exists()
+
 
 def test_json_body_parsing_guards() -> None:
     body = io.BytesIO(b'{"ok": true}')
     assert sakura_http.read_json_body({"Content-Length": "12"}, body) == {"ok": True}
     assert sakura_http.read_json_body({"Content-Length": "0"}, io.BytesIO()) == {}
     assert sakura_http.read_limited_body({"Content-Length": "4"}, io.BytesIO(b"test"), max_bytes=4) == b"test"
+    assert sakura_http.enforce_content_length_limit({"Content-Length": "4"}, max_bytes=4) == 4
 
     for headers, raw in [
         ({"Content-Length": "abc"}, b"{}"),
@@ -236,6 +266,30 @@ def test_json_body_parsing_guards() -> None:
         raise AssertionError("oversized JSON body should be rejected")
     except sakura_http.BadRequestError:
         pass
+
+    try:
+        sakura_http.enforce_content_length_limit({"Content-Length": "5"}, max_bytes=4)
+        raise AssertionError("oversized multipart body should be rejected")
+    except sakura_http.PayloadTooLargeError:
+        pass
+
+    try:
+        sakura_http.enforce_content_length_limit({}, max_bytes=4)
+        raise AssertionError("missing content length should be rejected")
+    except sakura_http.BadRequestError:
+        pass
+
+    old_upload_limit = os.environ.get(sakura_http.MAX_UPLOAD_MB_ENV)
+    try:
+        os.environ[sakura_http.MAX_UPLOAD_MB_ENV] = "2"
+        assert sakura_http.multipart_body_limit() == 2 * 1024 * 1024
+        os.environ[sakura_http.MAX_UPLOAD_MB_ENV] = "bad"
+        assert sakura_http.multipart_body_limit() == sakura_http.DEFAULT_MULTIPART_BODY_BYTES
+    finally:
+        if old_upload_limit is None:
+            os.environ.pop(sakura_http.MAX_UPLOAD_MB_ENV, None)
+        else:
+            os.environ[sakura_http.MAX_UPLOAD_MB_ENV] = old_upload_limit
 
 
 def test_question_detail_legacy_note_fallback() -> None:
@@ -657,10 +711,19 @@ def test_static_frontend_wiring() -> None:
 
     reminders_js = (ROOT / "static" / "js" / "system" / "reminders.js").read_text(encoding="utf-8")
     core_js = (ROOT / "static" / "js" / "core" / "app.js").read_text(encoding="utf-8")
+    library_js = (ROOT / "static" / "js" / "content" / "library.js").read_text(encoding="utf-8")
+    mistakes_js = (ROOT / "static" / "js" / "review" / "mistakes.js").read_text(encoding="utf-8")
+    question_detail_js = (ROOT / "static" / "js" / "content" / "question_detail.js").read_text(encoding="utf-8")
     assert "window.SakuraReminderControls" in reminders_js
     assert "window.SakuraReminderControls.bind()" in core_js
     assert "reminderControlsBound" in reminders_js
     assert "let lastAiChatAnswer" not in reminders_js
+    assert 'value="${escapeAttr(subject)}"' in core_js
+    assert 'value="${escapeAttr(doc.id)}">${escapeHtml(documentLabel(doc))}' in core_js
+    assert 'value="${escapeAttr(category)}"' in library_js
+    assert 'value="${escapeAttr(chapter)}"' in library_js
+    assert 'value="${escapeAttr(category)}"' in mistakes_js
+    assert 'value="${escapeAttr(s)}"' in question_detail_js
 
 
 def test_notify_daily_endpoints() -> None:
@@ -1357,6 +1420,124 @@ def test_backup_options() -> None:
             export_path.unlink(missing_ok=True)
 
 
+def test_backup_restore_path_guards() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        data_dir = root / "data"
+        uploads = data_dir / "uploads"
+        pages = data_dir / "pages"
+        db_path = data_dir / "gaoshu_demo.sqlite3"
+        uploads.mkdir(parents=True)
+        pages.mkdir(parents=True)
+        sqlite3.connect(db_path).close()
+        (uploads / "old.txt").write_text("old", encoding="utf-8")
+
+        archive_buffer = io.BytesIO()
+        with zipfile.ZipFile(archive_buffer, "w") as archive:
+            archive.writestr("manifest.json", json.dumps({"includes": ["database", "uploads"]}))
+            archive.write(db_path, "data/gaoshu_demo.sqlite3")
+            archive.writestr("data/uploads/new.txt", "new")
+        zip_bytes = archive_buffer.getvalue()
+
+        def ensure_dirs() -> None:
+            uploads.mkdir(parents=True, exist_ok=True)
+            pages.mkdir(parents=True, exist_ok=True)
+
+        try:
+            sakura_backup.restore_backup_zip(
+                b"not-a-zip",
+                root=root,
+                db_path=db_path,
+                folders={"uploads": uploads, "pages": pages},
+                ensure_dirs=ensure_dirs,
+                init_db=lambda: None,
+            )
+            raise AssertionError("invalid migration archive should be rejected")
+        except zipfile.BadZipFile:
+            pass
+        assert not (data_dir / "migration_backups").exists()
+        assert (uploads / "old.txt").read_text(encoding="utf-8") == "old"
+
+        result = sakura_backup.restore_backup_zip(
+            zip_bytes,
+            root=root,
+            db_path=db_path,
+            folders={"uploads": uploads, "pages": pages},
+            ensure_dirs=ensure_dirs,
+            init_db=lambda: None,
+        )
+        assert (uploads / "new.txt").read_text(encoding="utf-8") == "new"
+        assert not (uploads / "old.txt").exists()
+        assert Path(result["backup_path"]).relative_to(data_dir / "migration_backups")
+        assert result["backup_cleanup"]["kept"] == sakura_backup.DEFAULT_MIGRATION_BACKUP_KEEP
+        assert not (root / "migration_backups").exists()
+
+        backup_root = data_dir / "migration_backups"
+        for index in range(4):
+            old_backup = backup_root / f"before_restore_old_{index}"
+            old_backup.mkdir()
+            (old_backup / "db.sqlite3").write_text(str(index), encoding="utf-8")
+            os.utime(old_backup, (index, index))
+        cleanup = sakura_backup.cleanup_migration_backups(root, keep=2)
+        assert cleanup["removed"] == 3
+        assert not (backup_root / "before_restore_old_0").exists()
+        assert not (backup_root / "before_restore_old_1").exists()
+        assert not (backup_root / "before_restore_old_2").exists()
+        assert (backup_root / "before_restore_old_3").exists()
+
+        protected_backup = backup_root / "before_restore_protected"
+        newer_backup = backup_root / "before_restore_newer"
+        extra_backup = backup_root / "before_restore_extra"
+        for timestamp, path in (
+            (1, protected_backup),
+            (4102444800, newer_backup),
+            (4102444700, extra_backup),
+        ):
+            path.mkdir(exist_ok=True)
+            (path / "db.sqlite3").write_text(path.name, encoding="utf-8")
+            os.utime(path, (timestamp, timestamp))
+        protected_cleanup = sakura_backup.cleanup_migration_backups(root, keep=2, protected=protected_backup)
+        assert protected_cleanup["removed"] >= 1
+        assert protected_backup.exists()
+        assert newer_backup.exists()
+        assert not extra_backup.exists()
+
+        outside = root / "outside-target"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("keep", encoding="utf-8")
+        try:
+            sakura_backup.restore_backup_zip(
+                zip_bytes,
+                root=root,
+                db_path=db_path,
+                folders={"uploads": outside},
+                ensure_dirs=ensure_dirs,
+                init_db=lambda: None,
+            )
+            raise AssertionError("restore accepted an outside data directory")
+        except ValueError:
+            pass
+        assert (outside / "keep.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_migration_upload_cleanup() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        upload_dir = Path(tmp) / "migration_uploads"
+        upload_dir.mkdir()
+        old_zip = upload_dir / "old.zip"
+        fresh_zip = upload_dir / "fresh.zip"
+        note = upload_dir / "note.txt"
+        for path in (old_zip, fresh_zip, note):
+            path.write_text(path.name, encoding="utf-8")
+        os.utime(old_zip, (1, 1))
+        os.utime(note, (1, 1))
+        removed = sakura_migration.cleanup_stale_uploads(upload_dir, max_age_seconds=60)
+        assert removed == 1
+        assert not old_zip.exists()
+        assert fresh_zip.exists()
+        assert note.exists()
+
+
 def test_teacher_turn_persistence() -> None:
     calls = []
 
@@ -1599,6 +1780,8 @@ def main() -> None:
     test_question_update_helper()
     test_scanned_textbook_requires_image_or_vision()
     test_backup_options()
+    test_backup_restore_path_guards()
+    test_migration_upload_cleanup()
     test_teacher_turn_persistence()
     test_real_import_pdf_smoke()
     print("smoke_refactor_ok")

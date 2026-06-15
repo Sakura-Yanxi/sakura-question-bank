@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import tempfile
@@ -8,10 +9,74 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+DEFAULT_MIGRATION_BACKUP_KEEP = 3
+MAX_MIGRATION_BACKUP_KEEP = 20
+MIGRATION_BACKUP_KEEP_ENV = "SAKURA_MIGRATION_BACKUP_KEEP"
+
 
 def _query_first(query: dict, key: str, default: str = "") -> str:
     values = query.get(key) or [default]
     return str(values[0] if values else default)
+
+
+def _migration_backup_keep_count() -> int:
+    raw = os.getenv(MIGRATION_BACKUP_KEEP_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MIGRATION_BACKUP_KEEP
+    try:
+        keep = int(raw)
+    except ValueError:
+        return DEFAULT_MIGRATION_BACKUP_KEEP
+    return max(1, min(keep, MAX_MIGRATION_BACKUP_KEEP))
+
+
+def _path_size(path: Path) -> int:
+    if path.is_dir():
+        return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+    if path.exists():
+        return path.stat().st_size
+    return 0
+
+
+def cleanup_migration_backups(root: Path, *, keep: int | None = None, protected: Path | None = None) -> dict:
+    backup_root = Path(root).resolve() / "data" / "migration_backups"
+    keep_count = keep if keep is not None else _migration_backup_keep_count()
+    keep_count = max(1, min(int(keep_count), MAX_MIGRATION_BACKUP_KEEP))
+    if not backup_root.exists():
+        return {"removed": 0, "freed_bytes": 0, "kept": keep_count}
+    protected_path = protected.resolve() if protected else None
+    candidates = [
+        path
+        for path in backup_root.glob("before_restore_*")
+        if path.exists() and (protected_path is None or path.resolve() != protected_path)
+    ]
+    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    keep_candidates = keep_count if protected_path is None else max(0, keep_count - 1)
+    removed = 0
+    freed_bytes = 0
+    for path in candidates[keep_candidates:]:
+        try:
+            freed_bytes += _path_size(path)
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return {"removed": removed, "freed_bytes": freed_bytes, "kept": keep_count}
+
+
+def _resolve_data_child(root: Path, target: Path) -> Path:
+    data_root = (root / "data").resolve()
+    resolved = Path(target).resolve()
+    try:
+        relative = resolved.relative_to(data_root)
+    except ValueError as exc:
+        raise ValueError("Backup restore target is outside the data directory.") from exc
+    if not relative.parts:
+        raise ValueError("Backup restore target cannot be the data directory itself.")
+    return resolved
 
 
 def export_options_from_query(query: dict, now: datetime | None = None) -> dict:
@@ -330,19 +395,17 @@ def restore_backup_zip(
     init_db,
 ) -> dict:
     """Restore a Sakura migration archive and keep a rollback copy of current data."""
+    root = Path(root).resolve()
+    data_root = (root / "data").resolve()
+    db_path = Path(db_path).resolve()
+    try:
+        db_relative = db_path.relative_to(data_root)
+    except ValueError as exc:
+        raise ValueError("Backup restore database path is outside the data directory.") from exc
+    if not db_relative.parts:
+        raise ValueError("Backup restore database path cannot be the data directory itself.")
+    folders = {name: _resolve_data_child(root, folder) for name, folder in folders.items()}
     print(f"[migration] restore start: {len(zip_bytes)} bytes", flush=True)
-    backup_root = root / "migration_backups"
-    backup_root.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    current_backup = backup_root / f"before_restore_{stamp}"
-    current_backup.mkdir(parents=True, exist_ok=True)
-
-    if db_path.exists():
-        shutil.copy2(db_path, current_backup / db_path.name)
-    for folder in folders.values():
-        if folder.exists():
-            shutil.copytree(folder, current_backup / folder.name, dirs_exist_ok=True)
-
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         archive_path = tmp_path / "backup.zip"
@@ -368,6 +431,17 @@ def restore_backup_zip(
             print("[migration] archive extracted", flush=True)
 
         extracted = tmp_path / "extract" / "data"
+        backup_root = data_root / "migration_backups"
+        backup_root.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        current_backup = backup_root / f"before_restore_{stamp}"
+        current_backup.mkdir(parents=True, exist_ok=True)
+        if db_path.exists():
+            shutil.copy2(db_path, current_backup / db_path.name)
+        for folder in folders.values():
+            if folder.exists():
+                shutil.copytree(folder, current_backup / folder.name, dirs_exist_ok=True)
+
         ensure_dirs()
         shutil.copy2(extracted / "gaoshu_demo.sqlite3", db_path)
         print("[migration] database restored", flush=True)
@@ -390,4 +464,5 @@ def restore_backup_zip(
     )
     print(f"[migration] asset paths re-anchored: {rewritten}", flush=True)
     print("[migration] restore done", flush=True)
-    return {"ok": True, "backup_path": str(current_backup), "rewritten_paths": rewritten}
+    cleanup = cleanup_migration_backups(root, protected=current_backup)
+    return {"ok": True, "backup_path": str(current_backup), "rewritten_paths": rewritten, "backup_cleanup": cleanup}

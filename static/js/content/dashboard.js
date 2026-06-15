@@ -37,7 +37,7 @@
     const documentFilter = $("#dashboardDocumentFilter");
     if (!subjectFilter || !documentFilter) return;
     subjectFilter.innerHTML = `<option value="">请选择科目</option>${state.subjects
-      .map((subject) => `<option ${subject === state.dashboardSubject ? "selected" : ""}>${escapeHtml(subject)}</option>`)
+      .map((subject) => `<option value="${escapeAttr(subject)}" ${subject === state.dashboardSubject ? "selected" : ""}>${escapeHtml(subject)}</option>`)
       .join("")}`;
     const docs = dashboardDocuments().filter((doc) => !state.dashboardSubject || doc.subject === state.dashboardSubject);
     documentFilter.innerHTML = `<option value="">请选择做题本</option>${docs

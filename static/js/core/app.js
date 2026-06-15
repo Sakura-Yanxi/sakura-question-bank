@@ -252,10 +252,10 @@ function renderAll() {
 }
 
 function renderDocumentFilters() {
-  $("#subjectSuggestions").innerHTML = state.subjects.map((subject) => `<option value="${subject}"></option>`).join("");
+  $("#subjectSuggestions").innerHTML = state.subjects.map((subject) => `<option value="${escapeAttr(subject)}"></option>`).join("");
   const chapterDocs = state.documents.filter((doc) => documentKind(doc) !== "模拟卷");
   $("#statsDocumentSelect").innerHTML = chapterDocs
-    .map((doc) => `<option value="${doc.id}">${documentLabel(doc)}</option>`)
+    .map((doc) => `<option value="${escapeAttr(doc.id)}">${escapeHtml(documentLabel(doc))}</option>`)
     .join("");
 }
 
@@ -315,7 +315,7 @@ function setSelectOptions(selector, values, allLabel, current = "") {
   const safeValues = (values || []).filter((value) => value !== null && value !== undefined && String(value).trim() !== "");
   const hasCurrent = current && safeValues.some((value) => String(value) === String(current));
   const nextValue = hasCurrent ? current : "";
-  el.innerHTML = `<option value="">${allLabel}</option>${safeValues
+  el.innerHTML = `<option value="">${escapeHtml(allLabel)}</option>${safeValues
     .map((value) => `<option value="${escapeAttr(value)}" ${String(value) === String(nextValue) ? "selected" : ""}>${escapeHtml(value)}</option>`)
     .join("")}`;
   el.value = nextValue;

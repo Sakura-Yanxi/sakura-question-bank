@@ -8,6 +8,7 @@ from pathlib import Path
 from sakura.system import backup as sakura_backup
 
 
+STALE_UPLOAD_SECONDS = 24 * 3600
 _JOBS: dict[str, dict] = {}
 _LOCK = threading.Lock()
 
@@ -23,6 +24,23 @@ def get_job(job_id: str) -> dict | None:
     with _LOCK:
         job = _JOBS.get(job_id)
         return dict(job) if job else None
+
+
+def cleanup_stale_uploads(upload_dir: Path, *, max_age_seconds: int = STALE_UPLOAD_SECONDS) -> int:
+    if not upload_dir.exists():
+        return 0
+    now = datetime.now().timestamp()
+    removed = 0
+    for path in upload_dir.glob("*.zip"):
+        try:
+            age = now - path.stat().st_mtime
+            if age < max_age_seconds:
+                continue
+            path.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def run_import_job(

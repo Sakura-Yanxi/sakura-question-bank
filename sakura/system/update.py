@@ -245,6 +245,10 @@ def _backup_keep_count() -> int:
 def _cleanup_empty_parents(path: Path, stop_at: Path) -> None:
     current = path
     stop_at = stop_at.resolve()
+    try:
+        current.resolve().relative_to(stop_at)
+    except ValueError:
+        return
     while current.exists():
         try:
             if current.resolve() == stop_at:

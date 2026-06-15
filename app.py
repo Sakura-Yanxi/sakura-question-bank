@@ -1627,6 +1627,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             if route:
                 return self.dispatch_route(route)
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
+        except sakura_http.PayloadTooLargeError as exc:
+            return json_response(self, {"error": str(exc)}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
         except sakura_http.BadRequestError as exc:
             return json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         except Exception as exc:
@@ -2681,9 +2683,12 @@ class DemoHandler(BaseHTTPRequestHandler):
         filename = sakura_http.uploaded_filename(file_item)
         if file_item is None or not filename:
             return json_response(self, {"error": "请上传 Sakura 迁移 ZIP 包。"}, 400)
+        if not sakura_http.uploaded_file_has_suffix(file_item, ".zip"):
+            return json_response(self, {"error": "迁移导入只支持 .zip 备份包。"}, 400)
         job_id = uuid.uuid4().hex
         upload_dir = DATA_DIR / "migration_uploads"
         upload_dir.mkdir(parents=True, exist_ok=True)
+        sakura_migration.cleanup_stale_uploads(upload_dir)
         upload_path = upload_dir / f"{job_id}.zip"
         with upload_path.open("wb") as out:
             shutil.copyfileobj(file_item.file, out, length=1024 * 1024)

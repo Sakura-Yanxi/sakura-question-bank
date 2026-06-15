@@ -155,7 +155,7 @@
           <label>
             状态
             <select id="detailStatus">
-              ${statuses.map((s) => `<option ${s === currentStatus ? "selected" : ""}>${s}</option>`).join("")}
+              ${statuses.map((s) => `<option value="${escapeAttr(s)}" ${s === currentStatus ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
             </select>
           </label>
           <div class="memory-panel">

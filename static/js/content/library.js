@@ -66,16 +66,16 @@
       .map((doc) => `<option value="${escapeAttr(doc.id)}" ${doc.id === state.documentId ? "selected" : ""}>${escapeHtml(documentLabel(doc))}</option>`)
       .join("")}`;
     $("#subjectFilter").innerHTML = `<option value="">请选择科目</option>${state.subjects
-      .map((subject) => `<option ${subject === state.subject ? "selected" : ""}>${escapeHtml(subject)}</option>`)
+      .map((subject) => `<option value="${escapeAttr(subject)}" ${subject === state.subject ? "selected" : ""}>${escapeHtml(subject)}</option>`)
       .join("")}`;
     if (scopedReady) {
       unlockSelect("#categoryFilter");
       unlockSelect("#chapterFilter");
       $("#categoryFilter").innerHTML = `<option value="">全部知识点</option>${state.categories
-        .map((category) => `<option ${category === state.category ? "selected" : ""}>${escapeHtml(category)}</option>`)
+        .map((category) => `<option value="${escapeAttr(category)}" ${category === state.category ? "selected" : ""}>${escapeHtml(category)}</option>`)
         .join("")}`;
       $("#chapterFilter").innerHTML = `<option value="">全部章节</option>${state.chapters
-        .map((chapter) => `<option ${chapter === state.chapter ? "selected" : ""}>${escapeHtml(chapter)}</option>`)
+        .map((chapter) => `<option value="${escapeAttr(chapter)}" ${chapter === state.chapter ? "selected" : ""}>${escapeHtml(chapter)}</option>`)
         .join("")}`;
     } else {
       state.category = "";
