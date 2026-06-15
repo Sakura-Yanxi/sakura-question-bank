@@ -77,6 +77,9 @@ PAGE_DIR = DATA_DIR / "pages"
 STATIC_DIR = ROOT / "static"
 DB_PATH = DATA_DIR / "gaoshu_demo.sqlite3"
 
+AUTO_RESTART_AFTER_UPDATE_ENV = "SAKURA_AUTO_RESTART_AFTER_UPDATE"
+UPDATE_RESTART_DELAY_SECONDS = 2.5
+
 LOCAL_SETTINGS_ENV_KEYS = {
     "APP_PUBLIC_URL",
     "EMAIL_ENABLED",
@@ -375,6 +378,54 @@ def text_response(handler: BaseHTTPRequestHandler, text: str, status: int = 200,
 
 def redirect_response(handler: BaseHTTPRequestHandler, location: str, status: int = HTTPStatus.FOUND) -> None:
     sakura_http.redirect_response(handler, location, status)
+
+
+def _env_flag(value: str | None) -> bool | None:
+    normalized = (value or "").strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _running_under_systemd() -> bool:
+    if os.name == "nt":
+        return False
+    configured = _env_flag(os.getenv(AUTO_RESTART_AFTER_UPDATE_ENV))
+    if configured is not None:
+        return configured
+    if os.getenv("INVOCATION_ID") or os.getenv("JOURNAL_STREAM"):
+        return True
+    try:
+        parent_comm = Path(f"/proc/{os.getppid()}/comm").read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    return parent_comm == "systemd"
+
+
+def schedule_restart_after_update() -> dict:
+    """Exit after the response so process supervisors can start the updated code."""
+    if not _running_under_systemd():
+        return {
+            "restart_scheduled": False,
+            "restart_mode": "manual",
+            "restart_message": "更新已完成；请重新启动 Sakura 服务后生效。",
+        }
+
+    def _exit_for_supervisor_restart() -> None:
+        print("[sakura update] exiting current process so systemd can start the updated code.", flush=True)
+        os._exit(0)
+
+    timer = threading.Timer(UPDATE_RESTART_DELAY_SECONDS, _exit_for_supervisor_restart)
+    timer.daemon = True
+    timer.start()
+    return {
+        "restart_scheduled": True,
+        "restart_mode": "systemd",
+        "restart_delay_seconds": UPDATE_RESTART_DELAY_SECONDS,
+        "restart_message": "更新已完成；服务器正在自动重启 Sakura 服务。",
+    }
 
 
 def demo_mode_enabled() -> bool:
@@ -2095,6 +2146,8 @@ class DemoHandler(BaseHTTPRequestHandler):
         if demo_mode_enabled():
             return json_response(self, {"ok": False, "error": "演示模式不允许自动更新。"}, 403)
         result = sakura_update.apply_update(ROOT, APP_VERSION, UPDATE_REPO)
+        if result.get("ok") and result.get("restart_required"):
+            result.update(schedule_restart_after_update())
         return json_response(self, result, 200 if result.get("ok") else 400)
 
     # === 学习档案 ===

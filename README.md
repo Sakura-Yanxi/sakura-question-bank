@@ -8,7 +8,7 @@ Sakura 做题集是一个本地优先的个人学习工作台，用来管理 PDF
 
 ## 当前状态
 
-- 当前版本：`v1.0.5`
+- 当前版本：`v1.0.6`
 - 项目地址：[Sakura-Yanxi/sakura-question-bank](https://github.com/Sakura-Yanxi/sakura-question-bank)
 - 发布页：[GitHub Releases](https://github.com/Sakura-Yanxi/sakura-question-bank/releases)
 - 更新方式：Git 用户运行 `update.bat` / `update.sh`；下载压缩包的用户覆盖代码文件，并保留自己的 `data/` 和 `.env`。
@@ -245,6 +245,8 @@ bash update.sh
 ```
 
 脚本同样会保留 `data/`、`.env`、`.venv` 和 `docs/software_copyright/`。这是非 Git 用户最省心的升级方式。
+
+如果是在 systemd 托管的服务器上通过页面内“版本管理”更新，更新完成后服务会自动重启并加载新版本；普通本地窗口运行时，更新后仍需要手动关闭并重新打开 Sakura。
 
 如果你手里的旧版本还没有这个轻量更新器，需要先手动升级到包含新 `update.bat` / `update.sh` 的版本一次；之后再更新就可以直接用脚本或页面一键更新。
 

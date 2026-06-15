@@ -19,6 +19,13 @@
   }
 
   function formatReleaseStatus(info) {
+    if (info?.restart_scheduled) {
+      return {
+        label: "正在重启",
+        text: "更新文件已写入，服务器正在自动重启 Sakura 服务；请等待几秒后刷新页面。",
+        tone: "warning",
+      };
+    }
     if (info?.restart_required) {
       return {
         label: "等待重启",
@@ -126,13 +133,17 @@
         ...info,
         auto_update: result.auto_update || info.auto_update,
         latest: result.info?.latest || info.latest,
+        restart_scheduled: Boolean(result.restart_scheduled),
         restart_required: Boolean(result.restart_required),
         update_available: result.restart_required ? false : info.update_available,
       };
       renderVersionPanel(nextInfo, `${result.message || "更新完成。"}${stepText ? ` ${stepText}` : ""}`);
       const banner = document.getElementById("updateBanner");
       if (banner) {
-        banner.innerHTML = `<span class="update-banner-text">更新已完成，请关闭并重新启动 Sakura 服务后生效。</span>`;
+        const doneText = result.restart_scheduled
+          ? "更新已完成，服务器正在自动重启；请等待几秒后刷新页面。"
+          : "更新已完成，请关闭并重新启动 Sakura 服务后生效。";
+        banner.innerHTML = `<span class="update-banner-text">${escapeHtml(doneText)}</span>`;
         banner.classList.remove("hidden");
       }
     } catch (error) {
