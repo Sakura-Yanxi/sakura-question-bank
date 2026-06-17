@@ -1,50 +1,160 @@
 (function () {
   let isBound = false;
+  const DAILY_COLLAPSE_STORAGE_KEY = "sakura.daily.collapsedSections";
+
+  function dailyCollapsedState() {
+    try {
+      return JSON.parse(localStorage.getItem(DAILY_COLLAPSE_STORAGE_KEY) || "{}") || {};
+    } catch {
+      return {};
+    }
+  }
+
+  function isDailySectionCollapsed(key) {
+    return Boolean(dailyCollapsedState()[key]);
+  }
+
+  function setDailySectionCollapsed(key, collapsed) {
+    const state = dailyCollapsedState();
+    state[key] = Boolean(collapsed);
+    try {
+      localStorage.setItem(DAILY_COLLAPSE_STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // Ignore storage failures; the current toggle still updates the page.
+    }
+  }
+
+  function updateDailySectionCollapsed(section, collapsed) {
+    if (!section) return;
+    section.classList.toggle("collapsed", collapsed);
+    const btn = section.querySelector("[data-daily-collapse]");
+    if (btn) {
+      btn.setAttribute("aria-expanded", String(!collapsed));
+      const icon = btn.querySelector("i");
+      if (icon) icon.setAttribute("data-lucide", collapsed ? "chevron-right" : "chevron-down");
+    }
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function dailyQuestionCard(q) {
+    const kind = questionKind(q);
+    const quickStatus = q.quick_status || "";
+    return `
+      <article class="question-card">
+        <div class="thumb" data-open="${escapeAttr(q.id)}">
+          <img src="${escapeAttr(q.image_url)}" alt="第 ${q.page_number} 页题目" loading="lazy" />
+        </div>
+        <div class="card-body">
+          <div class="meta">
+            <span>${escapeHtml(q.document_title || q.filename || "做题本")} · 第 ${q.page_number} 页</span>
+            <span class="tag status ${statusClass(q.status)}">${escapeHtml(q.status)}</span>
+          </div>
+          <strong>${escapeHtml(q.category || "未识别知识点")}</strong>
+          <span class="tag">${escapeHtml(q.chapter || "未识别章节")}</span>
+          <span class="tag kind ${kind === "模拟卷" ? "mock" : "paper"}">${escapeHtml(kind)}</span>
+          ${q.daily_kind === "foundation" ? '<span class="tag foundation">前置基础</span>' : ""}
+          ${q.batch_position ? `<span class="tag pushed">推送 #${escapeHtml(q.batch_position)}</span>` : ""}
+          ${quickStatus ? `<span class="tag status ${statusClass(quickStatus)}">已回填：${escapeHtml(quickStatus)}</span>` : ""}
+          ${reviewTag(q)}
+          <div class="actions">
+            <button data-status="做对" data-id="${escapeAttr(q.id)}">做对</button>
+            <button data-status="做错" data-id="${escapeAttr(q.id)}">做错</button>
+            <button class="ghost" data-open="${escapeAttr(q.id)}">详情</button>
+          </div>
+        </div>
+      </article>`;
+  }
+
+  function dailyQuestionGrid(questions, emptyText) {
+    if (!questions.length) return `<p class="empty-note">${escapeHtml(emptyText)}</p>`;
+    return `<div class="question-grid mini-grid">${questions.map(dailyQuestionCard).join("")}</div>`;
+  }
+
+  function renderDailyGroups(groups) {
+    if (!groups.length) return `<p class="empty-note">暂无艾宾浩斯练习。先上传做题本，或把题目标记为做错、半会、需复习。</p>`;
+    return groups
+      .map((group) => {
+        const questions = group.questions || [];
+        return `
+          <section class="daily-group">
+            <div class="daily-group-head">
+              <h3>${escapeHtml(group.title)}</h3>
+              <span>${questions.length} 题</span>
+            </div>
+            ${dailyQuestionGrid(questions, "这组暂时没有题目。")}
+          </section>`;
+      })
+      .join("");
+  }
+
+  function renderPushBatch(batchPayload) {
+    if (!batchPayload || !batchPayload.batch) {
+      return `<p class="empty-note">今天还没有生成过推送批次。到“提醒打卡”里测试每日推送，或等待定时推送后这里会自动出现。</p>`;
+    }
+    const batch = batchPayload.batch;
+    const questions = batchPayload.questions || [];
+    const doneCount = Number(batch.done_count || 0);
+    const total = Number(batch.question_count || questions.length || 0);
+    const dayLabel = batchPayload.is_today ? "今日推送" : `最近一次有题目的推送 · ${batch.day || "未记录日期"}`;
+    return `
+      <div class="daily-batch-meta">
+        <div>
+          <strong>${escapeHtml(dayLabel)}</strong>
+          <span>${escapeHtml(batch.created_at || "")} · 已回填 ${doneCount}/${total}</span>
+        </div>
+        <a class="ghost daily-practice-link" href="/practice/${escapeAttr(batch.id)}" target="_blank" rel="noopener">
+          <i data-lucide="external-link"></i>打开回填页
+        </a>
+      </div>
+      ${dailyQuestionGrid(questions, "这个推送批次没有题目。")}`;
+  }
+
+  function dailySection({ key, title, subtitle, count, body }) {
+    const collapsed = isDailySectionCollapsed(key);
+    const bodyId = `daily-section-body-${key}`;
+    return `
+      <section class="daily-collapsible ${collapsed ? "collapsed" : ""}" data-daily-section="${escapeAttr(key)}">
+        <div class="daily-section-head">
+          <div>
+            <h3>${escapeHtml(title)}</h3>
+            <p>${escapeHtml(subtitle || "")}</p>
+          </div>
+          <div class="daily-section-tools">
+            <span>${count} 题</span>
+            <button class="ghost daily-collapse-btn" type="button" data-daily-collapse="${escapeAttr(key)}" aria-expanded="${String(!collapsed)}" aria-controls="${bodyId}" title="折叠/展开">
+              <i data-lucide="${collapsed ? "chevron-right" : "chevron-down"}"></i>
+            </button>
+          </div>
+        </div>
+        <div id="${bodyId}" class="daily-section-body">
+          ${body}
+        </div>
+      </section>`;
+  }
 
   async function loadDaily() {
     if ($("#dailyRuleList")) await loadDailyRules();
     const data = await api("/api/daily");
+    const groups = data.groups || [];
+    const pushQuestions = data.latest_push_batch?.questions || [];
     $("#dailyMessage").textContent = `${data.date} · ${data.message}`;
-    $("#dailyGrid").innerHTML =
-      (data.groups || [])
-        .map(
-          (group) => `
-          <section class="daily-group">
-            <div class="daily-group-head">
-              <h3>${escapeHtml(group.title)}</h3>
-              <span>${group.questions.length} 题</span>
-            </div>
-            <div class="question-grid mini-grid">
-              ${group.questions
-                .map(
-                  (q) => `
-                  <article class="question-card">
-                    <div class="thumb" data-open="${escapeAttr(q.id)}">
-                      <img src="${q.image_url}" alt="第 ${q.page_number} 页题目" loading="lazy" />
-                    </div>
-                    <div class="card-body">
-                      <div class="meta">
-                        <span>${escapeHtml(q.document_title || q.filename || "做题本")} · 第 ${q.page_number} 页</span>
-                        <span class="tag status ${statusClass(q.status)}">${escapeHtml(q.status)}</span>
-                      </div>
-                      <strong>${escapeHtml(q.category)}</strong>
-                      <span class="tag">${escapeHtml(q.chapter || "未识别章节")}</span>
-                      <span class="tag kind ${questionKind(q) === "模拟卷" ? "mock" : "paper"}">${escapeHtml(questionKind(q))}</span>
-                      ${q.daily_kind === "foundation" ? '<span class="tag foundation">前置基础</span>' : ""}
-                      ${reviewTag(q)}
-                      <div class="actions">
-                        <button data-status="做对" data-id="${escapeAttr(q.id)}">做对</button>
-                        <button data-status="做错" data-id="${escapeAttr(q.id)}">做错</button>
-                        <button class="ghost" data-open="${escapeAttr(q.id)}">详情</button>
-                      </div>
-                    </div>
-                  </article>`
-                )
-                .join("")}
-            </div>
-          </section>`
-        )
-        .join("") || "<p>暂无每日练习。先上传做题本或标记错题。</p>";
+    $("#dailyGrid").innerHTML = [
+      dailySection({
+        key: "ebbinghaus",
+        title: "艾宾浩斯 / 当前练习队列",
+        subtitle: "按到期复习、自定义每日规则和薄弱章节生成。",
+        count: groups.reduce((sum, group) => sum + (group.questions || []).length, 0),
+        body: renderDailyGroups(groups),
+      }),
+      dailySection({
+        key: "pushed",
+        title: data.latest_push_batch?.is_today ? "今日已推送错题" : "最近推送错题",
+        subtitle: "优先显示今天的推送；今天没有题目时，自动显示最近一次有题目的推送。",
+        count: pushQuestions.length,
+        body: renderPushBatch(data.latest_push_batch),
+      }),
+    ].join("");
+    if (window.lucide) lucide.createIcons();
   }
 
   function dailyRuleStatusLabel(value) {
@@ -217,6 +327,14 @@
     on("#dailyRuleChapter", "change", updateDailyRuleName);
     on("#dailyRuleStatus", "change", updateDailyRuleName);
     on("#dailyRuleLimit", "input", updateDailyRuleName);
+    on("#dailyGrid", "click", (event) => {
+      const btn = event.target.closest("[data-daily-collapse]");
+      if (!btn) return;
+      const key = btn.dataset.dailyCollapse;
+      const collapsed = btn.getAttribute("aria-expanded") === "true";
+      setDailySectionCollapsed(key, collapsed);
+      updateDailySectionCollapsed(btn.closest("[data-daily-section]"), collapsed);
+    });
     on("#dailyRuleList", "change", async (event) => {
       const input = event.target.closest("[data-daily-rule-enabled]");
       if (!input) return;

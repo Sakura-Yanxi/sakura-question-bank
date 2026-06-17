@@ -446,6 +446,30 @@ def practice_batch_payload(conn, batch_id: str, row_to_dict) -> dict | None:
     return {"batch": batch_dict, "questions": questions}
 
 
+def latest_daily_push_batch_payload(conn, row_to_dict) -> dict | None:
+    today = date.today().isoformat()
+    batch = conn.execute(
+        """
+        SELECT b.id, b.day
+        FROM practice_batches b
+        JOIN practice_batch_items i ON i.batch_id = b.id
+        WHERE b.source IN ('daily_push', 'push')
+        GROUP BY b.id
+        ORDER BY
+            CASE WHEN b.day = ? THEN 0 ELSE 1 END,
+            b.created_at DESC
+        LIMIT 1
+        """,
+        (today,),
+    ).fetchone()
+    if not batch:
+        return None
+    payload = practice_batch_payload(conn, batch["id"], row_to_dict)
+    if payload and payload.get("batch"):
+        payload["is_today"] = payload["batch"].get("day") == today
+    return payload
+
+
 def apply_practice_feedback(
     conn,
     batch_id: str,

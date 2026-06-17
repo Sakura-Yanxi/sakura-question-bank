@@ -1341,6 +1341,10 @@ def practice_batch_payload(conn: sqlite3.Connection, batch_id: str) -> dict | No
     return sakura_daily.practice_batch_payload(conn, batch_id, row_to_dict)
 
 
+def latest_daily_push_batch_payload(conn: sqlite3.Connection) -> dict | None:
+    return sakura_daily.latest_daily_push_batch_payload(conn, row_to_dict)
+
+
 def apply_practice_feedback(conn: sqlite3.Connection, batch_id: str, q_id: str, status: str, note: str = "") -> dict:
     def insert_daily_review_note(db, question_id, **kwargs):
         return sakura_questions.insert_question_review_note(
@@ -2738,6 +2742,7 @@ class DemoHandler(BaseHTTPRequestHandler):
     def handle_daily(self) -> None:
         with connect() as conn:
             payload = build_daily_payload(conn)
+            payload["latest_push_batch"] = latest_daily_push_batch_payload(conn)
         return json_response(self, payload)
 
 
