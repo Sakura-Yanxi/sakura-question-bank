@@ -8,7 +8,7 @@ Sakura 做题集是一个本地优先的个人学习工作台，用来管理 PDF
 
 ## 当前状态
 
-- 当前版本：`v1.0.8`
+- 当前版本：`v1.0.9`
 - 项目地址：[Sakura-Yanxi/sakura-question-bank](https://github.com/Sakura-Yanxi/sakura-question-bank)
 - 发布页：[GitHub Releases](https://github.com/Sakura-Yanxi/sakura-question-bank/releases)
 - 更新方式：Git 用户运行 `update.bat` / `update.sh`；下载压缩包的用户覆盖代码文件，并保留自己的 `data/` 和 `.env`。
