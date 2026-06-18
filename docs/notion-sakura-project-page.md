@@ -272,147 +272,480 @@ python app.py
 http://127.0.0.1:8000
 ```
 
-## 云端 / 服务器部署教程总入口
+## 云端 / 服务器部署保姆级教程
 
-这一节只放在 Notion 项目页里，用来给完全没接触过服务器的新手看。后面如果还有其他项目，可以继续在这里新增“项目二”“项目三”，每个项目各自放一套部署步骤。
+这一节是 Notion 里的“服务器部署”大分支。后面如果还有项目二、项目三，可以继续在这里追加，每个项目放一套独立教程。
 
-服务器部署的核心思路是：
-
-```text
-本地电脑负责写代码和备份数据
-GitHub 负责保存公开代码
-云服务器负责 24 小时运行 Sakura
-Nginx 负责把公网访问转发到 Sakura
-systemd 负责开机自启和异常后重启
-```
-
-### 免费 / 低成本服务器参考
-
-如果你还没有服务器，可以先看这个视频了解学生党怎么从 0 到 1 拿一台阿里云服务器，并部署第一个网站：
+如果你还没有服务器，可以先看这个学生党白嫖 / 低成本上云参考视频：
 
 【从0到1：学生党如何免费拿阿里云服务器，并部署第一个网站-哔哩哔哩】
 https://b23.tv/Z8bBgG3
 
-提醒：云厂商活动、免费额度和学生认证规则会变化，实际以阿里云页面显示为准。视频用于理解流程，不要把自己的密码、Key、Webhook 或真实学习资料公开出去。
+提醒：云厂商活动、免费额度和学生认证规则可能变化，实际以阿里云页面为准。不要把自己的密码、API Key、Webhook、真实学习资料、题库或教材截图公开出去。
 
-### 项目一：Sakura 做题集部署到 Ubuntu 服务器
+## 项目一：Sakura 做题集从本地部署到云端服务器
 
-适合场景：
 
-- 想让电脑、iPad、手机都能通过公网访问同一个 Sakura。
-- 想让每日练习、提醒、推送和版本更新在服务器上长期运行。
-- 想给朋友或老师看 demo，但不想每次都打开自己电脑。
+这份教程写给第一次接触 Python 项目部署的同学。你不需要提前懂后端、Linux、Nginx 或 systemd，只要按步骤做，就可以把本地能运行的 Sakura 做题集部署到一台 Ubuntu 云服务器上，让电脑和手机都能通过公网访问。
 
-不建议的场景：
+如果你是第一次部署，建议先完整读完“0. 先理解项目由什么组成”和“17. 安全建议”，再开始复制命令。部署不是只把网页跑起来，还包括密码、数据、API Key、备份和版权边界。
 
-- 没有设置登录密码就直接放公网。
-- 把真实教材、试卷、题库、API Key 放到公开演示站。
-- 用轻量服务器长期跑多人高并发或大量 PDF 处理。
+本教程默认你使用：
 
-### 1. 准备服务器
+- 本地电脑：Windows
+- 服务器系统：Ubuntu 22.04 / 24.04
+- 项目目录：`/opt/sakura-study`
+- Python 版本：3.11 或 3.12
+- Sakura 服务端口：`8000`
+- 对外访问方式：Nginx 反向代理到 Python 服务
+
+如果你只是给朋友看一个小样例，可以不迁移真实数据，只部署程序和少量演示文件。如果你要把自己的真实学习数据搬到云端，请认真看“数据迁移与安全”部分。
+
+### 开始前先确认
+
+#### 适合这份教程的人
+
+- 你能打开 Windows PowerShell，但不熟悉命令行。
+- 你已经有 Sakura 做题集项目代码，想先本地跑起来。
+- 你希望把它部署到一台 Ubuntu 云服务器上，用浏览器或手机访问。
+- 你愿意按步骤检查密码、密钥、备份和公网安全。
+
+#### 你需要准备什么
+
+```text
+本地电脑：Windows 10 / 11
+本地工具：Python、Git、PowerShell、浏览器
+云服务器：Ubuntu 22.04 / 24.04
+可选账号：GitHub、域名服务商、DeepSeek 或其他讲解接口、企业微信 / PushPlus / 邮箱
+```
+
+如果暂时没有域名，也可以先用服务器公网 IP 访问；如果暂时没有 AI Key，也可以先使用题库、错题、每日练习、导入和导出功能。
+
+#### 新手最容易踩的坑
+
+- 不要把 `.env` 上传到 GitHub。
+- 不要把 `data/` 上传到 GitHub。
+- 不要在截图里露出 API Key、Webhook、邮箱授权码、服务器 IP 和登录密码。
+- 不要一上来导入很大的 PDF，先用 3 到 5 页的小文件测试。
+- 不要在公网裸奔，服务器上一定设置 `SAKURA_ADMIN_PASSWORD` 和 `SAKURA_AUTH_SECRET`。
+- 不要把没有授权的教材、试卷、题库打包到公开仓库或演示站点。
+
+#### 禁止商用提醒
+
+Sakura 做题集当前仅允许个人学习、技术交流和非商业二次开发。公开仓库不代表允许商用；未经 Sakura-Yanxi 明确书面许可，禁止用于商业售卖、付费课程、培训机构产品、SaaS 服务、代部署收费、闭源商业项目或商业宣传物料。
+
+### 0. 先理解项目由什么组成
+
+Sakura 做题集分为三类东西：
+
+```text
+代码：app.py、sakura/、static/、requirements.txt、notify_daily.py
+数据：data/ 里的 SQLite 数据库、上传 PDF、题图、教材页图
+密钥：.env 里的 API Key、登录密码、企业微信 Webhook、PushPlus Token、邮箱授权码
+```
+
+部署时请记住一条原则：
+
+```text
+代码可以提交 GitHub。
+数据用备份包迁移。
+密钥只写到服务器 .env，不要提交到 GitHub。
+```
+
+当前推荐的代码结构是：
+
+```text
+Sakura 项目
+├── app.py
+├── notify_daily.py
+├── requirements.txt
+├── .env.example
+├── sakura/
+│   ├── core/       # 配置、数据库、HTTP、路由、登录
+│   ├── content/    # PDF、题库、资料、教材、导入
+│   ├── review/     # 错题、每日练习、复盘、提示、记忆曲线
+│   ├── ai/         # AI 调用、学习教练、老师记忆、学习档案
+│   └── system/     # 推送、邮箱、天气、备份、迁移、设置
+├── static/
+│   ├── index.html
+│   ├── styles.css
+│   └── js/
+├── docs/
+├── deploy/
+└── data/           # 本地数据，默认不提交
+```
+
+云服务器上的访问链路是：
+
+```text
+浏览器 / 手机
+  -> http://你的域名 或 http://服务器公网 IP
+  -> Nginx 监听 80 / 443
+  -> 转发到 127.0.0.1:8000
+  -> Python app.py 提供 Sakura 服务
+```
+
+### 1. 本地先跑通项目
+
+这一部分在你的 Windows 电脑上做。
+
+#### 1.1 安装 Python
+
+推荐安装 Python 3.11 或 3.12。
+
+下载地址：
+
+```text
+https://www.python.org/downloads/
+```
+
+Windows 安装时一定勾选：
+
+```text
+Add Python to PATH
+```
+
+安装完成后打开 PowerShell：
+
+```powershell
+python --version
+pip --version
+```
+
+能看到版本号就说明 Python 安装成功。
+
+#### 1.2 进入项目目录
+
+例如你的项目在桌面：
+
+```powershell
+cd C:\Users\你的用户名\Desktop\demo
+```
+
+如果不知道路径，可以在项目文件夹空白处按住 `Shift` 右键，选择“在终端中打开”。
+
+#### 1.3 创建虚拟环境
+
+```powershell
+python -m venv .venv
+```
+
+激活虚拟环境：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+如果 PowerShell 提示不允许运行脚本，执行：
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+然后重新激活：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+看到命令行前面出现 `(.venv)` 就说明成功。
+
+#### 1.4 安装依赖
+
+```powershell
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+如果下载太慢，可以临时使用清华源：
+
+```powershell
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+#### 1.5 创建 `.env`
+
+```powershell
+copy .env.example .env
+```
+
+本地最小配置可以先这样：
+
+```env
+PORT=8000
+APP_PUBLIC_URL=http://127.0.0.1:8000
+
+SAKURA_ADMIN_PASSWORD=
+SAKURA_AUTH_SECRET=
+SAKURA_DEMO_MODE=0
+
+LLM_API_KEY=
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_MODEL=deepseek-chat
+```
+
+这些字段的意思：
+
+```text
+PORT：Sakura 后端监听的端口，本地默认 8000。
+APP_PUBLIC_URL：外部访问地址，本地写 http://127.0.0.1:8000。
+SAKURA_ADMIN_PASSWORD：登录密码。本地自己用可以先空着，公网必须填写。
+SAKURA_AUTH_SECRET：登录会话加密用的长随机字符串，公网必须填写。
+SAKURA_DEMO_MODE：演示模式。0 表示正常可写入，1 表示尽量只读展示。
+LLM_API_KEY：文字讲解接口密钥，例如 DeepSeek Key。
+LLM_BASE_URL：文字讲解接口地址，例如 https://api.deepseek.com/v1。
+LLM_MODEL：文字讲解模型名，例如 deepseek-chat。
+```
+
+本地自己用时可以暂时不设置登录密码。部署到公网时必须设置登录保护。
+
+#### 1.6 启动本地服务
+
+```powershell
+python app.py
+```
+
+浏览器打开：
+
+```text
+http://127.0.0.1:8000
+```
+
+能看到 Sakura 做题集界面，就说明本地跑通。
+
+### 2. 准备 GitHub 仓库
+
+如果项目已经在 GitHub 上，可以跳过创建仓库部分。
+
+#### 2.1 不要提交这些内容
+
+确保 `.gitignore` 至少包含：
+
+```gitignore
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+data/
+.env
+.deploy_keys/
+*.log
+*.zip
+gitdb/
+```
+
+这些文件不应该进入 GitHub：
+
+- `.env`
+- `data/`
+- 上传的 PDF
+- 数据库
+- 题图
+- 日志
+- 部署密钥
+- 导出的备份包
+
+#### 2.2 提交代码
+
+```powershell
+git status
+git add README.md .env.example app.py notify_daily.py requirements.txt sakura static docs deploy tests
+git commit -m "Update Sakura deployment docs"
+git push
+```
+
+如果你使用的是独立项目仓库，可以推到：
+
+```powershell
+git push origin main
+```
+
+### 3. 购买并初始化云服务器
 
 推荐配置：
 
 ```text
-系统：Ubuntu 22.04 / 24.04
-CPU：1 核或以上
-内存：2 GB 起步，4 GB 更舒服
-磁盘：40 GB 起步
-端口：22、80、443
-项目目录：/opt/sakura-study
-运行用户：admin 或 root
+系统：Ubuntu 22.04 或 Ubuntu 24.04
+CPU：1 核即可起步
+内存：1 GB 可以跑小样例，2 GB 更舒服
+硬盘：20 GB 起步
+带宽：1 Mbps 可体验，3 Mbps 以上更舒服
 ```
 
-如果只是 demo，先用公网 IP 访问即可；如果要长期使用，再绑定域名和 HTTPS。
+如果只是给朋友展示一个小 demo，不要上传大量 PDF 和真实数据。轻量服务器可以用，但不适合大量图片、PDF 和多人同时使用。
 
-### 2. 用 SSH 连接服务器
+#### 3.1 登录服务器
 
-Windows PowerShell 示例：
+假设你的服务器公网 IP 是 `你的服务器公网IP`，用户名是 `admin` 或 `root`：
 
 ```powershell
 ssh admin@你的服务器公网IP
 ```
 
-如果使用密钥：
+如果用密钥：
 
 ```powershell
 ssh -i C:\Users\你的用户名\.ssh\你的密钥 admin@你的服务器公网IP
 ```
 
-第一次连接会询问是否信任服务器，输入 `yes`。如果连不上，先检查阿里云安全组是否放行 22 端口。
+第一次连接会提示是否信任，输入：
 
-### 3. 安装基础依赖
+```text
+yes
+```
 
-进入服务器后执行：
+#### 3.2 更新系统
+
+在服务器里执行：
 
 ```bash
 sudo apt update
-sudo apt install -y git python3 python3-venv python3-pip nginx
-python3 --version
-git --version
+sudo apt upgrade -y
 ```
 
-如果提示没有权限，确认当前用户是否可以使用 `sudo`。如果你用的是 `root`，可以去掉命令前面的 `sudo`。
+#### 3.3 安装基础工具
 
-### 4. 拉取 Sakura 代码
+```bash
+sudo apt install -y python3 python3-venv python3-pip git curl unzip nginx
+```
+
+检查版本：
+
+```bash
+python3 --version
+git --version
+nginx -v
+```
+
+### 4. 把代码部署到服务器
+
+推荐使用 GitHub 拉代码，这样后续更新更方便。
+
+#### 4.1 创建项目目录
 
 ```bash
 sudo mkdir -p /opt/sakura-study
 sudo chown -R $USER:$USER /opt/sakura-study
 cd /opt/sakura-study
+```
+
+#### 4.2 从 GitHub 拉代码
+
+如果仓库是公开的：
+
+```bash
 git clone https://github.com/Sakura-Yanxi/sakura-question-bank.git .
 ```
 
-如果目录不是空的，先确认里面没有自己的数据再处理。不要随便删除 `data/`、`.env`、上传 PDF 或数据库。
+如果你后面换成自己的仓库，把 URL 改成自己的仓库地址。
 
-### 5. 创建 Python 虚拟环境
+如果目录不是空的，可以先看一下：
+
+```bash
+ls -la
+```
+
+不要随便删除 `data/` 和 `.env`，它们可能是你的真实数据和密钥。
+
+#### 4.3 创建服务器虚拟环境
 
 ```bash
 cd /opt/sakura-study
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-如果依赖下载慢，可以临时使用镜像：
+如果服务器访问 PyPI 慢：
 
 ```bash
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-### 6. 创建服务器 `.env`
+#### 4.4 创建服务器 `.env`
 
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-服务器最少建议填写：
+服务器建议至少填写：
 
 ```env
 PORT=8000
 APP_PUBLIC_URL=http://你的服务器公网IP
-SAKURA_ADMIN_PASSWORD=请改成强密码
-SAKURA_AUTH_SECRET=请改成一长串随机字符
+
+SAKURA_ADMIN_PASSWORD=请改成你的登录密码
+SAKURA_AUTH_SECRET=请改成一串很长的随机字符
 SAKURA_DEMO_MODE=0
-```
 
-如果要用 AI 讲解，再填：
-
-```env
-LLM_API_KEY=你的文字模型 Key
+LLM_API_KEY=
 LLM_BASE_URL=https://api.deepseek.com/v1
 LLM_MODEL=deepseek-chat
+LLM_VISION_MODEL=
+LLM_VISION_API_KEY=
+LLM_VISION_BASE_URL=
 
-LLM_VISION_MODEL=支持图片输入的视觉模型名
-LLM_VISION_API_KEY=可选，留空则沿用 LLM_API_KEY
-LLM_VISION_BASE_URL=可选，留空则沿用 LLM_BASE_URL
+WEWORK_BOT_WEBHOOK=
+PUSHPLUS_TOKEN=
+
+REMIND_CHECKIN_MODE=wework
 ```
 
-如果要推送每日练习，再按实际渠道填写企业微信、PushPlus 或邮箱 SMTP。所有 Key 只写在服务器 `.env`，不要提交到 GitHub。
+逐项说明：
 
-### 7. 先手动启动测试
+```text
+PORT=8000
+  Python 服务内部端口。Nginx 会把 80/443 转发到这里，通常不用改。
+
+APP_PUBLIC_URL=http://你的服务器公网IP
+  对外访问地址。没有域名时写公网 IP；有域名和 HTTPS 后改成 https://你的域名。
+
+SAKURA_ADMIN_PASSWORD=请改成你的登录密码
+  公网部署必须填写。不要用 123456、生日、手机号后几位这类弱密码。
+
+SAKURA_AUTH_SECRET=请改成一串很长的随机字符
+  用来保护登录会话。每台服务器单独生成，不要复制别人的。
+
+SAKURA_DEMO_MODE=0
+  自己真实使用填 0；只给别人看演示可以填 1。
+
+LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
+  文字讲解接口。用于 DeepSeek 知识解读、题目解析、AI 学习教练、阶段反思、教材文字页问答。
+
+LLM_VISION_MODEL / LLM_VISION_API_KEY / LLM_VISION_BASE_URL
+  视觉读取接口。用于扫描版教材页、页面截图、没有文本层的 PDF。只做文字讲解时可以先空着。
+
+WEWORK_BOT_WEBHOOK / PUSHPLUS_TOKEN
+  推送通道。只配置自己要用的那个即可。
+```
+
+生成随机 `SAKURA_AUTH_SECRET`：
+
+```bash
+python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(48))
+PY
+```
+
+把输出复制到 `.env`：
+
+```env
+SAKURA_AUTH_SECRET=刚才生成的长字符串
+```
+
+保存 nano：
+
+```text
+Ctrl + O
+Enter
+Ctrl + X
+```
+
+#### 4.5 手动试运行
 
 ```bash
 cd /opt/sakura-study
@@ -420,23 +753,25 @@ source .venv/bin/activate
 python app.py
 ```
 
-看到类似下面的信息就说明本机服务起来了：
-
-```text
-Sakura demo running at http://127.0.0.1:8000
-```
-
-新开一个 SSH 窗口测试：
+新开一个 SSH 窗口，测试：
 
 ```bash
-curl http://127.0.0.1:8000
+curl -I http://127.0.0.1:8000
 ```
 
-能返回 HTML 内容就可以继续。测试完按 `Ctrl+C` 停止手动运行，接下来交给 systemd 后台运行。
+如果你设置了登录保护，返回 `302` 跳转到 `/login` 是正常的。
 
-### 8. 配置 systemd 后台运行
+停止手动运行：
 
-创建服务文件：
+```text
+Ctrl + C
+```
+
+### 5. 用 systemd 后台运行
+
+systemd 可以让 Sakura 后台运行，服务器重启后自动启动。
+
+#### 5.1 创建服务文件
 
 ```bash
 sudo nano /etc/systemd/system/sakura-study.service
@@ -446,56 +781,84 @@ sudo nano /etc/systemd/system/sakura-study.service
 
 ```ini
 [Unit]
-Description=Sakura Study
+Description=Sakura Study Question Bank
 After=network.target
 
 [Service]
 Type=simple
+User=admin
 WorkingDirectory=/opt/sakura-study
+EnvironmentFile=/opt/sakura-study/.env
 ExecStart=/opt/sakura-study/.venv/bin/python /opt/sakura-study/app.py
 Restart=always
 RestartSec=3
-User=admin
-Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-如果你的服务器运行用户不是 `admin`，把 `User=admin` 改成实际用户名。然后执行：
+如果你的服务器用户名不是 `admin`，把：
+
+```ini
+User=admin
+```
+
+改成你的用户名。可以用下面命令查看：
+
+```bash
+whoami
+```
+
+#### 5.2 启动服务
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable sakura-study
 sudo systemctl start sakura-study
-sudo systemctl status sakura-study
 ```
 
-查看日志：
+查看状态：
 
 ```bash
-journalctl -u sakura-study -n 100 --no-pager
+sudo systemctl status sakura-study --no-pager
 ```
 
-### 9. 配置 Nginx 反向代理
+看到 `active (running)` 就是成功。
 
-创建配置：
+看日志：
+
+```bash
+journalctl -u sakura-study -n 80 --no-pager
+```
+
+重启服务：
+
+```bash
+sudo systemctl restart sakura-study
+```
+
+### 6. 配置 Nginx 反向代理
+
+Python 服务只监听本机 `127.0.0.1:8000`，Nginx 负责对公网开放 80 / 443。
+
+#### 6.1 创建 Nginx 配置
 
 ```bash
 sudo nano /etc/nginx/sites-available/sakura-study
 ```
 
-没有域名时先用公网 IP：
+如果先用 IP 访问：
 
 ```nginx
 server {
     listen 80;
     server_name _;
 
-    client_max_body_size 1024m;
+    client_max_body_size 200m;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -504,7 +867,27 @@ server {
 }
 ```
 
-启用配置：
+如果你已经有域名，例如 `your-domain.example`：
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.example;
+
+    client_max_body_size 200m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+#### 6.2 启用配置
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/sakura-study /etc/nginx/sites-enabled/sakura-study
@@ -512,88 +895,800 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-然后浏览器访问：
+如果提示 default 配置冲突，可以移除默认站点：
+
+```bash
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+#### 6.3 云厂商防火墙
+
+在阿里云、腾讯云、Azure 等控制台里，确认安全组开放：
 
 ```text
-http://你的服务器公网IP
+TCP 22     SSH
+TCP 80     HTTP
+TCP 443    HTTPS
 ```
 
-如果打不开，检查阿里云安全组是否放行 80 端口，服务器防火墙是否拦截，Nginx 是否启动。
+不要随便开放数据库端口。Sakura 使用 SQLite，不需要对外开放数据库。
 
-### 10. 后续更新服务器
+### 7. 配置域名
 
-已经用 Git 部署的服务器，后续更新通常这样：
+如果你使用 Cloudflare 或其他 DNS 服务，把域名解析到服务器公网 IP。
+
+#### 7.1 添加 DNS 记录
+
+示例：
+
+```text
+类型：A
+名称：your-domain
+内容：你的服务器公网 IP
+代理状态：仅 DNS 或已代理都可以，但排错时建议先用“仅 DNS”
+TTL：Auto
+```
+
+如果完整域名是 `your-domain.example`，那就按你的 DNS 平台规则填写主机记录。
+
+#### 7.2 修改 `.env`
+
+域名能访问后，把服务器 `.env` 改成：
+
+```env
+APP_PUBLIC_URL=http://你的域名
+```
+
+如果配置了 HTTPS：
+
+```env
+APP_PUBLIC_URL=https://你的域名
+```
+
+修改后重启：
+
+```bash
+sudo systemctl restart sakura-study
+```
+
+#### 7.3 大陆服务器注意备案
+
+如果服务器在中国大陆，域名访问通常需要备案。没有备案时，可能 IP 能访问，但域名无法正常打开或被拦截。
+
+如果服务器在香港、日本、新加坡等地区，一般不需要大陆备案，但国内访问速度取决于线路质量。
+
+### 8. 配置 HTTPS
+
+如果你有域名，推荐配置 HTTPS。
+
+#### 8.1 安装 Certbot
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+```
+
+#### 8.2 申请证书
+
+把域名换成你的：
+
+```bash
+sudo certbot --nginx -d 你的域名
+```
+
+按提示输入邮箱，同意条款。
+
+完成后测试：
+
+```bash
+curl -I https://你的域名
+```
+
+#### 8.3 自动续期
+
+Certbot 通常会自动配置续期。可以测试：
+
+```bash
+sudo certbot renew --dry-run
+```
+
+### 9. 配置登录保护
+
+公网部署必须开启登录保护，不然别人知道域名就能改你的题库。
+
+服务器 `.env` 里填写：
+
+```env
+SAKURA_ADMIN_PASSWORD=你的登录密码
+SAKURA_AUTH_SECRET=一串很长的随机字符串
+```
+
+重启：
+
+```bash
+sudo systemctl restart sakura-study
+```
+
+浏览器访问时会先进入登录页面。
+
+如果忘记密码：
 
 ```bash
 cd /opt/sakura-study
-git pull --ff-only
+nano .env
+```
+
+修改 `SAKURA_ADMIN_PASSWORD` 后重启服务。
+
+### 10. 配置 AI API
+
+Sakura 的 AI 能力分成两条线：文字讲解和视觉读取。新手先记住一句话：
+
+```text
+DeepSeek 这类文字模型适合讲解文字内容。
+扫描版教材页、图片题图、页面截图，需要支持图片输入的视觉模型。
+```
+
+不配置 AI API 时，题库、错题、每日练习、导入、导出、备份和本地统计仍可使用，只是不能调用外部讲解能力。
+
+#### 10.1 文字讲解接口
+
+文字讲解接口用于：
+
+- DeepSeek 知识解读。
+- 题目提示和完整解析。
+- 变式练习。
+- 错因分析。
+- AI 学习教练。
+- 周/月阶段反思。
+- 带文本层教材页的问答。
+
+DeepSeek 示例：
+
+```env
+LLM_API_KEY=你的 DeepSeek Key
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_MODEL=deepseek-chat
+```
+
+小米 MiMo 或其他兼容接口也可以，只要把地址和模型名换成对应平台给你的值：
+
+```env
+LLM_API_KEY=对应平台给你的 Key
+LLM_BASE_URL=对应平台兼容 OpenAI 调用格式的地址
+LLM_MODEL=对应平台支持的文字模型名
+```
+
+如果你使用中转站：
+
+```env
+LLM_API_KEY=中转站给你的 Key
+LLM_BASE_URL=中转站给你的兼容 OpenAI 调用格式的地址
+LLM_MODEL=中转站支持的模型名
+```
+
+兼容历史变量时，读取优先级是：
+
+```text
+LLM_API_KEY > MIMO_API_KEY > DEEPSEEK_API_KEY
+```
+
+建议以后统一使用 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`，这样不容易混。
+
+#### 10.2 视觉读取接口
+
+视觉读取接口用于：
+
+- 扫描版教材页。
+- 整页图片 PDF。
+- 拍照生成的 PDF。
+- 教材页截图或题图截图。
+- 页面没有可复制文字，但你希望系统直接“看图”解释。
+
+如果文字和视觉用同一家供应商，只要额外填视觉模型名，Key 和地址可以留空复用文字接口：
+
+```env
+LLM_API_KEY=你的 Key
+LLM_BASE_URL=https://同一家供应商的地址/v1
+LLM_MODEL=文字模型名
+
+LLM_VISION_MODEL=支持图片输入的模型名
+LLM_VISION_API_KEY=
+LLM_VISION_BASE_URL=
+```
+
+如果文字用 DeepSeek，视觉用另一家支持图片输入的模型，就单独填写视觉三项：
+
+```env
+LLM_API_KEY=你的 DeepSeek Key
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_MODEL=deepseek-chat
+
+LLM_VISION_MODEL=支持图片输入的模型名
+LLM_VISION_API_KEY=视觉接口 Key
+LLM_VISION_BASE_URL=视觉接口地址
+```
+
+注意：
+
+- 视觉模型必须支持图片输入，只填一个普通文字模型名没有用。
+- 视觉读取只在你主动点击视觉读取，或教材页没有文本层但你发起教材问答时使用。
+- 如果教材 PDF 本身有文本层，系统会优先走文字讲解接口，不一定需要视觉模型。
+- 视觉接口通常比文字接口更容易产生费用，请先用一页小样例测试。
+
+#### 10.3 AI 学习教练
+
+AI 学习教练走文字讲解接口，不需要视觉接口。它会读取：
+
+- 学习档案版本。
+- 近期错题、半会题、需复习题。
+- 到期复习数量和逾期复习数量。
+- 薄弱知识点和前置短板。
+- 老师记忆。
+- 考试日期、每日可用时间、重点科目。
+
+它的作用不是替你自动做题，而是把已有证据整理成下一步行动：
+
+```text
+先还逾期/今日到期错题
+  -> 再攻坚当前薄弱知识点
+  -> 再补前置基础题
+  -> 临近考试时加入限时模拟卷
+```
+
+每次新增错题洞察、复习状态或教材记忆后，学习档案可以按版本更新；下一次生成计划时，教练会基于新证据重新排序薄弱点和今日任务。
+
+#### 10.4 修改配置后如何生效
+
+修改 `.env` 后重启服务：
+
+```bash
+sudo systemctl restart sakura-study
+```
+
+查看服务是否启动成功：
+
+```bash
+sudo systemctl status sakura-study --no-pager
+```
+
+然后到页面里测试：
+
+```text
+AI 对话 / API 测试：测试文字讲解接口。
+教材精读 / 视觉读取：测试视觉接口。
+总结与反思：测试阶段复盘。
+AI 学习教练：测试学习档案和计划生成。
+```
+
+#### 10.5 常见 AI 错误
+
+```text
+401 / invalid_api_key
+  Key 错了、过期了，或者复制时多了空格。
+
+402 / insufficient_balance
+  对应供应商余额不足，或者这个模型没有开通计费权限。需要到服务商平台充值或开通。
+
+404 / model_not_found
+  模型名不存在，或者账号没有调用权限。
+
+429 / rate limit
+  调用太频繁，稍等一会儿再试。
+
+教材页问答说“没有文本层”
+  说明这一页可能是扫描图片。配置视觉模型后再点视觉读取。
+
+DeepSeek 能文字问答，但读不了教材截图
+  这是正常的。DeepSeek 文字模型负责文本讲解，截图要交给支持图片输入的视觉模型。
+```
+
+### 11. 配置推送
+
+Sakura 当前支持三种推送：
+
+- 企业微信机器人
+- PushPlus
+- SMTP 邮箱
+
+#### 11.1 企业微信机器人
+
+推荐优先用企业微信机器人。
+
+步骤：
+
+1. 创建或进入企业微信群。
+2. 添加群机器人。
+3. 复制机器人 Webhook。
+4. 在 Sakura 的“推送通道配置”里填写企业微信机器人 Webhook。
+5. 保存配置。
+6. 在“提醒与打卡设置”里选择“企业微信打卡”。
+7. 点击测试推送。
+
+`.env` 对应字段：
+
+```env
+WEWORK_BOT_WEBHOOK=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx
+REMIND_CHECKIN_MODE=wework
+```
+
+不要把真实 Webhook 写到 README、issue 或截图里。
+
+#### 11.2 PushPlus
+
+PushPlus 可作为备用通道：
+
+```env
+PUSHPLUS_TOKEN=你的 PushPlus Token
+REMIND_CHECKIN_MODE=pushplus
+```
+
+如果测试返回：
+
+```text
+code: 905
+账户未进行实名认证
+```
+
+通常表示 PushPlus 账号未完成实名，不是 Sakura 配置丢失。
+
+#### 11.3 QQ 邮箱 SMTP
+
+QQ 邮箱不要填登录密码，要填授权码。
+
+操作步骤：
+
+1. 打开 QQ 邮箱网页版。
+2. 进入“设置”。
+3. 找到“账号”或“账户安全”。
+4. 开启 SMTP 服务。
+5. 生成授权码。
+6. 在 Sakura 里填写 SMTP 配置。
+7. 保存后点击“测试邮箱”。
+
+常用配置：
+
+```env
+EMAIL_ENABLED=1
+EMAIL_HOST=smtp.qq.com
+EMAIL_PORT=465
+EMAIL_USE_SSL=1
+EMAIL_USE_STARTTLS=0
+EMAIL_USER=你的QQ邮箱@qq.com
+EMAIL_PASSWORD=QQ邮箱授权码
+EMAIL_TO=收件邮箱@qq.com
+EMAIL_FROM=你的QQ邮箱@qq.com
+EMAIL_FROM_NAME=Sakura 做题集
+```
+
+### 12. 配置定时提醒
+
+页面里可以直接设置早晚提醒、天气推送和打卡入口。保存后系统会写入 `.env` 并安装 crontab。
+
+也可以手动在 `.env` 中配置：
+
+```env
+REMIND_MORNING_ON=1
+REMIND_MORNING_TIME=10:00
+REMIND_NIGHT_ON=1
+REMIND_NIGHT_TIME=20:00
+REMIND_WEATHER_ON=1
+REMIND_WEATHER_TIME=22:30
+REMIND_CHECKIN_MODE=wework
+REMIND_DAILY_SCOPE=due
+REMIND_DAILY_LIMIT=20
+REMIND_SEND_PDF=1
+WEATHER_CITY=北京 海淀区
+```
+
+查看当前定时任务：
+
+```bash
+crontab -l
+```
+
+手动测试早安推送：
+
+```bash
+cd /opt/sakura-study
 source .venv/bin/activate
-pip install -r requirements.txt
-sudo systemctl restart sakura-study
+python notify_daily.py --morning
 ```
 
-也可以使用项目自带脚本：
+手动测试天气推送：
 
 ```bash
 cd /opt/sakura-study
-bash update.sh
-sudo systemctl restart sakura-study
+source .venv/bin/activate
+python notify_daily.py --weather
 ```
 
-更新脚本会尽量保留 `data/`、`.env`、`.venv` 和用户上传文件。Release zip 更新会把旧代码备份到 `data/update_backups/`，默认只保留最近 3 份。
+如果测试按钮能推送，但定时没推送，重点检查：
 
-### 11. 本地数据迁移到服务器
+- 服务器时区是否正确。
+- crontab 是否存在 Sakura 任务。
+- `.env` 是否保存了开启状态。
+- systemd 服务是否正常。
 
-推荐在本地 Sakura 页面里导出迁移 ZIP，然后上传到服务器或在云端页面导入。
+设置中国时区：
 
-命令行上传示例：
+```bash
+timedatectl
+sudo timedatectl set-timezone Asia/Shanghai
+timedatectl
+```
+
+### 13. 数据迁移
+
+#### 13.1 推荐方式：页面导出备份
+
+在本地 Sakura 页面里：
+
+```text
+数据迁移 -> 导出完整备份
+```
+
+得到一个 zip 备份包。
+
+然后在云端 Sakura 页面：
+
+```text
+数据迁移 -> 导入备份
+```
+
+这种方式最安全，因为它会按 Sakura 的规则处理数据库和文件。
+
+#### 13.2 命令行上传备份包
+
+如果备份包较大，可以用 `scp`：
 
 ```powershell
 scp .\sakura_backup.zip admin@你的服务器公网IP:/tmp/sakura_backup.zip
 ```
 
-迁移注意：
+如果 SSH 端口不是 22：
 
-- 不要直接把本地 `.env` 覆盖到服务器 `.env`。
-- 不要把真实数据放进公开仓库。
-- 导入前确认服务器磁盘空间够用。
-- 导入后检查题库、教材页图、错题记录和每日练习是否正常。
+```powershell
+scp -P 端口号 .\sakura_backup.zip admin@你的服务器公网IP:/tmp/sakura_backup.zip
+```
 
-### 12. 新手排错清单
+上传后仍建议在页面里导入，或者按照项目提供的迁移接口恢复。
 
-页面打不开：
+#### 13.3 不要直接覆盖 `.env`
 
-- 阿里云安全组是否开放 80。
-- `systemctl status sakura-study` 是否 active。
-- `sudo nginx -t` 是否通过。
-- `journalctl -u sakura-study -n 100 --no-pager` 有没有报错。
+本地 `.env` 里可能是本地地址和本地密钥，云端 `.env` 里是公网地址和服务器密钥。
 
-依赖安装失败：
+迁移数据时不要直接把本地 `.env` 覆盖到服务器。
 
-- Python 是否是 3.11 或 3.12。
-- `.venv` 是否用错了旧 Python。
-- 是否需要 `python -m pip install --upgrade pip`。
+### 14. 更新服务器代码
 
-AI 读取失败：
+后续你在本地修改代码并推到 GitHub 后，服务器更新步骤：
 
-- 文字模型和视觉模型是否填对。
-- 视觉模型是否真的支持图片输入。
-- 返回 `402 insufficient_balance` 通常是平台余额、套餐或权限问题。
+```bash
+cd /opt/sakura-study
+git fetch origin
+git checkout main
+git pull origin main
+source .venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart sakura-study
+```
 
-更新后还是旧版本：
+查看服务是否正常：
 
-- 是否重启了 `sakura-study` 服务。
-- 浏览器是否缓存旧前端文件。
-- 服务器是否真的拉到了最新 GitHub 提交。
+```bash
+sudo systemctl status sakura-study --no-pager
+journalctl -u sakura-study -n 80 --no-pager
+```
 
-### 13. 服务器安全提醒
+如果只是改 README 或文档，不需要重启服务。
 
-- 公网部署必须设置 `SAKURA_ADMIN_PASSWORD`。
-- `SAKURA_AUTH_SECRET` 每台服务器单独生成，不要复制别人的。
-- `.env`、`data/`、日志、数据库、备份包不要公开。
-- 只开放必要端口，通常是 22、80、443。
-- 不要把没有授权的教材、试卷和题库上传到公开演示环境。
-- 大陆服务器绑定域名通常需要备案；没有备案时可以先用公网 IP 测试。
+### 15. 演示模式
+
+如果只是给朋友体验，不想让别人修改你的数据，可以开启演示模式：
+
+```env
+SAKURA_DEMO_MODE=1
+```
+
+然后重启：
+
+```bash
+sudo systemctl restart sakura-study
+```
+
+演示环境建议：
+
+- 不导入真实学习数据。
+- 不放真实 API Key。
+- 开启登录保护。
+- 只上传少量演示 PDF。
+- 定期清理 `data/`。
+
+### 16. 常见问题
+
+#### 16.1 浏览器打不开
+
+先在服务器检查本机服务：
+
+```bash
+curl -I http://127.0.0.1:8000
+sudo systemctl status sakura-study --no-pager
+```
+
+再检查 Nginx：
+
+```bash
+sudo nginx -t
+sudo systemctl status nginx --no-pager
+curl -I http://127.0.0.1
+```
+
+最后检查云厂商防火墙是否开放 80 / 443。
+
+#### 16.2 访问显示 302
+
+如果开启了登录保护，`curl -I` 看到：
+
+```text
+HTTP/1.1 302 Found
+Location: /login
+```
+
+这是正常的，说明服务在把未登录用户引导到登录页。
+
+#### 16.3 上传 PDF 很慢
+
+可能原因：
+
+- 服务器带宽太小。
+- PDF 太大。
+- PDF 每页图像分辨率太高。
+- 服务器内存较小。
+
+建议：
+
+- 先用小文件测试。
+- 用页码范围导入。
+- 不要一次上传整套超大资料。
+- 轻量服务器只适合个人使用和小样例展示。
+
+#### 16.4 页面还是旧样式
+
+先强制刷新：
+
+```text
+Ctrl + F5
+```
+
+如果还不行，检查服务器是否拉到了最新代码：
+
+```bash
+cd /opt/sakura-study
+git log -1 --oneline
+grep -n "static/js/core/app.js" static/index.html
+```
+
+#### 16.5 AI 不回答
+
+检查：
+
+- `LLM_API_KEY` 是否填写。
+- `LLM_BASE_URL` 是否正确。
+- `LLM_MODEL` 是否是服务商支持的模型。
+- 服务器是否能访问对应 API。
+- 如果是教材截图或扫描页，是否配置了 `LLM_VISION_MODEL`。
+- 如果报 `402 insufficient_balance`，先去供应商后台看余额和模型权限。
+
+测试网络：
+
+```bash
+curl -I https://api.deepseek.com
+```
+
+如果文字问答正常，但教材视觉读取失败，优先检查：
+
+```text
+1. 视觉模型名是否支持图片输入。
+2. LLM_VISION_API_KEY 是否属于视觉模型对应平台。
+3. LLM_VISION_BASE_URL 是否和该平台文档一致。
+4. 当前供应商账户是否有余额。
+5. 这一页教材图片是否已经成功生成。
+```
+
+#### 16.6 企业微信测试成功，但定时没收到
+
+检查：
+
+```bash
+crontab -l
+timedatectl
+journalctl -u sakura-study -n 80 --no-pager
+```
+
+如果手动点击测试能收到，通常说明 Webhook 没问题，问题更可能在定时任务、时区或开关状态。
+
+#### 16.7 PushPlus 报实名认证
+
+如果返回 `code: 905`，一般是 PushPlus 平台要求账号实名认证。企业微信机器人不受这个影响。
+
+#### 16.8 忘记登录密码
+
+服务器上修改：
+
+```bash
+cd /opt/sakura-study
+nano .env
+```
+
+改：
+
+```env
+SAKURA_ADMIN_PASSWORD=新密码
+```
+
+重启：
+
+```bash
+sudo systemctl restart sakura-study
+```
+
+### 17. 安全建议
+
+最低限度请做到：
+
+- 公网部署一定设置 `SAKURA_ADMIN_PASSWORD`。
+- `SAKURA_AUTH_SECRET` 使用长随机字符串。
+- 不提交 `.env`。
+- 不提交 `data/`。
+- 不在截图里暴露 Webhook、Token、服务器 IP、密码。
+- 云服务器只开放必要端口。
+- 重要数据定期导出备份。
+- 给朋友演示时优先使用 `SAKURA_DEMO_MODE=1`。
+
+如果服务器只用于展示，不要把自己的真实错题库、教材 PDF、AI Key 和推送密钥放进去。
+
+版权和商用边界：
+
+- 不要把没有授权的教材、试卷、题库、PDF、截图或图片放进公开演示站点。
+- 不要把真实学生数据、他人题库或课程资料打包成备份包传播。
+- Sakura 做题集当前只允许个人学习、技术交流和非商业二次开发。
+- 未经 Sakura-Yanxi 明确书面许可，禁止商业售卖、培训机构使用、付费课程包装、SaaS 托管收费、代部署收费、闭源商业复制和商业宣传使用。
+- 二次展示或二次开发时必须保留原作者署名和项目来源。
+
+### 18. 一键排查清单
+
+服务状态：
+
+```bash
+sudo systemctl status sakura-study --no-pager
+```
+
+服务日志：
+
+```bash
+journalctl -u sakura-study -n 120 --no-pager
+```
+
+Nginx 配置：
+
+```bash
+sudo nginx -t
+```
+
+Nginx 状态：
+
+```bash
+sudo systemctl status nginx --no-pager
+```
+
+本机端口：
+
+```bash
+curl -I http://127.0.0.1:8000
+```
+
+公网端口：
+
+```bash
+curl -I http://你的域名
+```
+
+当前代码版本：
+
+```bash
+cd /opt/sakura-study
+git log -1 --oneline
+```
+
+服务器资源：
+
+```bash
+free -h
+df -h
+top
+```
+
+### 19. 推荐部署流程总结
+
+第一次部署：
+
+```text
+本地跑通
+  -> 推到 GitHub
+  -> 服务器安装 Python / Git / Nginx
+  -> clone 项目到 /opt/sakura-study
+  -> 创建 .venv 并安装依赖
+  -> 写服务器 .env
+  -> 手动 python app.py 测试
+  -> 配 systemd
+  -> 配 Nginx
+  -> 配域名和 HTTPS
+  -> 配登录保护
+  -> 测试 AI / 推送 / 上传
+```
+
+后续更新：
+
+```text
+本地修改
+  -> 测试
+  -> git commit
+  -> git push
+  -> 服务器 git pull
+  -> pip install -r requirements.txt
+  -> systemctl restart sakura-study
+```
+
+数据迁移：
+
+```text
+本地页面导出备份
+  -> 云端页面导入备份
+  -> 检查题库、错题、资料、老师记忆
+  -> 测试每日练习和推送
+```
+
+做到这里，Sakura 做题集就从本地 demo 变成了一个可以公网访问、可登录保护、可推送提醒、可迁移数据的轻量学习系统。
+
+### 20. 禁止商用与免责声明
+
+#### 20.1 禁止商用
+
+Sakura 做题集当前公开用于个人学习、技术交流和非商业 demo 展示。公开仓库不等于允许商用，也不等于作者放弃著作权。
+
+未经 Sakura-Yanxi 明确书面许可，禁止：
+
+- 将本项目作为商业产品售卖。
+- 将本项目包装进付费课程、培训机构系统、商业训练营或收费社群。
+- 将本项目部署成收费 SaaS、托管服务、代部署服务或闭源商业服务。
+- 删除作者署名后重新发布、重新命名或伪装成完全原创项目。
+- 将界面、交互、文档、海报、核心代码或功能结构直接复制到商业项目。
+- 使用相似名称、相似 logo、相似页面误导他人认为是官方商业版本。
+
+允许的范围：
+
+- 个人学习和本地自用。
+- 非商业技术交流。
+- 保留原作者署名和项目来源的非商业二次开发。
+- 课程作业、个人作品集或学习记录展示，但必须说明来源，不得用于收费交付。
+
+#### 20.2 免责声明
+
+- 本教程和项目按“现状”提供，不承诺适用于任何特定考试、课程、机构、生产环境或商业场景。
+- 部署者需要自行负责服务器安全、登录密码、`.env`、API Key、Webhook、邮箱授权码、日志、备份包和数据库文件的保管。
+- 使用外部文字讲解接口、视觉读取接口、天气接口、推送接口产生的费用、余额不足、限流、封禁、服务中断等问题，由对应账号持有人自行承担。
+- AI 生成的题目解析、教材解读、学习计划、阶段反思和建议可能存在错误，只能作为学习辅助，不能替代教材、教师、标准答案、考试官方说明或专业判断。
+- 请勿上传、传播、打包或公开展示没有授权的 PDF、教材、试卷、题库、图片和课程资料；由此产生的版权、合规或法律风险由使用者自行承担。
+- 公网部署需要遵守所在地关于域名、备案、网络安全、版权和数据合规的要求；因部署、开放访问、二次分发或使用不当造成的后果由部署者自行承担。
+- 作者不对因误操作、数据丢失、服务器被攻击、密钥泄露、接口费用、资料侵权或第三方服务异常造成的损失承担责任。
+
+一句话总结：
+
+```text
+可以学习、可以自用、可以非商业交流；禁止商用，风险自负，资料版权和数据安全自己负责。
+```
 
 ## 文字讲解接口配置
 
