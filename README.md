@@ -8,11 +8,11 @@ Sakura 做题集是一个本地优先的个人学习工作台，用来管理 PDF
 
 ## 当前状态
 
-- 当前版本：`v1.0.9`
+- 当前版本：`v1.0.10`
 - 项目地址：[Sakura-Yanxi/sakura-question-bank](https://github.com/Sakura-Yanxi/sakura-question-bank)
 - 发布页：[GitHub Releases](https://github.com/Sakura-Yanxi/sakura-question-bank/releases)
 - 更新方式：Git 用户运行 `update.bat` / `update.sh`；下载压缩包的用户覆盖代码文件，并保留自己的 `data/` 和 `.env`。
-- 当前代码结构：后端入口 [app.py](app.py) 已收敛为服务装配和 HTTP Handler，主要业务逻辑已经拆到 `sakura/` 各模块；当前 `app.py` 约 `2670` 行。
+- 当前代码结构：后端入口 [app.py](app.py) 已收敛为服务装配和 HTTP Handler，主要业务逻辑已经拆到 `sakura/` 各模块；当前 `app.py` 约 `2438` 行。
 - 宣传海报：见 [docs/poster/sakura-demo-poster.png](docs/poster/sakura-demo-poster.png)。
 
 ## 主要功能
