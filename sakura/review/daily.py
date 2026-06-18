@@ -9,6 +9,8 @@ STATUS_REVIEW = "\u9700\u590d\u4e60"
 STATUS_HALF = "\u534a\u4f1a"
 STATUS_RIGHT = "\u505a\u5bf9"
 WRONGISH_STATUSES = (STATUS_WRONG, STATUS_REVIEW, STATUS_HALF)
+MIN_DAILY_LIMIT = 1
+MAX_DAILY_LIMIT = 80
 
 
 def parse_positive_int(value: str, fallback: int | None = None) -> int | None:
@@ -17,6 +19,15 @@ def parse_positive_int(value: str, fallback: int | None = None) -> int | None:
         return parsed if parsed > 0 else fallback
     except (TypeError, ValueError):
         return fallback
+
+
+def normalize_daily_limit(value: int | str, default: int = 20) -> int:
+    parsed = parse_positive_int(str(value), default) or default
+    return max(MIN_DAILY_LIMIT, min(MAX_DAILY_LIMIT, parsed))
+
+
+def flatten_daily_groups(groups: list[dict]) -> list[dict]:
+    return [question for group in groups for question in group.get("questions") or []]
 
 
 def daily_rule_to_dict(row) -> dict:
@@ -187,6 +198,29 @@ def build_custom_daily_groups(conn, row_to_dict) -> tuple[list[dict], list[dict]
     return groups, rules
 
 
+def limit_daily_groups(groups: list[dict], max_count: int) -> tuple[list[dict], list[dict], int]:
+    max_count = normalize_daily_limit(max_count)
+    available = len(flatten_daily_groups(groups))
+    if available <= max_count:
+        return groups, flatten_daily_groups(groups), available
+
+    limited_groups = []
+    plan = []
+    remaining = max_count
+    for group in groups:
+        if remaining <= 0:
+            break
+        questions = list(group.get("questions") or [])
+        kept = questions[:remaining]
+        if kept:
+            limited_group = dict(group)
+            limited_group["questions"] = kept
+            limited_groups.append(limited_group)
+            plan.extend(kept)
+            remaining -= len(kept)
+    return limited_groups, plan, available
+
+
 def daily_rule_option_where(query: dict, skip: str = "") -> tuple[str, list[str]]:
     clauses = []
     params: list[str] = []
@@ -286,13 +320,13 @@ def build_daily_payload(
     daily_limit: int = 20,
 ) -> dict:
     today = date.today().isoformat()
-    daily_limit = max(1, min(80, int(daily_limit or 20)))
+    daily_limit = normalize_daily_limit(daily_limit)
     custom_groups, custom_rules = build_custom_daily_groups(conn, row_to_dict)
     if custom_rules:
-        groups = custom_groups
-        plan = [question for group in groups for question in group["questions"]]
+        groups, plan, available_count = limit_daily_groups(custom_groups, daily_limit)
+        capped = available_count > daily_limit
         message = (
-            f"\u5df2\u542f\u7528\u81ea\u5b9a\u4e49\u6bcf\u65e5\u7ec3\u4e60\u89c4\u5219\uff1b\u672c\u6b21\u6309\u89c4\u5219\u5408\u5e76\u63a8\u9001 {len(plan)} \u9053\u3002"
+            f"\u5df2\u542f\u7528\u81ea\u5b9a\u4e49\u6bcf\u65e5\u7ec3\u4e60\u89c4\u5219\uff1b\u89c4\u5219\u5408\u8ba1\u5339\u914d {available_count} \u9053\uff0c\u672c\u6b21\u6309\u6bcf\u65e5\u603b\u4e0a\u9650\u63a8\u9001 {len(plan)} \u9053\u3002"
             if plan
             else "\u5df2\u542f\u7528\u81ea\u5b9a\u4e49\u6bcf\u65e5\u7ec3\u4e60\u89c4\u5219\uff0c\u4f46\u4eca\u65e5\u6ca1\u6709\u5339\u914d\u9898\u76ee\uff1b\u53ef\u4ee5\u6362\u7ae0\u8282\u3001\u53d6\u6d88\u7ae0\u8282\u9650\u5236\uff0c\u6216\u628a\u63a8\u9001\u8303\u56f4\u6539\u6210\u201c\u5386\u53f2\u66fe\u9519\u9898\u201d\u3002"
         )
@@ -302,7 +336,9 @@ def build_daily_payload(
             "plan": plan,
             "custom_rules": custom_rules,
             "scope": "custom_rules",
-            "limit": len(plan),
+            "limit": daily_limit,
+            "available_count": available_count,
+            "capped": capped,
             "message": message,
         }
 
@@ -332,6 +368,16 @@ def build_daily_payload(
         """
         params = (today,)
         scope_message = "\u672c\u6b21\u63a8\u9001\u5305\u542b\u5f53\u524d\u9519\u9898\u3001\u9700\u590d\u4e60\u9898\u548c\u5230\u671f\u9898\u3002"
+
+    available_count = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        WHERE {where_clause}
+        """,
+        params,
+    ).fetchone()[0]
 
     rows = conn.execute(
         f"""
@@ -386,6 +432,8 @@ def build_daily_payload(
         "plan": plan,
         "scope": daily_scope,
         "limit": daily_limit,
+        "available_count": available_count,
+        "capped": available_count > daily_limit,
         "message": f"{scope_message} \u6700\u591a\u63a8\u9001 {daily_limit} \u9053\uff1b\u82e5\u9009\u62e9\u4f01\u4e1a\u5fae\u4fe1\u6216\u90ae\u7bb1\uff0c\u4f1a\u968f\u63a8\u9001\u9644\u5e26 PDF\u3002",
     }
 

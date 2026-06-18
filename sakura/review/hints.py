@@ -2,7 +2,44 @@ from __future__ import annotations
 
 import sys
 import traceback
+import re
 from typing import Callable
+
+
+QUESTION_TEXT_MIN_CHARS = 6
+QUESTION_TEXT_SIGNAL_RE = re.compile(r"[\w\u4e00-\u9fff=+\-*/^()（）√∞∫∑π]")
+QUESTION_GOAL_RE = re.compile(r"(设|已知|若|则|求|计算|证明|判断|选择|下列|其中|令|解|确定|填空|空|问)")
+QUESTION_NUMBER_RE = re.compile(r"(^|[\s\n])(?:\d{1,3}|[一二三四五六七八九十]{1,4})[\.．、)]")
+QUESTION_FORMULA_RE = re.compile(
+    r"(=|＝|_{2,}|-{2,}|√|∫|∑|∞|π|\\frac|\\sqrt|\\int|\\sum|\blim\b|\bsin\b|\bcos\b|\btan\b|\bln\b|\blog\b|[xyzuvw]\s*[\^*/+\-=])",
+    re.I,
+)
+
+
+def has_usable_question_text(text: str | None, *, min_chars: int = QUESTION_TEXT_MIN_CHARS) -> bool:
+    signals = QUESTION_TEXT_SIGNAL_RE.findall(str(text or ""))
+    return len(signals) >= min_chars
+
+
+def has_question_statement_text(text: str | None) -> bool:
+    raw = str(text or "").strip()
+    if not has_usable_question_text(raw, min_chars=8):
+        return False
+    compact = re.sub(r"\s+", "", raw)
+    has_goal = bool(QUESTION_GOAL_RE.search(raw))
+    has_number = bool(QUESTION_NUMBER_RE.search(raw))
+    has_formula = bool(QUESTION_FORMULA_RE.search(raw))
+    has_blank = "__" in raw or "____" in raw or "______" in raw
+    if has_goal and (has_formula or has_number or has_blank or len(compact) >= 10):
+        return True
+    return (has_number and has_formula) or (has_blank and (has_goal or has_formula))
+
+
+def solution_question_text(question: dict) -> str:
+    ocr_text = str(question.get("ocr_text") or "").strip()
+    if has_question_statement_text(ocr_text):
+        return ocr_text
+    return ""
 
 
 def infer_concept_hint(question: dict, *, default_category: str) -> str:
@@ -50,6 +87,29 @@ def full_solution_fallback(question: dict, *, default_category: str) -> str:
     )
 
 
+def full_solution_missing_text_message() -> str:
+    return (
+        "完整解析需要先识别到题干。\n\n"
+        "当前本地 OCR 没有识别出足够的题目文字，所以没有继续调用模型猜题，也没有走视觉 API。\n\n"
+        "可以先把题图裁剪到只保留这一题、确认图片清晰后再点 Full Solution。"
+    )
+
+
+def full_solution_vision_missing_text_message() -> str:
+    return (
+        "完整解析需要先识别到题干。\n\n"
+        "本地 OCR 和你确认后的视觉 API 都没有识别出足够的题目文字，所以没有继续让模型猜题。\n\n"
+        "可以把题图裁剪到只保留这一题、提高图片清晰度后再试。"
+    )
+
+
+def full_solution_vision_error_message(error: str) -> str:
+    return (
+        f"视觉 API 识别失败：{error}\n\n"
+        "这次没有继续生成完整解析，避免模型在没有题干的情况下猜题。"
+    )
+
+
 def generate_hint(
     question: dict,
     level: int,
@@ -65,6 +125,10 @@ def generate_hint(
         return infer_concept_hint(question, default_category=default_category)
     if level == 2:
         return infer_key_step_hint(question)
+
+    question_text = solution_question_text(question)
+    if not has_usable_question_text(question_text):
+        return full_solution_missing_text_message()
 
     fallback = full_solution_fallback(question, default_category=default_category)
     if not llm_enabled:
@@ -84,7 +148,7 @@ def generate_hint(
 知识点：{question.get('category', default_category)}
 元认知错因：{', '.join(question.get('meta_tags') or []) or question.get('mistake_reason') or '未填写'}
 题目文字：
-{question.get('ocr_text', '')[:4000]}
+{question_text[:4000]}
 """
         return call_llm(prompt, temperature=0.25) or fallback
     except Exception:

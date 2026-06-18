@@ -813,6 +813,117 @@ def generate_hint_with_ai(question: dict, level: int) -> str:
     )
 
 
+def vision_ocr_question_text(question: dict) -> str:
+    if not vision_enabled():
+        return ""
+    data_url = sakura_ai.image_to_data_url(question.get("image_path") or "")
+    if not data_url:
+        return ""
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是题目图片 OCR 工具。请只转写图片中的题干、选项、条件和公式，"
+                "不要解题，不要补充图片外内容，不要输出说明。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "请识别这张题目图片中的原始题目文字。只输出题目文字。"},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        },
+    ]
+    text = call_llm_vision(messages, temperature=0.05).strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:text|markdown)?\s*|\s*```$", "", text, flags=re.S).strip()
+    if any(marker in text for marker in ("无法识别", "不能识别", "看不清", "没有题目")):
+        return ""
+    return text
+
+
+def can_use_vision_ocr_for_question(question: dict) -> bool:
+    image_path = question.get("image_path") or ""
+    return bool(vision_enabled() and image_path and Path(image_path).is_file())
+
+
+def prepare_question_for_full_solution(
+    conn: sqlite3.Connection,
+    q_id: str,
+    question: dict,
+    *,
+    allow_vision_ocr: bool = False,
+) -> dict:
+    local_text = sakura_ocr.image_ocr_text(question.get("image_path") or "", min_score=0.35).strip()
+    if sakura_hints.has_question_statement_text(local_text):
+        enriched = dict(question)
+        enriched["ocr_text"] = local_text
+        conn.execute("UPDATE questions SET ocr_text = ? WHERE id = ?", (local_text, q_id))
+        return enriched
+
+    if sakura_hints.solution_question_text(question):
+        return question
+
+    if allow_vision_ocr:
+        try:
+            local_text = vision_ocr_question_text(question)
+        except Exception as exc:
+            enriched = dict(question)
+            enriched["_vision_ocr_error"] = str(exc)
+            return enriched
+    if not sakura_hints.has_question_statement_text(local_text):
+        return question
+
+    enriched = dict(question)
+    enriched["ocr_text"] = local_text
+    conn.execute("UPDATE questions SET ocr_text = ? WHERE id = ?", (local_text, q_id))
+    return enriched
+
+
+def full_solution_hint_response(
+    conn: sqlite3.Connection,
+    q_id: str,
+    question: dict,
+    *,
+    allow_vision_ocr: bool = False,
+) -> dict:
+    prepared = prepare_question_for_full_solution(
+        conn,
+        q_id,
+        question,
+        allow_vision_ocr=allow_vision_ocr,
+    )
+    if prepared.get("_vision_ocr_error"):
+        hint = sakura_hints.full_solution_vision_error_message(prepared["_vision_ocr_error"])
+        return {"level": 3, "hint": hint, "needs_vision_confirm": False}
+
+    if not sakura_hints.solution_question_text(prepared):
+        vision_available = can_use_vision_ocr_for_question(question)
+        if allow_vision_ocr:
+            hint = sakura_hints.full_solution_vision_missing_text_message()
+        else:
+            hint = sakura_hints.full_solution_missing_text_message()
+        response = {
+            "level": 3,
+            "hint": hint,
+            "needs_vision_confirm": bool(vision_available and not allow_vision_ocr),
+            "vision_available": vision_available,
+        }
+        if response["needs_vision_confirm"]:
+            response["vision_confirm_message"] = (
+                "本地 OCR 没有识别出题干。是否调用视觉 API 识别这张题图？\n\n"
+                "确认后会使用你配置的视觉模型，可能产生接口费用。"
+            )
+        return response
+
+    return {
+        "level": 3,
+        "hint": generate_hint_with_ai(prepared, 3),
+        "needs_vision_confirm": False,
+    }
+
+
 def generate_variations_with_ai(question: dict) -> str:
     return sakura_hints.generate_variations(
         question,
@@ -1893,7 +2004,7 @@ class DemoHandler(BaseHTTPRequestHandler):
     def handle_questions(self, query: dict) -> None:
         where, params = build_question_filters(
             query,
-            ("category", "status", "document_id", "chapter", "subject", "document_kind", "search"),
+            ("category", "status", "status_group", "document_id", "chapter", "subject", "document_kind", "search"),
         )
         with connect() as conn:
             rows, stats, subject_stats = sakura_questions.load_question_index(conn, where, params)
@@ -2046,13 +2157,25 @@ class DemoHandler(BaseHTTPRequestHandler):
     def handle_hint(self, q_id: str) -> None:
         payload = self.read_json()
         level = sakura_parse.clamped_int(payload.get("level", "1"), minimum=1, maximum=3, fallback=1)
+        raw_allow_vision = payload.get("allow_vision_ocr")
+        allow_vision_ocr = raw_allow_vision is True or str(raw_allow_vision or "").lower() in {"1", "true", "yes", "on"}
         with connect() as conn:
             row = sakura_questions.load_question_for_ai(conn, q_id)
             if not row:
                 return json_response(self, {"error": "题目不存在。"}, 404)
-            hint = generate_hint_with_ai(question_payload(row), level)
+            question = question_payload(row)
+            if level == 3:
+                response = full_solution_hint_response(
+                    conn,
+                    q_id,
+                    question,
+                    allow_vision_ocr=allow_vision_ocr,
+                )
+                conn.execute("UPDATE questions SET ai_hint = ? WHERE id = ?", (response["hint"], q_id))
+                return json_response(self, response)
+            hint = generate_hint_with_ai(question, level)
             conn.execute("UPDATE questions SET ai_hint = ? WHERE id = ?", (hint, q_id))
-        return json_response(self, {"level": level, "hint": hint})
+        return json_response(self, {"level": level, "hint": hint, "needs_vision_confirm": False})
 
     def handle_variations(self, q_id: str) -> None:
         with connect() as conn:
@@ -2622,17 +2745,19 @@ class DemoHandler(BaseHTTPRequestHandler):
         return json_response(self, {"date": date.today().isoformat(), "checked_in": checked})
 
     def handle_export_mistakes(self, query: dict) -> None:
-        mistakes_only = query.get("mistakes_only", ["1"])[0] != "0"
+        mistakes_only = next(iter(sakura_filters.query_values(query, "mistakes_only")), "1") != "0"
         with connect() as conn:
             pdf_bytes, count = build_mistakes_pdf(conn, query, mistakes_only=mistakes_only)
         if count == 0:
             return json_response(self, {"error": "当前范围没有可导出的错题。"}, 404)
         filename = f"mistakes_{date.today().isoformat()}_{count}q.pdf"
+        download = next(iter(sakura_filters.query_values(query, "download")), "")
+        content_type = "application/octet-stream" if download == "1" else "application/pdf"
         return sakura_http.send_attachment_bytes(
             self,
             pdf_bytes,
             filename=filename,
-            content_type="application/pdf",
+            content_type=content_type,
         )
 
     def handle_daily_rules_get(self) -> None:

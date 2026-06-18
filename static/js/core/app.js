@@ -28,6 +28,7 @@ const state = {
   mistakeSubjectAuto: false,
   mistakeCategory: "",
   mistakeChapter: "",
+  mistakeChaptersSelected: [],
   mistakeStatus: "",
   selectedMistakes: new Set(),
   dailyRules: [],
@@ -125,6 +126,7 @@ function renderAiOutput(selector, text, placeholder = "") {
   const node = typeof selector === "string" ? $(selector) : selector;
   if (!node) return;
   const raw = String(text || placeholder || "");
+  node.dataset.rawOutput = raw;
   node.innerHTML = markdownToHtml(raw);
   node.classList.add("mathjax-container");
   typesetMath(node);
@@ -244,7 +246,13 @@ async function loadMistakes() {
 
 function hasActiveMistakeFilter() {
   if (window.SakuraMistakes) return window.SakuraMistakes.hasActiveFilter();
-  return Boolean(state.mistakeDocumentId || state.mistakeSubject || state.mistakeCategory || state.mistakeChapter);
+  return Boolean(
+    state.mistakeDocumentId ||
+      state.mistakeSubject ||
+      state.mistakeCategory ||
+      state.mistakeChapter ||
+      (Array.isArray(state.mistakeChaptersSelected) && state.mistakeChaptersSelected.length)
+  );
 }
 
 function renderAll() {

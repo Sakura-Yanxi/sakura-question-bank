@@ -33,6 +33,9 @@ from sakura.content import textbook as sakura_textbook
 from sakura.core import http as sakura_http
 from sakura.core import config as sakura_config
 from sakura.core import routes as sakura_routes
+from sakura.review import export as sakura_export
+from sakura.review import daily as sakura_daily
+from sakura.review import hints as sakura_hints
 from sakura.system import backup as sakura_backup
 from sakura.system import email as sakura_email
 from sakura.system import migration as sakura_migration
@@ -621,6 +624,304 @@ def test_notification_summary_helpers() -> None:
     assert "\u672c\u6b21\u6ca1\u6709\u7b5b\u9009\u51fa" in empty[0]
 
 
+def test_mistake_export_respects_document_chapter_scope() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE documents (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            filename TEXT,
+            subject TEXT,
+            stored_path TEXT
+        );
+        CREATE TABLE questions (
+            id TEXT PRIMARY KEY,
+            document_id TEXT,
+            page_number INTEGER,
+            seq_no INTEGER,
+            chapter TEXT,
+            category TEXT,
+            status TEXT,
+            ever_wrong INTEGER DEFAULT 0,
+            mastered_at TEXT,
+            meta_tags TEXT,
+            user_note TEXT,
+            image_path TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO documents (id, title, filename, subject, stored_path) VALUES (?, ?, ?, ?, ?)",
+        ("doc1", "同一本练习册", "book.pdf", "高数", ""),
+    )
+    for qid, chapter, status, ever_wrong in (
+        ("a" * 32, "第一章", "半会", 0),
+        ("b" * 32, "第二章", "需复习", 0),
+        ("c" * 32, "第二章", "做对", 1),
+    ):
+        conn.execute(
+            """
+            INSERT INTO questions (
+                id, document_id, page_number, seq_no, chapter, category, status,
+                ever_wrong, mastered_at, meta_tags, user_note, image_path
+            ) VALUES (?, 'doc1', 1, 1, ?, '极限', ?, ?, NULL, '[]', '', '')
+            """,
+            (qid, chapter, status, ever_wrong),
+        )
+    first = sakura_export.select_mistake_rows(
+        conn,
+        {"document_id": ["doc1"], "subject": ["高数"], "chapter": ["第一章"]},
+        mistakes_only=True,
+        build_question_filters=app.build_question_filters,
+    )
+    second = sakura_export.select_mistake_rows(
+        conn,
+        {"document_id": ["doc1"], "subject": ["高数"], "chapter": ["第二章"]},
+        mistakes_only=True,
+        build_question_filters=app.build_question_filters,
+    )
+    both = sakura_export.select_mistake_rows(
+        conn,
+        {"document_id": ["doc1"], "subject": ["高数"], "chapter": ["第一章", "第二章"]},
+        mistakes_only=True,
+        build_question_filters=app.build_question_filters,
+    )
+    assert [row["id"] for row in first] == ["a" * 32]
+    assert [row["id"] for row in second] == ["b" * 32, "c" * 32]
+    assert [row["id"] for row in both] == ["a" * 32, "b" * 32, "c" * 32]
+
+    pdf_bytes, count = sakura_export.build_mistakes_pdf(both, normalize_meta_tags=lambda _tags: [])
+    assert count == 3
+    pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        cover_text = pdf[0].get_text()
+        assert "错题本导出" in cover_text
+        assert "共 3 道" in cover_text
+    finally:
+        pdf.close()
+
+
+def test_mistake_export_download_content_type() -> None:
+    class DummyConnection:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    original_connect = app.connect
+    original_build = app.build_mistakes_pdf
+    captured_mistakes_only = []
+    try:
+        app.connect = lambda: DummyConnection()
+
+        def fake_build(_conn, _query, mistakes_only=True):
+            captured_mistakes_only.append(mistakes_only)
+            return b"%PDF-demo", 1
+
+        app.build_mistakes_pdf = fake_build
+
+        preview = FakeHttpHandler()
+        app.DemoHandler.handle_export_mistakes(preview, {})
+        assert ("Content-Type", "application/pdf") in preview.headers
+        assert captured_mistakes_only[-1] is True
+
+        download = FakeHttpHandler()
+        app.DemoHandler.handle_export_mistakes(download, {"download": "1", "mistakes_only": "0"})
+        assert ("Content-Type", "application/octet-stream") in download.headers
+        assert "filename*=UTF-8''mistakes_" in dict(download.headers)["Content-Disposition"]
+        assert captured_mistakes_only[-1] is False
+    finally:
+        app.connect = original_connect
+        app.build_mistakes_pdf = original_build
+
+
+def test_mistake_export_accepts_string_query_values() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE documents (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            filename TEXT,
+            subject TEXT,
+            stored_path TEXT
+        );
+        CREATE TABLE questions (
+            id TEXT PRIMARY KEY,
+            document_id TEXT,
+            page_number INTEGER,
+            seq_no INTEGER,
+            chapter TEXT,
+            category TEXT,
+            status TEXT,
+            ever_wrong INTEGER DEFAULT 0,
+            mastered_at TEXT,
+            meta_tags TEXT,
+            user_note TEXT,
+            image_path TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO documents (id, title, filename, subject, stored_path) VALUES (?, ?, ?, ?, ?)",
+        ("doc1", "同一本练习册", "book.pdf", "高数", ""),
+    )
+    conn.executemany(
+        """
+        INSERT INTO questions (
+            id, document_id, page_number, seq_no, chapter, category, status,
+            ever_wrong, mastered_at, meta_tags, user_note, image_path
+        ) VALUES (?, 'doc1', ?, ?, ?, '极限', ?, ?, NULL, '[]', '', '')
+        """,
+        [
+            ("a" * 32, 1, 1, "第一章", "半会", 0),
+            ("b" * 32, 2, 2, "第二章", "做对", 1),
+        ],
+    )
+
+    single_chapter = sakura_export.select_mistake_rows(
+        conn,
+        {"document_id": "doc1", "subject": "高数", "chapter": "第一章", "status_group": "review"},
+        mistakes_only=True,
+        build_question_filters=app.build_question_filters,
+    )
+    selected_by_string_id = sakura_export.select_mistake_rows(
+        conn,
+        {"ids": "b" * 32, "mistakes_only": "1"},
+        mistakes_only=True,
+        build_question_filters=app.build_question_filters,
+    )
+    tuple_where, tuple_params = app.build_question_filters(
+        {"document_id": "doc1", "subject": "高数", "chapter": ("第一章", "第二章")},
+        ("document_id", "subject", "chapter"),
+    )
+
+    assert [row["id"] for row in single_chapter] == ["a" * 32]
+    assert [row["id"] for row in selected_by_string_id] == ["b" * 32]
+    assert "q.chapter IN (?,?)" in tuple_where
+    assert tuple_params == ["doc1", "第一章", "第二章", "高数"]
+
+
+def test_mistake_chapter_options_ignore_current_chapter_filter() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE documents (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            filename TEXT,
+            subject TEXT,
+            stored_path TEXT
+        );
+        CREATE TABLE questions (
+            id TEXT PRIMARY KEY,
+            document_id TEXT,
+            page_number INTEGER,
+            chapter TEXT,
+            category TEXT,
+            status TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO documents (id, title, filename, subject, stored_path) VALUES (?, ?, ?, ?, ?)",
+        ("doc1", "同一本练习册", "book.pdf", "高数", ""),
+    )
+    for qid, page_number, chapter in (
+        ("a" * 32, 1, "第一章"),
+        ("b" * 32, 2, "第二章"),
+        ("c" * 32, 3, "第三章"),
+    ):
+        conn.execute(
+            """
+            INSERT INTO questions (id, document_id, page_number, chapter, category, status)
+            VALUES (?, 'doc1', ?, ?, '极限', '做错')
+            """,
+            (qid, page_number, chapter),
+        )
+
+    options = app.get_scoped_filter_options(
+        conn,
+        {"document_id": ["doc1"], "subject": ["高数"], "chapter": ["第一章"]},
+    )
+
+    assert options["chapters"] == ["第一章", "第二章", "第三章"]
+
+
+def test_question_filters_support_review_status_group() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE documents (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            filename TEXT,
+            subject TEXT,
+            stored_path TEXT
+        );
+        CREATE TABLE questions (
+            id TEXT PRIMARY KEY,
+            document_id TEXT,
+            page_number INTEGER,
+            chapter TEXT,
+            category TEXT,
+            status TEXT,
+            ever_wrong INTEGER DEFAULT 0,
+            mastered_at TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO documents (id, title, filename, subject, stored_path) VALUES (?, ?, ?, ?, ?)",
+        ("doc1", "同一本练习册", "book.pdf", "高数", ""),
+    )
+    rows = [
+        ("a" * 32, 1, "第一章", "半会", 0, None),
+        ("b" * 32, 2, "第二章", "需复习", 0, None),
+        ("c" * 32, 3, "第三章", "做对", 1, None),
+        ("d" * 32, 4, "第四章", "做错", 0, None),
+        ("e" * 32, 5, "第五章", "做对", 1, "2026-06-18"),
+        ("f" * 32, 6, "第六章", None, 1, None),
+        ("g" * 32, 7, "第七章", "做错", 1, None),
+    ]
+    conn.executemany(
+        """
+        INSERT INTO questions (
+            id, document_id, page_number, chapter, category, status, ever_wrong, mastered_at
+        ) VALUES (?, 'doc1', ?, ?, '极限', ?, ?, ?)
+        """,
+        rows,
+    )
+
+    where, params = app.build_question_filters(
+        {"document_id": ["doc1"], "subject": ["高数"], "status_group": ["review"]},
+        ("document_id", "subject", "status_group"),
+    )
+    filtered = conn.execute(
+        f"""
+        SELECT q.id
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        {where}
+        ORDER BY q.page_number
+        """,
+        params,
+    ).fetchall()
+    options = app.get_scoped_filter_options(
+        conn,
+        {"document_id": ["doc1"], "subject": ["高数"], "status_group": ["review"]},
+    )
+
+    assert [row["id"] for row in filtered] == ["a" * 32, "b" * 32, "c" * 32, "f" * 32]
+    assert options["chapters"] == ["第一章", "第二章", "第三章", "第六章"]
+
+
 def test_scheduled_dispatch_failure_is_logged() -> None:
     original_paths = {
         "DATA_DIR": app.DATA_DIR,
@@ -663,6 +964,20 @@ def test_scheduled_dispatch_failure_is_logged() -> None:
             app.traceback.print_exc = old_print_exc
             for key, value in original_paths.items():
                 setattr(app, key, value)
+
+
+def test_daily_rule_groups_respect_total_limit() -> None:
+    groups = [
+        {"title": "A", "questions": [{"id": "a1"}, {"id": "a2"}, {"id": "a3"}]},
+        {"title": "B", "questions": [{"id": "b1"}, {"id": "b2"}]},
+    ]
+    limited, plan, available = sakura_daily.limit_daily_groups(groups, 4)
+
+    assert available == 5
+    assert [item["id"] for item in plan] == ["a1", "a2", "a3", "b1"]
+    assert [len(group["questions"]) for group in limited] == [3, 1]
+    assert sakura_daily.normalize_daily_limit("bad") == 20
+    assert sakura_daily.normalize_daily_limit(200) == 80
 
 
 def test_static_frontend_wiring() -> None:
@@ -714,6 +1029,7 @@ def test_static_frontend_wiring() -> None:
     library_js = (ROOT / "static" / "js" / "content" / "library.js").read_text(encoding="utf-8")
     mistakes_js = (ROOT / "static" / "js" / "review" / "mistakes.js").read_text(encoding="utf-8")
     question_detail_js = (ROOT / "static" / "js" / "content" / "question_detail.js").read_text(encoding="utf-8")
+    styles_css = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
     assert "window.SakuraReminderControls" in reminders_js
     assert "window.SakuraReminderControls.bind()" in core_js
     assert "reminderControlsBound" in reminders_js
@@ -722,8 +1038,20 @@ def test_static_frontend_wiring() -> None:
     assert 'value="${escapeAttr(doc.id)}">${escapeHtml(documentLabel(doc))}' in core_js
     assert 'value="${escapeAttr(category)}"' in library_js
     assert 'value="${escapeAttr(chapter)}"' in library_js
-    assert 'value="${escapeAttr(category)}"' in mistakes_js
+    assert "let showStandaloneMockArchive = false" in library_js
+    assert "state.mockQuestions = [];" in library_js
+    assert "loadQuestions({ standaloneMockArchive: true })" in library_js
+    assert 'setSelectOptions("#mistakeCategoryFilter"' in mistakes_js
+    assert "syncFiltersFromControls" in mistakes_js
     assert 'value="${escapeAttr(s)}"' in question_detail_js
+    assert "node.dataset.rawOutput = raw" in core_js
+    assert "data-expand-output=\"analysisBox\"" in question_detail_js
+    assert "detailReadingLayer" in question_detail_js
+    assert "dialog.oncancel" in question_detail_js
+    assert "detail-reading-layer" in styles_css
+    assert "max-height: clamp(200px, 32vh, 360px)" in styles_css
+    assert "overflow-x: hidden;" in styles_css
+    assert "overflow-y: auto;" in styles_css
 
 
 def test_notify_daily_endpoints() -> None:
@@ -930,6 +1258,113 @@ def make_textbook_conn() -> sqlite3.Connection:
         """
     )
     return conn
+
+
+def test_full_solution_uses_local_ocr_before_llm() -> None:
+    calls = []
+    question = {
+        "id": "q1",
+        "subject": "Math",
+        "chapter": "Limits",
+        "document_kind": "book",
+        "category": "Limit",
+        "ocr_text": "",
+        "user_note": "",
+        "meta_tags": [],
+    }
+    missing = sakura_hints.generate_hint(
+        question,
+        3,
+        llm_enabled=True,
+        call_llm=lambda prompt, temperature=0.25: calls.append(prompt) or "should not run",
+        default_subject="Math",
+        default_category="Limit",
+        default_chapter="General",
+        default_document_kind="book",
+    )
+    assert calls == []
+    assert "本地 OCR" in missing
+    assert "视觉 API" in missing
+    assert not sakura_hints.has_question_statement_text("多元函数积分学\n曲线积分")
+    assert sakura_hints.has_question_statement_text(
+        "2. 设 Ω 是由上半球面 z=√(4-x^2-y^2) 与曲面 x^2+y^2=3z 所围成的空间有界闭区域，则 Ω 的形心坐标 z̄ = ____。"
+    )
+
+    conn = make_import_conn()
+    conn.execute(
+        "INSERT INTO documents (id, title, subject, document_kind, filename, stored_path, page_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("doc1", "Book", "Math", "book", "book.pdf", "", 1, "now"),
+    )
+    conn.execute(
+        """
+        INSERT INTO questions (
+            id, document_id, page_number, seq_no, question_no, image_path, ocr_text,
+            category, subcategory, chapter, difficulty, status, meta_tags, created_at
+        ) VALUES (?, 'doc1', 1, 1, '1', ?, '多元函数积分学\n曲线积分', 'Limit', '', 'Limits', '基础', '', '[]', 'now')
+        """,
+        ("q1", "question.png"),
+    )
+    row = sakura_questions.load_question_for_ai(conn, "q1")
+    payload = app.question_payload(row)
+    old_ocr = app.sakura_ocr.image_ocr_text
+    try:
+        app.sakura_ocr.image_ocr_text = lambda path, min_score=0.35: "2. 求极限 lim_{x->0} sin x / x"
+        prepared = app.prepare_question_for_full_solution(conn, "q1", payload)
+    finally:
+        app.sakura_ocr.image_ocr_text = old_ocr
+    assert prepared["ocr_text"] == "2. 求极限 lim_{x->0} sin x / x"
+    assert conn.execute("SELECT ocr_text FROM questions WHERE id = 'q1'").fetchone()["ocr_text"] == prepared["ocr_text"]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        image_path = Path(tmp) / "question.png"
+        image_path.write_bytes(b"not-a-real-image")
+        conn.execute(
+            """
+            INSERT INTO questions (
+                id, document_id, page_number, seq_no, question_no, image_path, ocr_text,
+                category, subcategory, chapter, difficulty, status, meta_tags, created_at
+            ) VALUES (?, 'doc1', 1, 2, '2', ?, '', 'Limit', '', 'Limits', '基础', '', '[]', 'now')
+            """,
+            ("q2", str(image_path)),
+        )
+        row = sakura_questions.load_question_for_ai(conn, "q2")
+        payload = app.question_payload(row)
+        vision_calls = []
+        text_calls = []
+        old_ocr = app.sakura_ocr.image_ocr_text
+        old_vision_enabled = app.vision_enabled
+        old_call_llm_vision = app.call_llm_vision
+        old_image_to_data_url = app.sakura_ai.image_to_data_url
+        old_llm_enabled = app.llm_enabled
+        old_call_llm = app.call_llm
+        try:
+            app.sakura_ocr.image_ocr_text = lambda path, min_score=0.35: ""
+            app.vision_enabled = lambda: True
+            app.call_llm_vision = lambda messages, temperature=0.05: vision_calls.append(messages) or "求极限 lim_{x->0} sin x / x"
+            app.sakura_ai.image_to_data_url = lambda path: "data:image/png;base64,abc"
+            app.llm_enabled = lambda: True
+            app.call_llm = lambda prompt, temperature=0.25: text_calls.append(prompt) or "完整解析"
+
+            pending = app.full_solution_hint_response(conn, "q2", payload, allow_vision_ocr=False)
+            assert pending["needs_vision_confirm"] is True
+            assert pending["vision_available"] is True
+            assert "视觉 API" in pending["vision_confirm_message"]
+            assert vision_calls == []
+            assert text_calls == []
+
+            confirmed = app.full_solution_hint_response(conn, "q2", payload, allow_vision_ocr=True)
+            assert confirmed["needs_vision_confirm"] is False
+            assert confirmed["hint"] == "完整解析"
+            assert len(vision_calls) == 1
+            assert len(text_calls) == 1
+            assert conn.execute("SELECT ocr_text FROM questions WHERE id = 'q2'").fetchone()["ocr_text"] == "求极限 lim_{x->0} sin x / x"
+        finally:
+            app.sakura_ocr.image_ocr_text = old_ocr
+            app.vision_enabled = old_vision_enabled
+            app.call_llm_vision = old_call_llm_vision
+            app.sakura_ai.image_to_data_url = old_image_to_data_url
+            app.llm_enabled = old_llm_enabled
+            app.call_llm = old_call_llm
 
 
 def test_import_insert_and_ocr_helpers() -> None:
@@ -1771,11 +2206,18 @@ def main() -> None:
     test_email_notification_helpers()
     test_practice_pages_and_reminder_helpers()
     test_notification_summary_helpers()
+    test_mistake_export_respects_document_chapter_scope()
+    test_mistake_export_download_content_type()
+    test_mistake_export_accepts_string_query_values()
+    test_mistake_chapter_options_ignore_current_chapter_filter()
+    test_question_filters_support_review_status_group()
     test_scheduled_dispatch_failure_is_logged()
+    test_daily_rule_groups_respect_total_limit()
     test_static_frontend_wiring()
     test_notify_daily_endpoints()
     test_pdf_helpers()
     test_chapter_carry_state()
+    test_full_solution_uses_local_ocr_before_llm()
     test_import_insert_and_ocr_helpers()
     test_question_update_helper()
     test_scanned_textbook_requires_image_or_vision()

@@ -109,9 +109,10 @@
       ${dailyQuestionGrid(questions, "这个推送批次没有题目。")}`;
   }
 
-  function dailySection({ key, title, subtitle, count, body }) {
+  function dailySection({ key, title, subtitle, count, countText, body }) {
     const collapsed = isDailySectionCollapsed(key);
     const bodyId = `daily-section-body-${key}`;
+    const badgeText = countText || `${count} 题`;
     return `
       <section class="daily-collapsible ${collapsed ? "collapsed" : ""}" data-daily-section="${escapeAttr(key)}">
         <div class="daily-section-head">
@@ -120,7 +121,7 @@
             <p>${escapeHtml(subtitle || "")}</p>
           </div>
           <div class="daily-section-tools">
-            <span>${count} 题</span>
+            <span>${escapeHtml(badgeText)}</span>
             <button class="ghost daily-collapse-btn" type="button" data-daily-collapse="${escapeAttr(key)}" aria-expanded="${String(!collapsed)}" aria-controls="${bodyId}" title="折叠/展开">
               <i data-lucide="${collapsed ? "chevron-right" : "chevron-down"}"></i>
             </button>
@@ -137,19 +138,30 @@
     const data = await api("/api/daily");
     const groups = data.groups || [];
     const pushQuestions = data.latest_push_batch?.questions || [];
+    const queueCount = groups.reduce((sum, group) => sum + (group.questions || []).length, 0);
+    const availableCount = Number(data.available_count ?? queueCount);
+    const limitCount = Number(data.limit || queueCount || 0);
+    const capped = Boolean(data.capped || availableCount > limitCount);
+    const currentSubtitle = capped
+      ? `当前规则实际匹配 ${availableCount} 题，页面按每日总上限先列出 ${queueCount} 题。自定义规则启用时按规则顺序合并，但不会超过总上限；没有规则时按艾宾浩斯到期生成。`
+      : `当前规则匹配 ${queueCount} 题；这是实时待练队列，不等于额外推送。自定义规则启用时按规则顺序合并，但不会超过总上限；没有规则时按艾宾浩斯到期生成。`;
+    const pushSubtitle = data.latest_push_batch?.is_today
+      ? "这里是今天已经生成/推送过的批次记录，用来回填完成情况；不是在当前队列之外又多推一组。"
+      : "今天还没有推送批次时，这里只显示最近一次有题目的历史推送记录。";
     $("#dailyMessage").textContent = `${data.date} · ${data.message}`;
     $("#dailyGrid").innerHTML = [
       dailySection({
         key: "ebbinghaus",
-        title: "艾宾浩斯 / 当前练习队列",
-        subtitle: "按到期复习、自定义每日规则和薄弱章节生成。",
-        count: groups.reduce((sum, group) => sum + (group.questions || []).length, 0),
+        title: "当前每日练习队列",
+        subtitle: currentSubtitle,
+        count: queueCount,
+        countText: capped ? `${queueCount}/${availableCount} 题` : `${queueCount} 题`,
         body: renderDailyGroups(groups),
       }),
       dailySection({
         key: "pushed",
         title: data.latest_push_batch?.is_today ? "今日已推送错题" : "最近推送错题",
-        subtitle: "优先显示今天的推送；今天没有题目时，自动显示最近一次有题目的推送。",
+        subtitle: pushSubtitle,
         count: pushQuestions.length,
         body: renderPushBatch(data.latest_push_batch),
       }),

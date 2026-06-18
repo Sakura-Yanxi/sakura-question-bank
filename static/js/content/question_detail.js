@@ -115,6 +115,43 @@
     });
   }
 
+  function openDetailReading(sourceId, title) {
+    const source = document.getElementById(sourceId);
+    const layer = $("#detailReadingLayer");
+    const content = $("#detailReadingContent");
+    const titleNode = $("#detailReadingTitle");
+    if (!source || !layer || !content || !titleNode) return;
+    titleNode.textContent = title;
+    renderAiOutput(content, source.dataset.rawOutput || source.textContent || "", "这里还没有可展开的内容。");
+    layer.classList.remove("hidden");
+    $("#detailDialog")?.classList.add("reading-mode");
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function closeDetailReading() {
+    $("#detailReadingLayer")?.classList.add("hidden");
+    $("#detailDialog")?.classList.remove("reading-mode");
+  }
+
+  function isDetailReadingOpen() {
+    const layer = $("#detailReadingLayer");
+    return Boolean(layer && !layer.classList.contains("hidden"));
+  }
+
+  function bindDetailReading() {
+    $$("[data-expand-output]").forEach((button) => {
+      button.onclick = () => openDetailReading(button.dataset.expandOutput, button.dataset.outputTitle || "解析阅读");
+    });
+    const close = $("#closeDetailReading");
+    if (close) close.onclick = closeDetailReading;
+    const layer = $("#detailReadingLayer");
+    if (layer) {
+      layer.onclick = (event) => {
+        if (event.target === layer) closeDetailReading();
+      };
+    }
+  }
+
   function renderDetail(q, currentStatus, prev, next, positionText) {
     const memoryText = q.ever_wrong
       ? (q.mastered_at ? "已完成多轮复习，标记为已掌握。" : `保持阶段：${q.retention_stage || 1} 天，下次复习：${q.next_review_at || "待安排"}`)
@@ -190,8 +227,32 @@
             <button id="needReview" class="ghost">加入复习</button>
             <button id="deleteDetailQuestion" class="danger">删除题目</button>
           </div>
-          <article id="analysisBox" class="math-output mathjax-container"></article>
-          <article id="variationsBox" class="math-output mathjax-container"></article>
+          <section class="detail-output-panel">
+            <div class="detail-output-head">
+              <div><strong>智能解析</strong><small>Hint / Full Solution / 错题分析</small></div>
+              <button class="ghost mini" type="button" data-expand-output="analysisBox" data-output-title="智能解析"><i data-lucide="maximize-2"></i>展开阅读</button>
+            </div>
+            <article id="analysisBox" class="math-output mathjax-container"></article>
+          </section>
+          <section class="detail-output-panel">
+            <div class="detail-output-head">
+              <div><strong>举一反三</strong><small>同类变式练习</small></div>
+              <button class="ghost mini" type="button" data-expand-output="variationsBox" data-output-title="举一反三"><i data-lucide="maximize-2"></i>展开阅读</button>
+            </div>
+            <article id="variationsBox" class="math-output mathjax-container"></article>
+          </section>
+          <div id="detailReadingLayer" class="detail-reading-layer hidden">
+            <section class="detail-reading-panel" role="dialog" aria-modal="true" aria-labelledby="detailReadingTitle">
+              <div class="detail-reading-head">
+                <div>
+                  <strong id="detailReadingTitle">解析阅读</strong>
+                  <small>完整阅读模式，关闭后回到当前题目。</small>
+                </div>
+                <button id="closeDetailReading" class="ghost mini" type="button"><i data-lucide="minimize-2"></i>收起</button>
+              </div>
+              <article id="detailReadingContent" class="detail-reading-content mathjax-container"></article>
+            </section>
+          </div>
         </div>
       </div>`;
   }
@@ -201,6 +262,7 @@
     const currentStatus = presetStatus || q.status;
     const dialog = $("#detailDialog");
     dialog.classList.remove("archive-mode");
+    dialog.classList.remove("reading-mode");
     const prev = detailNeighbor(q.id, -1);
     const next = detailNeighbor(q.id, 1);
     const positionText = detailPositionText(q.id);
@@ -210,8 +272,17 @@
     renderAiOutput("#variationsBox", q.ai_variations, "点击“举一反三”，生成同类变式练习。");
     typesetMath($("#detailContent"));
     if (window.lucide) lucide.createIcons();
+    bindDetailReading();
+    dialog.oncancel = (event) => {
+      if (!isDetailReadingOpen()) return;
+      event.preventDefault();
+      closeDetailReading();
+    };
 
-    $("#closeDetail").onclick = () => dialog.close();
+    $("#closeDetail").onclick = () => {
+      closeDetailReading();
+      dialog.close();
+    };
     $("#prevQuestion").onclick = () => {
       if (!prev.id) return;
       dialog.close();
@@ -269,9 +340,20 @@
     };
     [1, 2, 3].forEach((level) => {
       $(`#hint${level}`).onclick = async () => {
-        renderAiOutput("#analysisBox", level === 3 ? "正在生成完整 LaTeX 解析..." : "正在生成提示...");
+        renderAiOutput("#analysisBox", level === 3 ? "正在本地识别题干并生成完整解析..." : "正在生成提示...");
         await persistDetailContext(q.id);
-        const data = await api(`/api/questions/${q.id}/hint`, { method: "POST", body: JSON.stringify({ level }) });
+        let data = await api(`/api/questions/${q.id}/hint`, { method: "POST", body: JSON.stringify({ level }) });
+        if (level === 3 && data.needs_vision_confirm) {
+          renderAiOutput("#analysisBox", data.hint);
+          const ok = confirm(data.vision_confirm_message || "本地 OCR 没有识别出题干。是否调用视觉 API 识别这张题图？");
+          if (ok) {
+            renderAiOutput("#analysisBox", "正在调用视觉 API 识别题干并生成完整解析...");
+            data = await api(`/api/questions/${q.id}/hint`, {
+              method: "POST",
+              body: JSON.stringify({ level, allow_vision_ocr: true }),
+            });
+          }
+        }
         renderAiOutput("#analysisBox", data.hint);
         await refresh();
       };

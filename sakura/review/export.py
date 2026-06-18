@@ -9,6 +9,17 @@ import re
 import fitz
 
 
+def query_first(query: dict, key: str, default: str = "") -> str:
+    values = query.get(key, [])
+    if not isinstance(values, (list, tuple)):
+        values = [values]
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return default
+
+
 def select_mistake_rows(
     conn,
     query: dict,
@@ -21,7 +32,7 @@ def select_mistake_rows(
         query,
         ("category", "status", "document_id", "chapter", "subject", "search"),
     )
-    raw_ids = query.get("ids", [""])[0].strip()
+    raw_ids = query_first(query, "ids")
     if raw_ids:
         selected_ids = [item for item in raw_ids.split(",") if re.fullmatch(r"[0-9a-fA-F]{32}", item)]
         if selected_ids:
@@ -31,9 +42,9 @@ def select_mistake_rows(
         else:
             where = f"{where} AND 1 = 0" if where else "WHERE 1 = 0"
 
-    status_group = query.get("status_group", [""])[0]
+    status_group = query_first(query, "status_group")
     if status_group == "review" and not raw_ids:
-        cond = "(q.status IN ('半会', '需复习') OR (q.ever_wrong = 1 AND q.mastered_at IS NULL AND q.status <> '做错'))"
+        cond = "(q.status IN ('半会', '需复习') OR (q.ever_wrong = 1 AND q.mastered_at IS NULL AND COALESCE(q.status, '') <> '做错'))"
         where = f"{where} AND {cond}" if where else f"WHERE {cond}"
 
     if mistakes_only:
@@ -130,11 +141,13 @@ def preferred_cjk_font() -> str | None:
     return None
 
 
-def text_panel_png(lines: list[tuple[str, int, tuple[int, int, int]]], width: int, height: int, align: str = "left") -> bytes:
+def text_panel_png(lines: list[tuple[str, int, tuple[int, int, int]]], width: int, height: int, align: str = "left") -> bytes | None:
     """Render Chinese title text with Pillow to avoid PyMuPDF CJK spacing issues."""
     from PIL import Image, ImageDraw, ImageFont
 
     font_path = preferred_cjk_font()
+    if not font_path:
+        return None
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image)
     y = max(10, (height - sum(size + 12 for _, size, _ in lines)) // 2)
@@ -152,6 +165,39 @@ def text_panel_png(lines: list[tuple[str, int, tuple[int, int, int]]], width: in
     return out.getvalue()
 
 
+def insert_text_panel(
+    page: fitz.Page,
+    rect: fitz.Rect,
+    lines: list[tuple[str, int, tuple[int, int, int]]],
+    *,
+    align: str = "left",
+    image_width: int = 1600,
+    image_height: int = 420,
+    prefer_text: bool = False,
+) -> None:
+    image = None if prefer_text else text_panel_png(lines, width=image_width, height=image_height, align=align)
+    if image:
+        page.insert_image(rect, stream=image, keep_proportion=True)
+        return
+
+    y = rect.y0 + max(0, (rect.height - sum(size + 10 for _, size, _ in lines)) / 2)
+    for text, size, color in lines:
+        text = str(text or "")
+        if len(text) > 120:
+            text = text[:117] + "..."
+        font_size = max(8, min(size * 0.36, rect.height * 0.34))
+        textbox = fitz.Rect(rect.x0, y, rect.x1, min(rect.y1, y + size * 1.35))
+        page.insert_textbox(
+            textbox,
+            text,
+            fontsize=font_size,
+            fontname="china-s",
+            color=tuple(channel / 255 for channel in color),
+            align=1 if align == "center" else 0,
+        )
+        y += font_size * 1.45
+
+
 def build_mistakes_pdf(
     rows: Iterable,
     normalize_meta_tags: Callable[[object], list[str]],
@@ -163,18 +209,17 @@ def build_mistakes_pdf(
 
     today = date.today()
     cover = doc.new_page(width=width, height=height)
-    cover.insert_image(
+    insert_text_panel(
+        cover,
         fitz.Rect(margin, 220, width - margin, 380),
-        stream=text_panel_png(
-            [
-                ("错题本导出", 88, (32, 36, 46)),
-                (f"共 {len(items)} 道 · 生成于 {today.isoformat()}", 44, (107, 114, 128)),
-            ],
-            width=1600,
-            height=420,
-            align="center",
-        ),
-        keep_proportion=True,
+        [
+            ("错题本导出", 88, (32, 36, 46)),
+            (f"共 {len(items)} 道 · 生成于 {today.isoformat()}", 44, (107, 114, 128)),
+        ],
+        align="center",
+        image_width=1600,
+        image_height=420,
+        prefer_text=True,
     )
 
     source_cache: dict[str, fitz.Document] = {}
@@ -206,17 +251,15 @@ def build_mistakes_pdf(
             note = (item.get("user_note") or "").strip()
             if note:
                 sub += f"　备注：{note[:40]}"
-            page.insert_image(
+            insert_text_panel(
+                page,
                 fitz.Rect(margin, 22, width - margin, 76),
-                stream=text_panel_png(
-                    [
-                        (head, 34, (32, 36, 46)),
-                        (sub, 24, (107, 114, 128)),
-                    ],
-                    width=1600,
-                    height=170,
-                ),
-                keep_proportion=True,
+                [
+                    (head, 34, (32, 36, 46)),
+                    (sub, 24, (107, 114, 128)),
+                ],
+                image_width=1600,
+                image_height=170,
             )
 
             img_path = Path(item.get("image_path", ""))

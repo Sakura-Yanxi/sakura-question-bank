@@ -1,5 +1,6 @@
 (function () {
   let isBound = false;
+  let showStandaloneMockArchive = false;
 
   function hasActiveLibraryFilter() {
     return Boolean(state.category || state.status || state.documentId || state.subject || state.chapter || (canSearchLibrary() && state.search));
@@ -9,12 +10,23 @@
     return Boolean(state.documentId || state.subject || state.status);
   }
 
-  async function loadQuestions() {
+  async function loadQuestions(options = {}) {
+    showStandaloneMockArchive = Boolean(options.standaloneMockArchive);
     const loadMockArchive = async () => {
       const data = await api("/api/questions?document_kind=%E6%A8%A1%E6%8B%9F%E5%8D%B7");
       state.mockQuestions = data.questions || [];
     };
-    if (state.view === "library" && !hasActiveLibraryFilter()) {
+    if (state.view === "library" && !hasActiveLibraryFilter() && !showStandaloneMockArchive) {
+      state.questions = [];
+      state.mockQuestions = [];
+      state.stats = {};
+      state.subjectStats = {};
+      state.categories = [];
+      state.chapters = [];
+      renderAll();
+      return;
+    }
+    if (state.view === "library" && !hasActiveLibraryFilter() && showStandaloneMockArchive) {
       await loadMockArchive();
       state.questions = [];
       state.stats = {};
@@ -53,8 +65,11 @@
     const libraryEmptyText = hasActiveLibraryFilter()
       ? "当前筛选下没有题目。可以换一个科目、资料或清空筛选条件。"
       : "请先选择科目、资料或掌握状态后查看题目。";
+    const mockEmptyText = hasActiveLibraryFilter() || showStandaloneMockArchive
+      ? "还没有模拟卷题目。先上传整卷 PDF。"
+      : "请先选择科目、资料或掌握状态后查看套卷题目。";
     renderQuestionGrid("#questionGrid", regularQuestions, libraryEmptyText);
-    renderQuestionGrid("#mockQuestionGrid", mockQuestions, "还没有模拟卷题目。先上传整卷 PDF。");
+    renderQuestionGrid("#mockQuestionGrid", mockQuestions, mockEmptyText);
     if (state.view === "mistakes") renderMistakeGrid();
   }
 
@@ -203,6 +218,7 @@
   }
 
   async function showAllQuestions() {
+    showStandaloneMockArchive = false;
     state.documentId = "";
     state.subject = "";
     state.category = "";
@@ -225,7 +241,7 @@
     $("#searchInput").value = "";
     clearTimeout(window.searchTimer);
     setView("library");
-    await loadQuestions();
+    await loadQuestions({ standaloneMockArchive: true });
     $("#mockQuestionGrid").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -234,6 +250,7 @@
     isBound = true;
 
     on("#documentFilter", "change", async (event) => {
+      showStandaloneMockArchive = false;
       state.documentId = event.target.value;
       const doc = state.documents.find((item) => item.id === state.documentId);
       if (doc) state.subject = doc.subject || state.subject;
@@ -243,6 +260,7 @@
     });
 
     on("#subjectFilter", "change", async (event) => {
+      showStandaloneMockArchive = false;
       state.subject = event.target.value;
       const docs = state.documents.filter((doc) => !state.subject || doc.subject === state.subject);
       if (state.documentId && !docs.some((doc) => doc.id === state.documentId)) {
@@ -254,23 +272,27 @@
     });
 
     on("#categoryFilter", "change", async (event) => {
+      showStandaloneMockArchive = false;
       state.category = event.target.value;
       state.chapter = "";
       await loadQuestions();
     });
 
     on("#chapterFilter", "change", async (event) => {
+      showStandaloneMockArchive = false;
       state.chapter = event.target.value;
       await loadQuestions();
     });
 
     on("#statusFilter", "change", async (event) => {
+      showStandaloneMockArchive = false;
       state.status = event.target.value;
       await loadQuestions();
     });
 
     on("#searchInput", "input", async (event) => {
       if (event.target.disabled) return;
+      showStandaloneMockArchive = false;
       state.search = event.target.value.trim();
       clearTimeout(window.searchTimer);
       window.searchTimer = setTimeout(loadQuestions, 250);
