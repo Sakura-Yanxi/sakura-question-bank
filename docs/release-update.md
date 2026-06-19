@@ -16,7 +16,7 @@ Sakura 的更新提示走 GitHub Releases。维护者发布 `v1.0.1`、`v1.1.0` 
 1. 修改 `sakura/__init__.py`：
 
    ```python
-   __version__ = "1.0.10"
+   __version__ = "1.0.11"
    ```
 
 2. 更新 README 或变更说明，确认版本说明和实际功能一致。
@@ -33,15 +33,15 @@ Sakura 的更新提示走 GitHub Releases。维护者发布 `v1.0.1`、`v1.1.0` 
 
    ```bash
    git add .
-   git commit -m "Release v1.0.10"
+   git commit -m "Release v1.0.11"
    git push origin main
    ```
 
 5. 打开 GitHub 仓库的 **Releases** 页面，点击 **Create a new release**。
 
-6. `Choose a tag` 填 `v1.0.10`，目标分支选 `main`。
+6. `Choose a tag` 填 `v1.0.11`，目标分支选 `main`。
 
-7. Release title 写 `v1.0.10`。说明里建议写：
+7. Release title 写 `v1.0.11`。说明里建议写：
 
    ```text
    - 主要新增功能
@@ -52,6 +52,25 @@ Sakura 的更新提示走 GitHub Releases。维护者发布 `v1.0.1`、`v1.1.0` 
    ```
 
 8. 点击 **Publish release**。用户端下一次检查版本时就能看到新版本。
+
+## v1.0.11 发布说明
+
+建议 GitHub Release 只保留最新版本 `v1.0.11`，避免新用户下载到旧包。
+
+本版本主要修复复盘记录和复习排期的混用问题：
+
+- 保存题目详情标注时，不再自动改动艾宾浩斯的 `last_reviewed_at`、`review_count` 和 `next_review_at`。
+- 每日练习正式提交结果时，仍然按复习结果更新保持阶段和下次复习日期。
+- 新增旧备注迁移保护：如果旧版本只在 `user_note` 里保存过备注，第一次追加新复盘前会先把旧备注补进多刷记录。
+- 更新题目详情脚本缓存版本，部署后浏览器会加载新的保存逻辑。
+
+升级方式：
+
+- Git 安装用户：运行 `update.bat` / `update.sh`，或在页面的“提醒与设置 -> 版本管理”中一键更新。
+- Release zip 用户：下载最新源码包覆盖代码文件，保留自己的 `data/`、`.env` 和 `.venv`。
+- systemd 服务器部署：页面内更新后会尝试自动重启；手动更新后请执行 `systemctl restart sakura-study.service`。
+
+本版本不需要迁移数据库，不会删除题库、题图、教材、复盘记录、`.env` 或本地虚拟环境。
 
 ## 使用者更新
 

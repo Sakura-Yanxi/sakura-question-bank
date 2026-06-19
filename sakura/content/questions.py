@@ -111,6 +111,31 @@ def insert_question_review_note(
     }
 
 
+def ensure_legacy_review_note(conn, q_id: str, *, normalize_meta_tags=None) -> dict | None:
+    row = conn.execute("SELECT * FROM questions WHERE id = ?", (q_id,)).fetchone()
+    if not row:
+        raise QuestionUpdateError("题目不存在。", 404)
+    old_note = str(row["user_note"] or "").strip()
+    if not old_note:
+        return None
+    existing = conn.execute(
+        "SELECT 1 FROM question_review_notes WHERE question_id = ? LIMIT 1",
+        (q_id,),
+    ).fetchone()
+    if existing:
+        return None
+    return insert_question_review_note(
+        conn,
+        q_id,
+        status=row["status"],
+        note=old_note,
+        meta_tags=row["meta_tags"],
+        source="legacy",
+        created_at=row["last_reviewed_at"] or row["created_at"],
+        normalize_meta_tags=normalize_meta_tags,
+    )
+
+
 def load_question_index(conn, where: str, params: list[str]) -> tuple[list, list, list]:
     rows = conn.execute(
         f"""
@@ -309,6 +334,7 @@ def update_question(
     schedule_for_status,
 ) -> object:
     updates = {key: value for key, value in payload.items() if key in QUESTION_UPDATE_FIELDS}
+    should_advance_review = bool(payload.get("advance_review"))
     if not updates:
         raise QuestionUpdateError("没有可更新字段。", 400)
 
@@ -324,7 +350,7 @@ def update_question(
         existing_tags = normalized_meta_tags if normalized_meta_tags is not None else normalize_meta_tags(current["meta_tags"])
         if not existing_tags:
             raise QuestionUpdateError("标记错题前，请至少选择一个元认知错因标签。", 400)
-    if updates.get("status") in {*wrongish_statuses, "做对"}:
+    if should_advance_review and updates.get("status") in {*wrongish_statuses, "做对"}:
         updates["last_reviewed_at"] = datetime.now().isoformat(timespec="seconds")
         updates["review_count"] = "review_count + 1"
         updates.update(schedule_for_status(current, updates["status"]))

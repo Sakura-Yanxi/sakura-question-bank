@@ -8,12 +8,21 @@ Sakura 做题集是一个本地优先的个人学习工作台，用来管理 PDF
 
 ## 当前状态
 
-- 当前版本：`v1.0.10`
+- 当前版本：`v1.0.11`
 - 项目地址：[Sakura-Yanxi/sakura-question-bank](https://github.com/Sakura-Yanxi/sakura-question-bank)
 - 发布页：[GitHub Releases](https://github.com/Sakura-Yanxi/sakura-question-bank/releases)
 - 更新方式：Git 用户运行 `update.bat` / `update.sh`；下载压缩包的用户覆盖代码文件，并保留自己的 `data/` 和 `.env`。
-- 当前代码结构：后端入口 [app.py](app.py) 已收敛为服务装配和 HTTP Handler，主要业务逻辑已经拆到 `sakura/` 各模块；当前 `app.py` 约 `2438` 行。
+- 当前代码结构：后端入口 [app.py](app.py) 已收敛为服务装配和 HTTP Handler，主要业务逻辑已经拆到 `sakura/` 各模块；当前 `app.py` 约 `2880` 行。
 - 宣传海报：见 [docs/poster/sakura-demo-poster.png](docs/poster/sakura-demo-poster.png)。
+
+## 最新版本说明
+
+`v1.0.11` 主要整理了复盘和更新体验：
+
+- 题目详情里保存状态、错因和本次复盘补充时，不再自动推进艾宾浩斯复习日期。
+- 每日练习正式提交结果时，仍然会正常更新复习次数、保持阶段和下次复习时间。
+- 老版本里只存在于旧备注字段的内容，会在保存新复盘前先补进多刷记录，避免被新备注覆盖。
+- 更新了题目详情脚本缓存版本，部署后浏览器能拿到最新交互逻辑。
 
 ## 主要功能
 

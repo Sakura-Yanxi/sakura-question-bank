@@ -86,6 +86,7 @@
       mistake_reason: tags.join("、"),
       chapter: $("#detailChapter")?.value || "",
       question_no: $("#detailQuestionNo")?.value?.trim() || "",
+      advance_review: false,
     };
     if (note) {
       patch.user_note = note;
@@ -302,6 +303,7 @@
       await updateQuestion(q.id, {
         ...patch,
         status: "需复习",
+        advance_review: true,
       });
       dialog.close();
     };

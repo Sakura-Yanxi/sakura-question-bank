@@ -2089,6 +2089,12 @@ class DemoHandler(BaseHTTPRequestHandler):
         should_append_note = bool(payload.get("append_review_note")) and bool(review_note)
         with connect() as conn:
             try:
+                if should_append_note:
+                    sakura_questions.ensure_legacy_review_note(
+                        conn,
+                        q_id,
+                        normalize_meta_tags=normalize_meta_tags,
+                    )
                 row = sakura_questions.update_question(
                     conn,
                     q_id,

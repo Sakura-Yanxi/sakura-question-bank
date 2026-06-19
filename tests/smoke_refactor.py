@@ -1211,10 +1211,20 @@ def make_import_conn() -> sqlite3.Connection:
             difficulty TEXT,
             status TEXT,
             meta_tags TEXT,
+            user_note TEXT,
             review_count INTEGER DEFAULT 0,
             last_reviewed_at TEXT,
             next_review_at TEXT,
             retention_stage INTEGER,
+            created_at TEXT
+        );
+        CREATE TABLE question_review_notes (
+            id TEXT PRIMARY KEY,
+            question_id TEXT,
+            status TEXT,
+            note TEXT,
+            meta_tags TEXT,
+            source TEXT,
             created_at TEXT
         );
         """
@@ -1735,7 +1745,7 @@ def test_question_update_helper() -> None:
     row = sakura_questions.update_question(
         conn,
         "q1",
-        {"status": "wrong", "meta_tags": ["calc"], "category": "new"},
+        {"status": "wrong", "meta_tags": ["calc"], "category": "new", "advance_review": True},
         normalize_meta_tags=normalize_tags,
         wrongish_statuses={"wrong"},
         schedule_for_status=schedule,
@@ -1744,6 +1754,103 @@ def test_question_update_helper() -> None:
     assert json.loads(row["meta_tags"]) == ["calc"]
     assert row["review_count"] == 1
     assert row["next_review_at"] == "2026-01-02"
+
+    row = sakura_questions.update_question(
+        conn,
+        "q1",
+        {"status": "做对", "meta_tags": ["calc"], "user_note": "只改标注"},
+        normalize_meta_tags=normalize_tags,
+        wrongish_statuses={"wrong"},
+        schedule_for_status=schedule,
+    )
+    assert row["review_count"] == 1
+    assert row["next_review_at"] == "2026-01-02"
+
+    row = sakura_questions.update_question(
+        conn,
+        "q1",
+        {"status": "做对", "meta_tags": ["calc"], "advance_review": True},
+        normalize_meta_tags=normalize_tags,
+        wrongish_statuses={"wrong"},
+        schedule_for_status=schedule,
+    )
+    assert row["review_count"] == 2
+    assert row["next_review_at"] == "2026-01-02"
+
+
+def test_legacy_user_note_is_preserved_before_append() -> None:
+    conn = make_import_conn()
+    sakura_documents.insert_document(
+        conn,
+        doc_id="d1",
+        title="Title",
+        subject="math",
+        document_kind="book",
+        filename="a.pdf",
+        stored_path=Path("data/uploads/a.pdf"),
+        page_count=12,
+        created_at="now",
+    )
+    sakura_questions.insert_imported_question(
+        conn,
+        q_id="q1",
+        doc_id="d1",
+        page_number=1,
+        seq_no=1,
+        question_no="",
+        image_path=Path("data/pages/q.png"),
+        question_text="text",
+        classification={"category": "old", "subcategory": "rule", "chapter": "ch1", "difficulty": "medium"},
+        created_at="2026-06-01T10:00:00",
+    )
+    conn.execute(
+        """
+        UPDATE questions
+        SET user_note = ?, status = ?, meta_tags = ?, last_reviewed_at = ?
+        WHERE id = ?
+        """,
+        ("旧备注", "wrong", json.dumps(["calc"], ensure_ascii=False), "2026-06-02T10:00:00", "q1"),
+    )
+
+    def normalize_tags(value):
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        try:
+            parsed = json.loads(value or "[]")
+        except (TypeError, json.JSONDecodeError):
+            return []
+        return [str(item) for item in parsed]
+
+    legacy = sakura_questions.ensure_legacy_review_note(conn, "q1", normalize_meta_tags=normalize_tags)
+    assert legacy is not None
+    assert legacy["note"] == "旧备注"
+    assert legacy["source"] == "legacy"
+    assert legacy["created_at"] == "2026-06-02T10:00:00"
+
+    assert sakura_questions.ensure_legacy_review_note(conn, "q1", normalize_meta_tags=normalize_tags) is None
+    row = sakura_questions.update_question(
+        conn,
+        "q1",
+        {"user_note": "新复盘", "review_note": "新复盘", "append_review_note": True},
+        normalize_meta_tags=normalize_tags,
+        wrongish_statuses={"wrong"},
+        schedule_for_status=lambda _current, _status: {},
+    )
+    sakura_questions.insert_question_review_note(
+        conn,
+        "q1",
+        status=row["status"],
+        note="新复盘",
+        meta_tags=row["meta_tags"],
+        source="detail",
+        created_at="2026-06-03T10:00:00",
+        normalize_meta_tags=normalize_tags,
+    )
+    notes = conn.execute(
+        "SELECT note, source FROM question_review_notes WHERE question_id = ? ORDER BY created_at, id",
+        ("q1",),
+    ).fetchall()
+    assert [(row["note"], row["source"]) for row in notes] == [("旧备注", "legacy"), ("新复盘", "detail")]
 
 
 def test_scanned_textbook_requires_image_or_vision() -> None:
@@ -2220,6 +2327,7 @@ def main() -> None:
     test_full_solution_uses_local_ocr_before_llm()
     test_import_insert_and_ocr_helpers()
     test_question_update_helper()
+    test_legacy_user_note_is_preserved_before_append()
     test_scanned_textbook_requires_image_or_vision()
     test_backup_options()
     test_backup_restore_path_guards()
