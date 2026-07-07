@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 
+def table_has_column(conn, table: str, column: str) -> bool:
+    return column in {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
 def import_metadata(
     *,
     filename: str,
@@ -77,14 +81,25 @@ def insert_document(
     stored_path: Path,
     page_count: int,
     created_at: str,
+    chapter_rule: str = "auto",
 ) -> None:
-    conn.execute(
-        """
-        INSERT INTO documents (id, title, subject, document_kind, filename, stored_path, page_count, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (doc_id, title, subject, document_kind, filename, str(stored_path), page_count, created_at),
-    )
+    if table_has_column(conn, "documents", "chapter_rule"):
+        conn.execute(
+            """
+            INSERT INTO documents (
+                id, title, subject, document_kind, filename, stored_path, page_count, chapter_rule, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (doc_id, title, subject, document_kind, filename, str(stored_path), page_count, chapter_rule, created_at),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO documents (id, title, subject, document_kind, filename, stored_path, page_count, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (doc_id, title, subject, document_kind, filename, str(stored_path), page_count, created_at),
+        )
 
 
 def imported_document_payload(
@@ -107,14 +122,20 @@ def imported_document_payload(
     }
 
 
-def update_document(conn, doc_id: str, *, title: str, subject: str, document_kind: str):
+def update_document(conn, doc_id: str, *, title: str, subject: str, document_kind: str, chapter_rule: str = "auto"):
     doc = conn.execute("SELECT id FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc:
         return None
-    conn.execute(
-        "UPDATE documents SET title = ?, subject = ?, document_kind = ? WHERE id = ?",
-        (title, subject, document_kind, doc_id),
-    )
+    if table_has_column(conn, "documents", "chapter_rule"):
+        conn.execute(
+            "UPDATE documents SET title = ?, subject = ?, document_kind = ?, chapter_rule = ? WHERE id = ?",
+            (title, subject, document_kind, chapter_rule, doc_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE documents SET title = ?, subject = ?, document_kind = ? WHERE id = ?",
+            (title, subject, document_kind, doc_id),
+        )
     return conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
 
 

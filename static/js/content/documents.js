@@ -1,4 +1,23 @@
 (function () {
+  function workbookPresets() {
+    return window.SakuraWorkbookPresets;
+  }
+
+  function chapterRule(doc) {
+    return workbookPresets().normalizeRule(doc.chapter_rule || "");
+  }
+
+  function chapterRuleLabel(value) {
+    return workbookPresets().labelFor(value);
+  }
+
+  function chapterRuleOptions(current) {
+    return workbookPresets()
+      .all()
+      .map((preset) => `<option value="${escapeAttr(preset.value)}" ${preset.value === current ? "selected" : ""}>${escapeHtml(preset.label)}</option>`)
+      .join("");
+  }
+
   function renderDocuments() {
     const books = state.documents.filter((doc) => documentKind(doc) !== "模拟卷");
     const mocks = state.documents.filter((doc) => documentKind(doc) === "模拟卷");
@@ -21,12 +40,19 @@
     const title = doc.title || doc.filename || "未命名资料";
     const subject = doc.subject || "未分类";
     const id = doc.id || "";
+    const ruleTag =
+      kind === "模拟卷"
+        ? ""
+        : `<span class="tag rule"><i data-lucide="scan-text"></i>识别：${escapeHtml(chapterRuleLabel(chapterRule(doc)))}</span>`;
     return `
         <article class="document-card">
           <div>
             <h3>${escapeHtml(title)}</h3>
             <p>${escapeHtml(subject)} · ${escapeHtml(kind)} · ${doc.question_count || 0} 题 · 错题 ${doc.wrong_count || 0} · 需复习 ${doc.review_count || 0}</p>
-            <span class="tag kind ${kind === "模拟卷" ? "mock" : "paper"}">${escapeHtml(kind)}</span>
+            <div class="doc-tags">
+              <span class="tag kind ${kind === "模拟卷" ? "mock" : "paper"}">${escapeHtml(kind)}</span>
+              ${ruleTag}
+            </div>
             <p>${escapeHtml(doc.filename || "")}</p>
           </div>
           <div class="doc-actions">
@@ -69,6 +95,12 @@
             <option value="模拟卷" ${doc.document_kind === "模拟卷" ? "selected" : ""}>模拟卷</option>
           </select>
         </label>
+        <label>
+          做题本版式
+          <select id="editDocumentChapterRule">
+            ${chapterRuleOptions(chapterRule(doc))}
+          </select>
+        </label>
         <p class="edit-file-name">原始文件：${escapeHtml(doc.filename || "")}</p>
         <div class="detail-actions">
           <button type="submit">保存修改</button>
@@ -87,6 +119,7 @@
             title: $("#editDocumentTitle").value.trim(),
             subject: $("#editDocumentSubject").value.trim() || "未分类",
             document_kind: $("#editDocumentKind").value,
+            chapter_rule: $("#editDocumentChapterRule").value,
           }),
         });
         dialog.close();
@@ -117,7 +150,8 @@
     const name = doc ? doc.title || doc.filename : "这套做题本";
     const kind = doc ? documentKind(doc) : "做题本";
     const scanLabel = kind === "模拟卷" ? "整卷" : "章节";
-    if (!confirm(`重新扫描「${name}」的页眉/右上角${scanLabel}吗？这不会调用 AI，也不会消耗 token。`)) return;
+    const ruleLabel = kind === "模拟卷" ? "整卷模式" : chapterRuleLabel(chapterRule(doc || {}));
+    if (!confirm(`重新扫描「${name}」的页眉/右上角${scanLabel}吗？当前规则：${ruleLabel}。这不会调用 AI，也不会消耗 token。`)) return;
     const result = await api(`/api/documents/${encodeURIComponent(id)}/rescan-chapters`, { method: "POST", body: "{}" });
     alert(`已重扫 ${result.pages} 页，更新 ${result.updated} 条题目记录。`);
     await refresh();

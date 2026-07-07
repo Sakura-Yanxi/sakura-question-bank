@@ -74,6 +74,7 @@ def process_import_page(
     default_chapter: str,
     mock_paper_kind: str,
     mock_paper_chapter: str,
+    chapter_rule: str,
     classify_question,
 ) -> tuple[int, list[dict]]:
     page_text, starts, slices = sakura_pdf.prepare_import_page(
@@ -90,6 +91,7 @@ def process_import_page(
         default_chapter=default_chapter,
         mock_paper_kind=mock_paper_kind,
         mock_paper_chapter=mock_paper_chapter,
+        chapter_rule=chapter_rule,
     )
     continuation_text = sakura_pdf.append_import_continuation(page, starts, previous_question)
     if continuation_text:

@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 
-    <link rel="stylesheet" href="/static/styles.css?v=20260618-daily-count-clarity" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260701-import-preset-dialog" />
     <script>
       window.MathJax = {
         tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] },
@@ -125,17 +125,18 @@
           <section id="documents" class="view">
             <div class="panel upload-panel">
               <div class="panel-head">
-                <div class="panel-title"><span class="panel-icon"><i data-lucide="book-plus"></i></span><div><h2>本地非线性切片导入</h2><p>支持按页快速切割，本地离线分类。</p></div></div>
+                <div class="panel-title"><span class="panel-icon"><i data-lucide="book-plus"></i></span><div><h2>本地非线性切片导入</h2><p>支持按页或按题号切割，本地离线分类。</p></div></div>
                 <span class="tag kind paper"><i data-lucide="book-open"></i>分册模式</span>
               </div>
               <form id="bookUploadForm" class="upload form-grid">
                 <div class="input-field"><input name="title" type="text" placeholder="给做题本起个名字..." /></div>
                 <div class="input-field"><input name="subject" type="text" list="subjectSuggestions" placeholder="输入或关联科目..." /></div>
                 <div class="page-range"><input name="start_page" type="number" min="1" placeholder="起始页" /><input name="end_page" type="number" min="1" placeholder="结束页" /></div>
+                <label class="split-toggle"><input name="split_questions" type="checkbox" value="1" checked /><span><strong>按题号自动切分</strong><small>适合一页多题的做题本，识别不到题号时退回一页一道。</small></span></label>
                 <label class="file-drop-zone">
                   <input name="file" type="file" accept="application/pdf" />
                   <span class="file-drop-icon"><i data-lucide="upload-cloud"></i></span>
-                  <div class="file-drop-text"><strong>拖拽做题本 PDF 至此</strong><small>或点击浏览本地文件（限单页一题排版）</small></div>
+                  <div class="file-drop-text"><strong>拖拽做题本 PDF 至此</strong><small>或点击浏览本地文件，支持一页多题切分</small></div>
                 </label>
                 <button type="submit" class="btn-primary"><i data-lucide="import"></i>导入资料</button>
                 <p class="upload-status"></p>
@@ -807,12 +808,13 @@
     <script src="/static/js/system/reminders.js?v=20260609-reminder-module-bindings"></script>
     <script src="/static/js/core/app.js?v=20260618-detail-reading-mode"></script>
     <script src="/static/js/content/dashboard.js?v=20260615-option-escaping"></script>
-    <script src="/static/js/content/documents.js?v=20260608-teacher-memory-subjects"></script>
+    <script src="/static/js/content/workbook_presets.js?v=20260701-import-preset-dialog"></script>
+    <script src="/static/js/content/documents.js?v=20260701-import-preset-dialog"></script>
     <script src="/static/js/content/library.js?v=20260618-library-empty-mock-archive"></script>
     <script src="/static/js/content/question_detail.js?v=20260619-review-advance-guard"></script>
     <script src="/static/js/review/archives.js?v=20260608-teacher-memory-subjects"></script>
     <script src="/static/js/review/chapter_stats.js?v=20260608-module-folders"></script>
-    <script src="/static/js/content/upload.js?v=20260608-module-folders"></script>
+    <script src="/static/js/content/upload.js?v=20260701-import-preset-dialog"></script>
     <script src="/static/js/review/mistakes.js?v=20260618-multi-chapter-export-fix6"></script>
     <script src="/static/js/ai/ai_chat.js?v=20260610-vision-provider"></script>
     <script src="/static/js/review/reflection.js?v=20260608-module-folders"></script>

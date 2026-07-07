@@ -373,6 +373,44 @@ body:not([data-view="library"]) .search-box { display: none; }
 .upload-status { grid-column: 1 / -1; font-size: 12.5px; color: var(--muted); margin: 0; min-height: 1em; }
 .input-field { display: flex; flex-direction: column; }
 
+.workbook-preset-dialog {
+  width: min(520px, calc(100vw - 32px));
+  border: none;
+  border-radius: var(--r-lg);
+  padding: 0;
+  background: transparent;
+}
+.workbook-preset-dialog::backdrop { background: rgba(15, 23, 42, 0.28); backdrop-filter: blur(4px); }
+.workbook-preset-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-strong);
+  padding: 18px;
+}
+.workbook-preset-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.workbook-preset-head h3 { margin: 0; font-size: 17px; color: var(--ink); }
+.workbook-preset-head p { margin: 4px 0 0; font-size: 12px; color: var(--muted); word-break: break-all; }
+.workbook-preset-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.workbook-preset-option {
+  min-height: 76px;
+  align-items: flex-start;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  box-shadow: none;
+}
+.workbook-preset-option strong { font-size: 15px; color: var(--ink); }
+.workbook-preset-option span { font-size: 12px; color: var(--muted); }
+.workbook-preset-option.recommended { border-color: var(--sakura-main); background: var(--sakura-tint); }
+
 /* 教材精读 */
 .textbook-reader-grid {
   display: grid;
@@ -864,6 +902,7 @@ body:not([data-view="library"]) .search-box { display: none; }
 .tag.kind { border: none; }
 .tag.kind.paper { background: var(--sakura-tint); color: var(--sakura-deep); }
 .tag.kind.mock { background: #EEF2FF; color: #4F46E5; }
+.tag.rule { background: #ECFEFF; color: #0E7490; border-color: #BAE6FD; }
 .tag.memory { background: var(--surface-2); color: var(--muted); }
 .tag.memory.mastered { background: var(--success-soft); color: var(--success); }
 .tag.foundation { background: #ECFEFF; color: #0E7490; }
@@ -889,6 +928,7 @@ body:not([data-view="library"]) .search-box { display: none; }
 .doc-actions { grid-template-columns: repeat(2, 1fr); }
 .actions button, .doc-actions button { min-height: 34px; padding: 0 8px; font-size: 12px; border-radius: var(--r-sm); box-shadow: none; min-width: 0; white-space: normal; line-height: 1.25; }
 .actions button:hover, .doc-actions button:hover { box-shadow: none; }
+.doc-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
 
 /* 章节卡正文 */
 .chapter-card { padding: 18px; align-items: center; text-align: center; }

@@ -379,7 +379,7 @@ def rescan_document_chapters(
     default_chapter: str,
     mock_paper_kind: str,
 ) -> dict:
-    doc = conn.execute("SELECT stored_path, document_kind, subject FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    doc = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc:
         raise QuestionServiceError("做题本不存在。", 404)
     pdf_path = Path(doc["stored_path"])
@@ -387,7 +387,8 @@ def rescan_document_chapters(
         raise QuestionServiceError("原始 PDF 文件不存在，无法重扫。", 404)
 
     document_kind = normalize_document_kind(doc["document_kind"])
-    pages = extract_text_and_chapters(pdf_path, document_kind)
+    chapter_rule = doc["chapter_rule"] if "chapter_rule" in doc.keys() else "auto"
+    pages = extract_text_and_chapters(pdf_path, document_kind, chapter_rule=chapter_rule)
     updated = 0
     for page in pages:
         category, subcategory, difficulty = classify_by_rules(page["text"])

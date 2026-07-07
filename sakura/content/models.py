@@ -78,9 +78,17 @@ def question_detail_to_dict(
     return item
 
 
-def document_to_dict(row, normalize_document_kind: Callable[[str | None], str]) -> dict:
+def document_to_dict(
+    row,
+    normalize_document_kind: Callable[[str | None], str],
+    normalize_chapter_rule: Callable[[str | None], str] | None = None,
+) -> dict:
     item = dict(row)
     item["document_kind"] = normalize_document_kind(item.get("document_kind"))
+    if normalize_chapter_rule:
+        item["chapter_rule"] = normalize_chapter_rule(item.get("chapter_rule"))
+    else:
+        item["chapter_rule"] = item.get("chapter_rule") or "auto"
     return item
 
 

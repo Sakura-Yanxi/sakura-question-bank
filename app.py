@@ -195,6 +195,7 @@ DEFAULT_DOCUMENT_KIND = "做题本"
 MOCK_PAPER_KIND = "模拟卷"
 DOCUMENT_KINDS = [DEFAULT_DOCUMENT_KIND, MOCK_PAPER_KIND]
 MOCK_PAPER_CHAPTER = "整卷"
+DEFAULT_CHAPTER_RULE = sakura_classify.CHAPTER_RULE_AUTO
 REVIEW_INTERVAL_DAYS = sakura_retention.REVIEW_INTERVAL_DAYS
 META_TAGS = sakura_retention.META_TAGS
 WRONGISH_STATUSES = sakura_retention.WRONGISH_STATUSES
@@ -339,7 +340,7 @@ def question_detail_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
 
 
 def document_to_dict(row: sqlite3.Row) -> dict:
-    return sakura_models.document_to_dict(row, normalize_document_kind)
+    return sakura_models.document_to_dict(row, normalize_document_kind, normalize_chapter_rule)
 
 
 def normalize_document_kind(value: str | None) -> str:
@@ -350,6 +351,10 @@ def normalize_document_kind(value: str | None) -> str:
         mock_paper_kind=MOCK_PAPER_KIND,
         document_kinds=DOCUMENT_KINDS,
     )
+
+
+def normalize_chapter_rule(value: str | None) -> str:
+    return sakura_classify.normalize_chapter_rule(value)
 
 
 def schedule_for_status(current: sqlite3.Row | dict | None, status: str, now: datetime | None = None) -> dict:
@@ -521,6 +526,21 @@ def looks_like_chapter(text: str) -> bool:
 
 def extract_chapter_from_page(page: fitz.Page, text: str) -> str:
     return sakura_classify.extract_chapter_from_page(page, text, DEFAULT_CHAPTER)
+
+
+def extract_text_and_chapters(
+    pdf_path: str | Path,
+    document_kind: str,
+    chapter_rule: str = DEFAULT_CHAPTER_RULE,
+) -> list[dict]:
+    return sakura_classify.extract_text_and_chapters(
+        pdf_path,
+        document_kind,
+        default_chapter=DEFAULT_CHAPTER,
+        mock_paper_kind=MOCK_PAPER_KIND,
+        mock_paper_chapter=MOCK_PAPER_CHAPTER,
+        chapter_rule=chapter_rule,
+    )
 
 
 def new_chapter_state() -> sakura_classify.ChapterCarryState:
@@ -1550,6 +1570,7 @@ def import_pdf(
     start_page: int | None = None,
     end_page: int | None = None,
     split_questions: bool = False,
+    chapter_rule: str = DEFAULT_CHAPTER_RULE,
 ) -> dict:
     return sakura_document_runtime.import_pdf(
         filename,
@@ -1557,6 +1578,7 @@ def import_pdf(
         title=title,
         subject=subject,
         document_kind=document_kind,
+        chapter_rule=chapter_rule,
         start_page=start_page,
         end_page=end_page,
         split_questions=split_questions,
@@ -1807,10 +1829,21 @@ class DemoHandler(BaseHTTPRequestHandler):
         title = form.getfirst("title", "")
         subject = form.getfirst("subject", "")
         document_kind = form.getfirst("document_kind", DEFAULT_DOCUMENT_KIND)
+        chapter_rule = form.getfirst("chapter_rule", DEFAULT_CHAPTER_RULE)
         start_page = parse_positive_int(form.getfirst("start_page", ""), None)
         end_page = parse_positive_int(form.getfirst("end_page", ""), None)
         split_questions = sakura_parse.bool_flag(form.getfirst("split_questions", ""))
-        result = import_pdf(sakura_http.uploaded_filename(file_item), file_item.file.read(), title, subject, document_kind, start_page, end_page, split_questions)
+        result = import_pdf(
+            sakura_http.uploaded_filename(file_item),
+            file_item.file.read(),
+            title,
+            subject,
+            document_kind,
+            start_page,
+            end_page,
+            split_questions,
+            chapter_rule,
+        )
         return json_response(self, result)
 
     def handle_textbook_upload(self) -> None:
@@ -1982,6 +2015,9 @@ class DemoHandler(BaseHTTPRequestHandler):
         title = str(payload.get("title", "")).strip()
         subject = str(payload.get("subject", "")).strip() or DEFAULT_SUBJECT
         document_kind = normalize_document_kind(payload.get("document_kind"))
+        chapter_rule = normalize_chapter_rule(payload.get("chapter_rule"))
+        if document_kind == MOCK_PAPER_KIND:
+            chapter_rule = DEFAULT_CHAPTER_RULE
         if not title:
             return json_response(self, {"error": "做题本名称不能为空。"}, 400)
         if len(title) > 120:
@@ -1996,6 +2032,7 @@ class DemoHandler(BaseHTTPRequestHandler):
                 title=title,
                 subject=subject,
                 document_kind=document_kind,
+                chapter_rule=chapter_rule,
             )
             if not updated:
                 return json_response(self, {"error": "做题本不存在。"}, 404)

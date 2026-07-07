@@ -71,6 +71,7 @@ def init_db(
                 filename TEXT NOT NULL,
                 stored_path TEXT NOT NULL,
                 page_count INTEGER NOT NULL,
+                chapter_rule TEXT NOT NULL DEFAULT 'auto',
                 created_at TEXT NOT NULL
             );
 
@@ -358,12 +359,15 @@ def migrate_db(
         conn.execute("ALTER TABLE documents ADD COLUMN subject TEXT NOT NULL DEFAULT '未分类'")
     if "document_kind" not in document_columns:
         conn.execute("ALTER TABLE documents ADD COLUMN document_kind TEXT NOT NULL DEFAULT '做题本'")
+    if "chapter_rule" not in document_columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN chapter_rule TEXT NOT NULL DEFAULT 'auto'")
     conn.execute("UPDATE documents SET title = filename WHERE title = ''")
     conn.execute("UPDATE documents SET subject = ? WHERE subject = '' OR subject = '其他'", (default_subject,))
     conn.execute(
         "UPDATE documents SET document_kind = ? WHERE document_kind = '' OR document_kind NOT IN ('做题本', '模拟卷')",
         (default_document_kind,),
     )
+    conn.execute("UPDATE documents SET chapter_rule = 'auto' WHERE chapter_rule = '' OR chapter_rule IS NULL")
 
     question_columns = {row["name"] for row in conn.execute("PRAGMA table_info(questions)").fetchall()}
     if "question_no" not in question_columns:
