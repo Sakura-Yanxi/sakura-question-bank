@@ -296,7 +296,7 @@ Release zip 更新会把旧代码备份到 `data/update_backups/`，默认只保
 │       ├── review/
 │       └── system/
 ├── tests/                    # smoke 测试
-├── docs/                     # 架构、部署、海报、软著材料
+├── docs/                     # 架构、部署、软著材料
 ├── deploy/                   # 云端部署补充说明
 ├── update.bat                # Windows 更新脚本
 └── update.sh                 # Linux / macOS 更新脚本
